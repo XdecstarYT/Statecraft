@@ -1,16 +1,29 @@
 {
   "name": "statecraft",
-  "version": "1.0.0",
-  "description": "The Statecraft Engine — a browser chat client for an AI-run political simulation, powered by Claude.",
   "private": true,
-  "type": "commonjs",
-  "main": "server.js",
+  "version": "0.1.0",
+  "description": "Statecraft — a deep political simulation game with a deterministic, testable engine.",
+  "type": "module",
   "scripts": {
-    "start": "node server.js"
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.68.0",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2"
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^2.12.7",
+    "zustand": "^4.5.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.2"
   }
 }
