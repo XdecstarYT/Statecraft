@@ -465,3 +465,64 @@ export interface GameState {
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
   startingEconomy: EconomyState;
 }
+
+/**
+ * CAREER MODE — an optional pre-game life sim: start at 17 with nothing and
+ * build your way up to a national candidacy. Entirely separate from
+ * GameState; see engine/systems/career.ts. A successful national
+ * nomination "graduates" a CareerState into a real GameState via
+ * createNewGame, carrying forward the attributes, ideology, and party
+ * you actually earned instead of the random defaults an instant-start
+ * game begins with.
+ */
+
+export type EducationTrack = 'community_college' | 'state_university' | 'law_school' | 'trade_apprenticeship';
+
+export type CareerStage = 'student' | 'working' | 'party_volunteer' | 'local_officeholder' | 'graduated';
+
+export interface CareerEventLogEntry {
+  turn: number;
+  title: string;
+  description: string;
+}
+
+/** One attempt at a local council seat — a real, self-contained mini-election against 1-3 generated rivals. */
+export interface CareerLocalRaceRecord {
+  turn: number;
+  won: boolean;
+  playerShare: number;
+  opponentNames: string[];
+}
+
+/** One attempt at national candidacy — a probabilistic gate, not a full vote, since this represents the party leadership's own decision. */
+export interface CareerNominationRecord {
+  turn: number;
+  selected: boolean;
+  probability: number;
+}
+
+export interface CareerState {
+  seed: number;
+  rngState: number;
+  /** Career-mode turns are seasons (see CAREER_TURNS_PER_YEAR in career.ts), not the main game's weeks. */
+  turn: number;
+  name: string;
+  /** Which STARTER_COUNTRY_OPTIONS entry this career is tied to — fixes which parties are available to join and, on graduation, which country the resulting GameState uses. */
+  countryOptionId: string;
+  stage: CareerStage;
+  /** 1..10 scale, same as Politician.attributes — starts low and is earned through education/work/party organizing. */
+  attributes: PoliticianAttributes;
+  ideology: IdeologyPosition;
+  money: number;
+  educationTrack: EducationTrack | null;
+  educationTurnsRemaining: number;
+  completedEducationTracks: EducationTrack[];
+  jobId: string | null;
+  partyId: string | null;
+  /** 0..100 standing within the chosen party — the main gate on both the local race and the national nomination. */
+  partyStanding: number;
+  localSeatWon: boolean;
+  localRaceHistory: CareerLocalRaceRecord[];
+  nominationHistory: CareerNominationRecord[];
+  eventLog: CareerEventLogEntry[];
+}

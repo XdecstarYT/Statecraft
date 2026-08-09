@@ -1,0 +1,392 @@
+import { useState } from 'react';
+import {
+  EDUCATION_TRACKS,
+  JOB_LISTINGS,
+  computeCareerAge,
+  computeNominationProbability,
+  computePersonalAppeal,
+  type CareerState,
+  type EducationTrack,
+  type LocalRaceOutcome,
+  type NominationOutcome,
+  type Party,
+  type PartyWorkOutcome,
+} from '../../engine';
+import { STARTER_COUNTRY_OPTIONS } from '../../content/countries/registry';
+import {
+  EDUCATION_START_FLAVOR,
+  LOCAL_RACE_LOSS_FLAVOR,
+  LOCAL_RACE_WIN_FLAVOR,
+  NOMINATION_REJECTION_FLAVOR,
+  NOMINATION_SUCCESS_FLAVOR,
+  PARTY_WORK_FLAVOR,
+  pickFlavorIndex,
+} from '../../content/career/flavor';
+import { useStatecraftStore } from '../store';
+
+const STAGE_LABELS: Record<string, string> = {
+  student: 'Student',
+  working: 'Working',
+  party_volunteer: 'Party Volunteer',
+  local_officeholder: 'Local Officeholder',
+  graduated: 'Graduated',
+};
+
+export function CareerScreen() {
+  const career = useStatecraftStore((s) => s.career);
+  const saveGame = useStatecraftStore((s) => s.saveGame);
+  const abandonCareer = useStatecraftStore((s) => s.abandonCareer);
+  const careerAdvanceTurnAction = useStatecraftStore((s) => s.careerAdvanceTurnAction);
+  const careerStartEducationAction = useStatecraftStore((s) => s.careerStartEducationAction);
+  const careerApplyForJobAction = useStatecraftStore((s) => s.careerApplyForJobAction);
+  const careerJoinPartyAction = useStatecraftStore((s) => s.careerJoinPartyAction);
+  const careerDoPartyWorkAction = useStatecraftStore((s) => s.careerDoPartyWorkAction);
+  const careerAttemptLocalRaceAction = useStatecraftStore((s) => s.careerAttemptLocalRaceAction);
+  const careerAttemptNominationAction = useStatecraftStore((s) => s.careerAttemptNominationAction);
+  const lastPartyWork = useStatecraftStore((s) => s.lastCareerPartyWorkOutcome);
+  const lastLocalRace = useStatecraftStore((s) => s.lastCareerLocalRaceOutcome);
+  const lastNomination = useStatecraftStore((s) => s.lastCareerNominationOutcome);
+
+  const [statusMessage, setStatusMessage] = useState('');
+
+  if (!career) return null;
+
+  const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
+  const age = computeCareerAge(career.turn);
+  const appeal = computePersonalAppeal(career.attributes, career.partyStanding);
+  const nominationProbability = career.partyId ? computeNominationProbability(career) : 0;
+
+  const flashStatus = (message: string) => {
+    setStatusMessage(message);
+    setTimeout(() => setStatusMessage(''), 2000);
+  };
+
+  return (
+    <main className="app-shell">
+      <header className="app-header">
+        <h1>Statecraft</h1>
+        <span className="seed-tag">
+          {career.name} &middot; Age {age.toFixed(1)} &middot; {option.label}
+        </span>
+        {statusMessage && <span className="status-flash">{statusMessage}</span>}
+        <div className="header-actions">
+          <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Career</button>
+          <button className="danger-button" onClick={abandonCareer}>
+            Abandon Career
+          </button>
+        </div>
+      </header>
+
+      <section className="panel">
+        <div className="panel-header">
+          <h2>{career.name} — {STAGE_LABELS[career.stage]}</h2>
+          <button onClick={careerAdvanceTurnAction}>Advance Season</button>
+        </div>
+
+        <div className="indicator-grid">
+          <div className="indicator">
+            <div className="indicator-label">Age</div>
+            <div className="indicator-value">{age.toFixed(1)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Money</div>
+            <div className="indicator-value">${career.money.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Party Standing</div>
+            <div className="indicator-value">{career.partyStanding.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Personal Appeal</div>
+            <div className="indicator-value">{(appeal * 100).toFixed(0)}%</div>
+          </div>
+        </div>
+
+        <h4 className="subheading">Attributes</h4>
+        <div className="indicator-grid">
+          <div className="indicator">
+            <div className="indicator-label">Charisma</div>
+            <div className="indicator-value">{career.attributes.charisma.toFixed(1)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Intellect</div>
+            <div className="indicator-value">{career.attributes.intellect.toFixed(1)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Integrity</div>
+            <div className="indicator-value">{career.attributes.integrity.toFixed(1)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Network</div>
+            <div className="indicator-value">{career.attributes.network.toFixed(1)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Media Savvy</div>
+            <div className="indicator-value">{career.attributes.mediaSavvy.toFixed(1)}</div>
+          </div>
+        </div>
+      </section>
+
+      <div className="panel-columns">
+        <EducationSection career={career} onStart={careerStartEducationAction} onApplyForJob={careerApplyForJobAction} />
+        <PartySection
+          career={career}
+          parties={option.parties}
+          onJoin={careerJoinPartyAction}
+          onDoPartyWork={careerDoPartyWorkAction}
+          lastPartyWork={lastPartyWork}
+        />
+      </div>
+
+      <div className="panel-columns">
+        <LocalRaceSection career={career} onAttempt={careerAttemptLocalRaceAction} lastOutcome={lastLocalRace} />
+        <NominationSection
+          career={career}
+          probability={nominationProbability}
+          onAttempt={() => careerAttemptNominationAction()}
+          lastOutcome={lastNomination}
+        />
+      </div>
+    </main>
+  );
+}
+
+function EducationSection({
+  career,
+  onStart,
+  onApplyForJob,
+}: {
+  career: CareerState;
+  onStart: (track: EducationTrack) => void;
+  onApplyForJob: (jobId: string) => void;
+}) {
+  const tracks = Object.values(EDUCATION_TRACKS);
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Education &amp; Work</h2>
+      </div>
+
+      {career.educationTrack ? (
+        <p className="muted">
+          Studying: <strong>{EDUCATION_TRACKS[career.educationTrack].label}</strong> —{' '}
+          {career.educationTurnsRemaining} season{career.educationTurnsRemaining === 1 ? '' : 's'} remaining.
+          <br />
+          &ldquo;{EDUCATION_START_FLAVOR[career.educationTrack]}&rdquo;
+        </p>
+      ) : (
+        <div className="bill-actions">
+          {tracks.map((track) => {
+            const available =
+              !track.prerequisite || career.completedEducationTracks.includes(track.prerequisite);
+            return (
+              <button key={track.id} disabled={!available} onClick={() => onStart(track.id)}>
+                {track.label} ({track.durationTurns} seasons)
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {career.completedEducationTracks.length > 0 && (
+        <p className="muted">
+          Completed: {career.completedEducationTracks.map((t) => EDUCATION_TRACKS[t].label).join(', ')}
+        </p>
+      )}
+
+      <h4 className="subheading">Job</h4>
+      {career.jobId ? (
+        <p className="muted">
+          Currently: <strong>{JOB_LISTINGS.find((j) => j.id === career.jobId)?.title}</strong>
+        </p>
+      ) : (
+        <p className="muted">Unemployed.</p>
+      )}
+      <div className="bill-actions">
+        {JOB_LISTINGS.map((job) => {
+          const meetsEducation = !job.requiresEducation || career.completedEducationTracks.includes(job.requiresEducation);
+          const meetsParty = !job.requiresParty || !!career.partyId;
+          const available = meetsEducation && meetsParty && career.jobId !== job.id;
+          return (
+            <button key={job.id} disabled={!available} onClick={() => onApplyForJob(job.id)}>
+              {job.title} (${job.incomePerTurn}/season)
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function PartySection({
+  career,
+  parties,
+  onJoin,
+  onDoPartyWork,
+  lastPartyWork,
+}: {
+  career: CareerState;
+  parties: Party[];
+  onJoin: (partyId: string) => void;
+  onDoPartyWork: () => void;
+  lastPartyWork: PartyWorkOutcome | null;
+}) {
+  const party = parties.find((p) => p.id === career.partyId);
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Party</h2>
+      </div>
+
+      {!party && (
+        <>
+          <p className="muted">Get involved with a party to start building standing.</p>
+          <div className="bill-actions">
+            {parties.map((p) => (
+              <button key={p.id} onClick={() => onJoin(p.id)}>
+                Join {p.name}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {party && (
+        <>
+          <p className="muted">
+            Volunteering with <strong>{party.name}</strong>.
+          </p>
+          <div className="score-bar">
+            <div className="score-bar-label">
+              <span>Party Standing</span>
+              <span>{career.partyStanding.toFixed(0)}</span>
+            </div>
+            <div className="score-bar-track">
+              <div className="score-bar-fill" style={{ width: `${Math.max(0, Math.min(100, career.partyStanding))}%` }} />
+            </div>
+          </div>
+          <div className="bill-actions">
+            <button onClick={onDoPartyWork}>Do Party Work</button>
+          </div>
+          {lastPartyWork && (
+            <p className={lastPartyWork.outcome === 'setback' ? 'result-fail' : 'result-pass'}>
+              {PARTY_WORK_FLAVOR[lastPartyWork.outcome][
+                pickFlavorIndex(`${career.turn}-work`, PARTY_WORK_FLAVOR[lastPartyWork.outcome].length)
+              ]}{' '}
+              ({lastPartyWork.standingDelta >= 0 ? '+' : ''}
+              {lastPartyWork.standingDelta.toFixed(0)} standing)
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function LocalRaceSection({
+  career,
+  onAttempt,
+  lastOutcome,
+}: {
+  career: CareerState;
+  onAttempt: () => void;
+  lastOutcome: LocalRaceOutcome | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Local Council Race</h2>
+      </div>
+      <p className="muted">
+        {career.localSeatWon
+          ? 'You hold a local council seat.'
+          : 'Win a local seat to prove you can actually get elected. Costs $60 to run.'}
+      </p>
+      <div className="bill-actions">
+        <button onClick={onAttempt} disabled={career.money < 60}>
+          Run for Local Council
+        </button>
+      </div>
+      {lastOutcome && (
+        <p className={lastOutcome.won ? 'result-pass' : 'result-fail'}>
+          {(lastOutcome.won ? LOCAL_RACE_WIN_FLAVOR : LOCAL_RACE_LOSS_FLAVOR)[
+            pickFlavorIndex(`${career.turn}-local`, (lastOutcome.won ? LOCAL_RACE_WIN_FLAVOR : LOCAL_RACE_LOSS_FLAVOR).length)
+          ]}{' '}
+          ({(lastOutcome.playerShare * 100).toFixed(0)}% of the vote against {lastOutcome.opponentNames.length} rival
+          {lastOutcome.opponentNames.length === 1 ? '' : 's'})
+        </p>
+      )}
+      {career.localRaceHistory.length > 0 && (
+        <ul className="scandal-list">
+          {career.localRaceHistory
+            .slice(-5)
+            .reverse()
+            .map((race, i) => (
+              <li key={i} className={`scandal-item status-${race.won ? 'resolved' : 'unresolved'}`}>
+                <span>
+                  Season {race.turn} — {race.won ? 'Won' : 'Lost'} — {(race.playerShare * 100).toFixed(0)}% of the vote
+                </span>
+              </li>
+            ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function NominationSection({
+  career,
+  probability,
+  onAttempt,
+  lastOutcome,
+}: {
+  career: CareerState;
+  probability: number;
+  onAttempt: () => void;
+  lastOutcome: NominationOutcome | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>National Nomination</h2>
+      </div>
+      {!career.partyId ? (
+        <p className="muted">Join a party first — the nomination is theirs to give.</p>
+      ) : (
+        <>
+          <p className="muted">
+            Estimated chance the party puts your name forward this attempt: <strong>{(probability * 100).toFixed(0)}%</strong>
+          </p>
+          <div className="bill-actions">
+            <button onClick={onAttempt}>Seek the Nomination</button>
+          </div>
+        </>
+      )}
+      {lastOutcome && (
+        <p className={lastOutcome.selected ? 'result-pass' : 'result-fail'}>
+          {(lastOutcome.selected ? NOMINATION_SUCCESS_FLAVOR : NOMINATION_REJECTION_FLAVOR)[
+            pickFlavorIndex(
+              `${career.turn}-nom`,
+              (lastOutcome.selected ? NOMINATION_SUCCESS_FLAVOR : NOMINATION_REJECTION_FLAVOR).length
+            )
+          ]}
+        </p>
+      )}
+      {career.nominationHistory.length > 0 && (
+        <ul className="scandal-list">
+          {career.nominationHistory
+            .slice(-5)
+            .reverse()
+            .map((n, i) => (
+              <li key={i} className={`scandal-item status-${n.selected ? 'resolved' : 'unresolved'}`}>
+                <span>
+                  Season {n.turn} — {n.selected ? 'Selected' : 'Passed over'} — {(n.probability * 100).toFixed(0)}% odds
+                </span>
+              </li>
+            ))}
+        </ul>
+      )}
+    </section>
+  );
+}

@@ -4,10 +4,21 @@ import {
   SeededRng,
   WAR_DECLARATION_RELATION_PENALTY,
   adjustRelation,
+  advanceCareerTurn,
   advanceToCommittee,
   advanceToFloor,
   advanceTurn,
   applyCovertMilitaryDelta,
+  applyForJob as applyForCareerJob,
+  attemptLocalRace,
+  attemptNationalNomination,
+  buildGraduationPayload,
+  createCareer,
+  doPartyWork,
+  graduateFromCareer,
+  isGraduated,
+  joinParty as joinCareerParty,
+  startEducation as startCareerEducation,
   appointToCabinet,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
@@ -63,6 +74,7 @@ import {
   signTreaty,
   type CabinetPortfolio,
   type CampaignActionOutcome,
+  type CareerState,
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
@@ -71,21 +83,32 @@ import {
   type CovertOperationOutcome,
   type CovertOperationType,
   type Difficulty,
+  type EducationTrack,
   type ElectionOutcome,
   type FloorVoteResult,
   type GameState,
   type IntelligenceInvestmentTier,
+  type LocalRaceOutcome,
   type MilitaryInvestmentTier,
   type MmpResult,
+  type NominationOutcome,
   type PartyActionOutcome,
   type PartyVoteShare,
+  type PartyWorkOutcome,
   type ScandalResponse,
   type WhipStance,
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
-import { saveGame as persistSave, loadGame as persistLoad } from './persistence';
+import { generateName } from '../content/names/pool';
+import {
+  clearSavedCareer,
+  loadCareer as persistLoadCareer,
+  loadGame as persistLoad,
+  saveCareer as persistSaveCareer,
+  saveGame as persistSave,
+} from './persistence';
 
 export interface EconomySnapshot {
   turn: number;
@@ -118,6 +141,10 @@ const STV_BALLOTS = 3000;
 
 interface StatecraftStore {
   game: GameState | null;
+  career: CareerState | null;
+  lastCareerPartyWorkOutcome: PartyWorkOutcome | null;
+  lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
+  lastCareerNominationOutcome: NominationOutcome | null;
   economyHistory: EconomySnapshot[];
   lastElection: ElectionOutcome | null;
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
@@ -132,6 +159,15 @@ interface StatecraftStore {
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
   loadGame: () => boolean;
+  startCareer: (name: string, countryOptionId: string, seed?: number) => void;
+  abandonCareer: () => void;
+  careerAdvanceTurnAction: () => void;
+  careerStartEducationAction: (track: EducationTrack) => void;
+  careerApplyForJobAction: (jobId: string) => void;
+  careerJoinPartyAction: (partyId: string) => void;
+  careerDoPartyWorkAction: () => void;
+  careerAttemptLocalRaceAction: () => void;
+  careerAttemptNominationAction: (seed?: number, difficulty?: Difficulty) => void;
   proposeNewBill: () => void;
   proposeCustomBill: (title: string, provisions: { description: string; budgetImpact: number }[]) => void;
   sendToCommittee: (billId: string) => void;
@@ -175,6 +211,10 @@ interface StatecraftStore {
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   game: null,
+  career: null,
+  lastCareerPartyWorkOutcome: null,
+  lastCareerLocalRaceOutcome: null,
+  lastCareerNominationOutcome: null,
   economyHistory: [],
   lastElection: null,
   lastFloorResult: null,
@@ -190,8 +230,10 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const option =
       STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
     const game = createNewGame(seed, { difficulty, country: option.country, parties: option.parties });
+    clearSavedCareer();
     set({
       game,
+      career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
       lastFloorResult: null,
@@ -206,28 +248,136 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   },
 
   saveGame: () => {
-    const { game, economyHistory } = get();
-    if (!game) return;
-    persistSave(game, economyHistory);
+    const { game, career, economyHistory } = get();
+    if (game) {
+      persistSave(game, economyHistory);
+    } else if (career) {
+      persistSaveCareer(career);
+    }
   },
 
   loadGame: () => {
     const save = persistLoad();
-    if (!save) return false;
+    if (save) {
+      set({
+        game: save.game,
+        career: null,
+        economyHistory: save.economyHistory,
+        lastElection: null,
+        lastFloorResult: null,
+        lastCoverage: [],
+        labResult: null,
+        lastCorruptionOutcome: null,
+        lastCampaignOutcome: null,
+        lastLobbyingOutcome: null,
+        lastLeadershipActionOutcome: null,
+        lastCovertOperationOutcome: null,
+      });
+      return true;
+    }
+    const careerSave = persistLoadCareer();
+    if (careerSave) {
+      set({
+        game: null,
+        career: careerSave.career,
+        lastCareerPartyWorkOutcome: null,
+        lastCareerLocalRaceOutcome: null,
+        lastCareerNominationOutcome: null,
+      });
+      return true;
+    }
+    return false;
+  },
+
+  startCareer: (name, countryOptionId, seed = Math.floor(Math.random() * 1_000_000_000)) => {
+    const rng = new SeededRng(seed);
+    const career = createCareer(seed, rng, name.trim() || 'A Nobody From Nowhere', countryOptionId);
     set({
-      game: save.game,
-      economyHistory: save.economyHistory,
-      lastElection: null,
-      lastFloorResult: null,
-      lastCoverage: [],
-      labResult: null,
-      lastCorruptionOutcome: null,
-      lastCampaignOutcome: null,
-      lastLobbyingOutcome: null,
-      lastLeadershipActionOutcome: null,
-      lastCovertOperationOutcome: null,
+      game: null,
+      career,
+      lastCareerPartyWorkOutcome: null,
+      lastCareerLocalRaceOutcome: null,
+      lastCareerNominationOutcome: null,
     });
-    return true;
+  },
+
+  abandonCareer: () => {
+    clearSavedCareer();
+    set({ career: null });
+  },
+
+  careerAdvanceTurnAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
+    set({ career: advanceCareerTurn(career, option.parties) });
+  },
+
+  careerStartEducationAction: (track) => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: startCareerEducation(career, track) });
+  },
+
+  careerApplyForJobAction: (jobId) => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: applyForCareerJob(career, jobId) });
+  },
+
+  careerJoinPartyAction: (partyId) => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: joinCareerParty(career, partyId) });
+  },
+
+  careerDoPartyWorkAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = doPartyWork(career, rng);
+    set({ career: state, lastCareerPartyWorkOutcome: outcome });
+  },
+
+  careerAttemptLocalRaceAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const rivalCount = rng.nextInt(1, 3);
+    const rivalNames = Array.from({ length: rivalCount }, () => generateName(rng));
+    const { state, outcome } = attemptLocalRace(career, rivalNames, rng);
+    set({ career: state, lastCareerLocalRaceOutcome: outcome });
+  },
+
+  careerAttemptNominationAction: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard') => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = attemptNationalNomination(career, rng);
+    set({ career: state, lastCareerNominationOutcome: outcome });
+
+    if (isGraduated(state)) {
+      const payload = buildGraduationPayload(state);
+      const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === state.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
+      if (payload) {
+        const game = graduateFromCareer(seed, payload, option.country, option.parties, difficulty);
+        clearSavedCareer();
+        set({
+          game,
+          career: null,
+          economyHistory: [snapshotEconomy(game)],
+          lastElection: null,
+          lastFloorResult: null,
+          lastCoverage: [],
+          labResult: null,
+          lastCorruptionOutcome: null,
+          lastCampaignOutcome: null,
+          lastLobbyingOutcome: null,
+          lastLeadershipActionOutcome: null,
+          lastCovertOperationOutcome: null,
+        });
+      }
+    }
   },
 
   proposeNewBill: () => {

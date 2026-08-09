@@ -14,6 +14,7 @@ import type {
   MilitaryProfile,
   Party,
   Politician,
+  PoliticianAttributes,
   ScandalResponse,
   VoterBloc,
 } from './models/types';
@@ -58,6 +59,7 @@ import {
   type PartyActionOutcome,
 } from './systems/leadership';
 import { formGovernment, hasOutrightMajority } from './systems/coalition';
+import type { CareerGraduationPayload } from './systems/career';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -84,7 +86,7 @@ import {
   selectNpcCorruptionTier,
   updateRelationshipsAfterVote,
 } from './systems/npc';
-import { clampAxis } from './ideology';
+import { clamp, clampAxis } from './ideology';
 import { WEEKS_PER_YEAR } from './calendar';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
@@ -121,6 +123,7 @@ export * from './systems/lobbying';
 export * from './systems/leadership';
 export * from './systems/espionage';
 export * from './systems/coalition';
+export * from './systems/career';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -179,6 +182,12 @@ export interface NewGameOptions {
   playerName?: string;
   difficulty?: Difficulty;
   interestGroups?: InterestGroup[];
+  /** Overrides the auto-generated jittered attributes — used by career mode to carry forward what was actually earned. */
+  playerAttributes?: PoliticianAttributes;
+  /** Overrides the party-jittered starting ideology — same purpose as playerAttributes. */
+  playerIdeology?: IdeologyPosition;
+  /** 0..1 — a warmer starting reception than the random default, scaled from career mode's final party standing. */
+  playerApprovalBonus?: number;
 }
 
 /** Assembles a fresh, fully-populated GameState from a seed and starter content. */
@@ -196,6 +205,16 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   const player = politicians.find((p) => p.partyId === playerPartyId) ?? politicians[0];
   player.isPlayer = true;
   player.name = options.playerName ?? 'Alex Varga';
+  if (options.playerAttributes) player.attributes = { ...options.playerAttributes };
+  if (options.playerIdeology) player.ideology = { ...options.playerIdeology };
+  if (options.playerApprovalBonus) {
+    const boost = clamp(options.playerApprovalBonus, 0, 1) * 25;
+    player.approval = {
+      public: clamp(player.approval.public + boost, 0, 100),
+      base: clamp(player.approval.base + boost, 0, 100),
+      partyElite: clamp(player.approval.partyElite + boost * 1.4, 0, 100),
+    };
+  }
 
   const startingEconomy: EconomyState = { ...STARTING_ECONOMY, pendingEffects: [] };
 
@@ -240,6 +259,32 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   };
 
   return resolveGovernment(baseState, rng);
+}
+
+/**
+ * Turns a graduated CareerState into a real GameState — the handoff point
+ * between career mode and the main game. Carries forward everything the
+ * player actually earned (attributes, ideology, party, a warmer starting
+ * reception) via createNewGame's override options, rather than reinventing
+ * game setup from scratch.
+ */
+export function graduateFromCareer(
+  seed: number,
+  payload: CareerGraduationPayload,
+  country: Country,
+  parties: Party[],
+  difficulty: Difficulty = 'standard'
+): GameState {
+  return createNewGame(seed, {
+    country,
+    parties,
+    difficulty,
+    playerPartyId: payload.playerPartyId,
+    playerName: payload.playerName,
+    playerAttributes: payload.playerAttributes,
+    playerIdeology: payload.playerIdeology,
+    playerApprovalBonus: payload.standingBonus,
+  });
 }
 
 const COALITION_COLLAPSE_ECONOMY_EFFECT: EconomyDelta = { budgetBalance: -0.5, gdpGrowth: -0.3 };

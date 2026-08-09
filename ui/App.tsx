@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { Difficulty } from '../engine';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
-import { hasSavedGame } from './persistence';
+import { hasSavedCareer, hasSavedGame } from './persistence';
 import { useStatecraftStore } from './store';
+import { CareerScreen } from './components/CareerScreen';
 import { Dashboard } from './components/Dashboard';
 import { BillPanel } from './components/BillPanel';
 import { ElectionPanel } from './components/ElectionPanel';
@@ -31,37 +32,147 @@ type TabId = (typeof TABS)[number]['id'];
 
 export default function App() {
   const game = useStatecraftStore((s) => s.game);
+  const career = useStatecraftStore((s) => s.career);
   const newGame = useStatecraftStore((s) => s.newGame);
+  const startCareer = useStatecraftStore((s) => s.startCareer);
   const saveGame = useStatecraftStore((s) => s.saveGame);
   const loadGame = useStatecraftStore((s) => s.loadGame);
 
   const [activeTab, setActiveTab] = useState<TabId>('legislature');
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
+  const [careerNameDraft, setCareerNameDraft] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
+  const [bootstrapped, setBootstrapped] = useState(false);
+  const [forceStartScreen, setForceStartScreen] = useState(false);
 
   useEffect(() => {
-    if (!game) {
-      if (hasSavedGame()) {
-        loadGame();
-      } else {
-        newGame();
-      }
+    if (!bootstrapped) {
+      if (!game && !career) loadGame();
+      setBootstrapped(true);
     }
-  }, [game, newGame, loadGame]);
+  }, [bootstrapped, game, career, loadGame]);
 
   const flashStatus = (message: string) => {
     setStatusMessage(message);
     setTimeout(() => setStatusMessage(''), 2000);
   };
 
-  if (!game) {
+  if (!bootstrapped) {
     return (
       <main className="app-shell">
         <p>Loading...</p>
       </main>
     );
   }
+
+  const showStartScreen = forceStartScreen || (!game && !career);
+
+  if (showStartScreen) {
+    return (
+      <main className="app-shell">
+        <header className="app-header">
+          <h1>Statecraft</h1>
+        </header>
+        <section className="panel">
+          <div className="panel-header">
+            <h2>Start Your Story</h2>
+          </div>
+          <div className="panel-columns">
+            <div className="nation-detail">
+              <h3>Quick Start</h3>
+              <p className="muted">Jump straight in as a sitting legislator, mid-term.</p>
+              <div className="custom-bill-form">
+                <label>
+                  Country
+                  <select value={pendingCountryId} onChange={(e) => setPendingCountryId(e.target.value)}>
+                    {STARTER_COUNTRY_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Difficulty
+                  <select value={pendingDifficulty} onChange={(e) => setPendingDifficulty(e.target.value as Difficulty)}>
+                    <option value="easy">Easy</option>
+                    <option value="standard">Standard</option>
+                    <option value="hard">Hard</option>
+                  </select>
+                </label>
+                <button
+                  onClick={() => {
+                    newGame(undefined, pendingDifficulty, pendingCountryId);
+                    setForceStartScreen(false);
+                  }}
+                >
+                  Start as a Legislator
+                </button>
+              </div>
+            </div>
+
+            <div className="nation-detail">
+              <h3>Start From Nothing</h3>
+              <p className="muted">
+                Begin at 17 with nothing — build attributes through school and work, organize for a party,
+                win a local council seat, and earn a real national nomination.
+              </p>
+              <div className="custom-bill-form">
+                <label>
+                  Your Name
+                  <input
+                    type="text"
+                    value={careerNameDraft}
+                    onChange={(e) => setCareerNameDraft(e.target.value)}
+                    placeholder="A Nobody From Nowhere"
+                  />
+                </label>
+                <label>
+                  Country
+                  <select value={pendingCountryId} onChange={(e) => setPendingCountryId(e.target.value)}>
+                    {STARTER_COUNTRY_OPTIONS.map((option) => (
+                      <option key={option.id} value={option.id}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  onClick={() => {
+                    startCareer(careerNameDraft, pendingCountryId);
+                    setForceStartScreen(false);
+                  }}
+                >
+                  Begin at 17
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {(hasSavedGame() || hasSavedCareer()) && (
+            <div className="bill-actions">
+              <button
+                onClick={() => {
+                  flashStatus(loadGame() ? 'Loaded' : 'No save found');
+                  setForceStartScreen(false);
+                }}
+              >
+                Continue Saved Game
+              </button>
+            </div>
+          )}
+          {statusMessage && <p className="status-flash">{statusMessage}</p>}
+        </section>
+      </main>
+    );
+  }
+
+  if (career) {
+    return <CareerScreen />;
+  }
+
+  if (!game) return null;
 
   return (
     <main className="app-shell">
@@ -72,19 +183,7 @@ export default function App() {
         </span>
         {statusMessage && <span className="status-flash">{statusMessage}</span>}
         <div className="header-actions">
-          <select value={pendingCountryId} onChange={(e) => setPendingCountryId(e.target.value)}>
-            {STARTER_COUNTRY_OPTIONS.map((option) => (
-              <option key={option.id} value={option.id}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-          <select value={pendingDifficulty} onChange={(e) => setPendingDifficulty(e.target.value as Difficulty)}>
-            <option value="easy">Easy</option>
-            <option value="standard">Standard</option>
-            <option value="hard">Hard</option>
-          </select>
-          <button onClick={() => newGame(undefined, pendingDifficulty, pendingCountryId)}>New Game</button>
+          <button onClick={() => setForceStartScreen(true)}>New Game</button>
           <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Game</button>
           <button
             onClick={() => {
