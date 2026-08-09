@@ -7,10 +7,12 @@ import {
   advanceToCommittee,
   advanceToFloor,
   advanceTurn,
+  applyCovertMilitaryDelta,
   appointToCabinet,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
   applyImmediateEffect,
+  attemptCovertOperation,
   beginElectionNight,
   breakTreaty,
   cancelTradeDeal,
@@ -37,6 +39,7 @@ import {
   holdRally,
   imposeEmbargo,
   imposeSanctions,
+  investInIntelligence,
   investInMilitary,
   proposeBill,
   proposeTradeDeal,
@@ -65,10 +68,13 @@ import {
   type CorruptionTier,
   type CourtGroupOutcome,
   type CoverageEvent,
+  type CovertOperationOutcome,
+  type CovertOperationType,
   type Difficulty,
   type ElectionOutcome,
   type FloorVoteResult,
   type GameState,
+  type IntelligenceInvestmentTier,
   type MilitaryInvestmentTier,
   type MmpResult,
   type PartyActionOutcome,
@@ -121,6 +127,7 @@ interface StatecraftStore {
   lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' }) | null;
   lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
   lastLeadershipActionOutcome: (PartyActionOutcome & { action: 'rally' | 'denounce' }) | null;
+  lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
@@ -162,6 +169,8 @@ interface StatecraftStore {
   rallyPartySupportAction: () => void;
   denounceChallengerAction: () => void;
   dismissLeadershipChallengeAction: () => void;
+  attemptCovertOperationAction: (counterpartId: string, type: CovertOperationType) => void;
+  investInIntelligenceAction: (tier: IntelligenceInvestmentTier) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -175,6 +184,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCampaignOutcome: null,
   lastLobbyingOutcome: null,
   lastLeadershipActionOutcome: null,
+  lastCovertOperationOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -191,6 +201,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCampaignOutcome: null,
       lastLobbyingOutcome: null,
       lastLeadershipActionOutcome: null,
+      lastCovertOperationOutcome: null,
     });
   },
 
@@ -214,6 +225,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCampaignOutcome: null,
       lastLobbyingOutcome: null,
       lastLeadershipActionOutcome: null,
+      lastCovertOperationOutcome: null,
     });
     return true;
   },
@@ -631,5 +643,58 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: engineDismissLeadershipChallenge(game), lastLeadershipActionOutcome: null });
+  },
+
+  attemptCovertOperationAction: (counterpartId, type) => {
+    const game = get().game;
+    if (!game) return;
+    const counterpart = game.foreignCounterparts.find((c) => c.id === counterpartId);
+    if (!counterpart) return;
+
+    const rng = SeededRng.fromState(game.rngState);
+    const outcome = attemptCovertOperation(type, game.intelligenceCapability, counterpart.military, rng);
+
+    const foreignCounterparts = game.foreignCounterparts.map((c) =>
+      c.id === counterpartId ? { ...c, military: applyCovertMilitaryDelta(c.military, outcome.counterpartMilitaryDelta) } : c
+    );
+    const foreignRelations = outcome.relationDelta
+      ? adjustRelation(game.foreignRelations, counterpartId, outcome.relationDelta)
+      : game.foreignRelations;
+    const economy = applyImmediateEffect(game.economy, outcome.economyEffect);
+    const playerMilitary = outcome.techGain
+      ? { ...game.playerMilitary, techLevel: Math.min(100, game.playerMilitary.techLevel + outcome.techGain) }
+      : game.playerMilitary;
+    const covertOperations = [
+      ...game.covertOperations,
+      {
+        id: `covert-${game.turn}-${game.covertOperations.length + 1}`,
+        counterpartId,
+        type,
+        turn: game.turn,
+        success: outcome.success,
+        detected: outcome.detected,
+      },
+    ];
+
+    set({
+      game: {
+        ...game,
+        foreignCounterparts,
+        foreignRelations,
+        economy,
+        playerMilitary,
+        covertOperations,
+        rngState: rng.getState(),
+      },
+      lastCovertOperationOutcome: { ...outcome, counterpartId, type },
+    });
+  },
+
+  investInIntelligenceAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { capability, economyEffect } = investInIntelligence(game.intelligenceCapability, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, intelligenceCapability: capability, economy } });
   },
 }));

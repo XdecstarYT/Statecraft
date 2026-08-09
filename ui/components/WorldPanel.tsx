@@ -1,10 +1,17 @@
 import { useMemo, useState } from 'react';
-import { computeNationalTradeBalance, type CommodityType } from '../../engine';
+import { computeNationalTradeBalance, type CommodityType, type CovertOperationType } from '../../engine';
 import { TREATY_TEMPLATES } from '../../content/diplomacy/treatyTemplates';
 import { useStatecraftStore } from '../store';
 
 const COMMODITIES: CommodityType[] = ['energy', 'food', 'minerals', 'manufactured', 'technology'];
 const MAX_LISTED = 60;
+
+const COVERT_OPERATION_LABELS: Record<CovertOperationType, string> = {
+  espionage: 'Espionage',
+  sabotage: 'Sabotage',
+  destabilize: 'Destabilize',
+  coup: 'Back a Coup',
+};
 
 interface WorldPanelProps {
   selectedId: string | null;
@@ -24,6 +31,9 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
   const cancelTradeDealAction = useStatecraftStore((s) => s.cancelTradeDealAction);
   const imposeEmbargoAction = useStatecraftStore((s) => s.imposeEmbargoAction);
   const investInMilitaryAction = useStatecraftStore((s) => s.investInMilitaryAction);
+  const investInIntelligenceAction = useStatecraftStore((s) => s.investInIntelligenceAction);
+  const attemptCovertOperationAction = useStatecraftStore((s) => s.attemptCovertOperationAction);
+  const lastCovertOperationOutcome = useStatecraftStore((s) => s.lastCovertOperationOutcome);
 
   const [search, setSearch] = useState('');
   const [dealCommodity, setDealCommodity] = useState<CommodityType>('energy');
@@ -79,6 +89,18 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
       <div className="bill-actions">
         <button onClick={() => investInMilitaryAction('modest')}>Invest (Modest)</button>
         <button onClick={() => investInMilitaryAction('major')}>Invest (Major)</button>
+      </div>
+
+      <h4 className="subheading">Intelligence Agency</h4>
+      <div className="indicator-grid">
+        <div className="indicator">
+          <div className="indicator-label">Capability</div>
+          <div className="indicator-value">{game.intelligenceCapability.toFixed(0)}</div>
+        </div>
+      </div>
+      <div className="bill-actions">
+        <button onClick={() => investInIntelligenceAction('modest')}>Invest (Modest)</button>
+        <button onClick={() => investInIntelligenceAction('major')}>Invest (Major)</button>
       </div>
 
       <div className="nation-picker-wrap">
@@ -138,6 +160,43 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
               </button>
             )}
           </div>
+
+          <h4 className="subheading">Covert Operations</h4>
+          <div className="bill-actions">
+            {(Object.keys(COVERT_OPERATION_LABELS) as CovertOperationType[]).map((type) => (
+              <button
+                key={type}
+                className={type === 'coup' ? 'danger-button' : undefined}
+                onClick={() => attemptCovertOperationAction(selected.id, type)}
+              >
+                {COVERT_OPERATION_LABELS[type]}
+              </button>
+            ))}
+          </div>
+          {lastCovertOperationOutcome && lastCovertOperationOutcome.counterpartId === selected.id && (
+            <p className={lastCovertOperationOutcome.success ? 'result-pass' : 'result-fail'}>
+              {COVERT_OPERATION_LABELS[lastCovertOperationOutcome.type]}:{' '}
+              {lastCovertOperationOutcome.success ? 'succeeded' : 'failed'}
+              {lastCovertOperationOutcome.detected ? ' — TRACED BACK TO YOU' : ' — undetected'}
+            </p>
+          )}
+          {game.covertOperations.filter((op) => op.counterpartId === selected.id).length > 0 && (
+            <ul className="scandal-list">
+              {game.covertOperations
+                .filter((op) => op.counterpartId === selected.id)
+                .slice(-5)
+                .reverse()
+                .map((op) => (
+                  <li key={op.id} className={`scandal-item status-${op.success ? 'resolved' : 'unresolved'}`}>
+                    <span>
+                      Turn {op.turn} — {COVERT_OPERATION_LABELS[op.type]} —{' '}
+                      {op.success ? 'succeeded' : 'failed'}
+                      {op.detected ? ', detected' : ', undetected'}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          )}
 
           <h4 className="subheading">Trade Balance</h4>
           <div className="indicator-grid">

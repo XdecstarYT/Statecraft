@@ -117,6 +117,7 @@ export * from './systems/cabinet';
 export * from './systems/electionNight';
 export * from './systems/lobbying';
 export * from './systems/leadership';
+export * from './systems/espionage';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -227,6 +228,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     interestGroups: options.interestGroups ?? STARTER_INTEREST_GROUPS.map((g) => ({ ...g })),
     partyLeaderId,
     leadershipChallenge: null,
+    intelligenceCapability: 20,
+    covertOperations: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,

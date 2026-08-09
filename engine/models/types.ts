@@ -365,6 +365,23 @@ export interface LeadershipChallenge {
   challengerVotes?: number;
 }
 
+export type CovertOperationType = 'espionage' | 'sabotage' | 'destabilize' | 'coup';
+
+/**
+ * A logged attempt at one covert operation against a foreign counterpart.
+ * `success` and `detected` are independent — an op can be pulled off
+ * cleanly, botched but never traced, executed and still traced, or simply
+ * fail outright. See engine/systems/espionage.ts.
+ */
+export interface CovertOperationRecord {
+  id: string;
+  counterpartId: string;
+  type: CovertOperationType;
+  turn: number;
+  success: boolean;
+  detected: boolean;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -416,6 +433,9 @@ export interface GameState {
   partyLeaderId: Record<string, string>;
   /** At most one leadership contest in flight at a time. Null between challenges. */
   leadershipChallenge: LeadershipChallenge | null;
+  /** 0..100 — the player's own intelligence-agency strength, grown via investInIntelligence. Lowers detection risk and raises success odds on covert operations. */
+  intelligenceCapability: number;
+  covertOperations: CovertOperationRecord[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
