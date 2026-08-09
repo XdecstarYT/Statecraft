@@ -16,6 +16,7 @@ import { LobbyingPanel } from './components/LobbyingPanel';
 import { LeadershipPanel } from './components/LeadershipPanel';
 import { PartyFoundingPanel } from './components/PartyFoundingPanel';
 import { SecessionPanel } from './components/SecessionPanel';
+import { BallotInitiativePanel } from './components/BallotInitiativePanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
@@ -241,6 +242,7 @@ export default function App() {
           </div>
           <LeadershipPanel />
           <SecessionPanel />
+          <BallotInitiativePanel />
         </>
       )}
       {activeTab === 'world' && <WorldTab />}

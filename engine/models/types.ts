@@ -106,6 +106,26 @@ export interface Bill {
   sponsorId: string;
   status: BillStatus;
   whipCount: Record<string, WhipStance>;
+  /** A minority bloc is holding the floor vote hostage — see engine/systems/legislative.ts's invokeFilibuster/attemptCloture. Floor votes cannot resolve while true. */
+  filibustered?: boolean;
+}
+
+/**
+ * A national ballot initiative — puts an issue directly to the public
+ * instead of the legislature. `ideologyStance` is the position the "yes"
+ * side represents, scored against voter blocs the same way a politician's
+ * own ideology is (see opinion.ts's computeWeightedPublicApproval).
+ */
+export interface BallotInitiative {
+  id: string;
+  title: string;
+  description: string;
+  ideologyStance: IdeologyPosition;
+  economyEffect: EconomyDelta;
+  status: 'active' | 'passed' | 'failed';
+  turnProposed: number;
+  /** Set once resolved. */
+  yesShare?: number;
 }
 
 export interface PendingEconomyEffect {
@@ -478,6 +498,7 @@ export interface GameState {
   /** The current governing coalition, or null when a single party holds an outright majority and none was needed. */
   coalition: Coalition | null;
   secessionistMovements: SecessionistMovement[];
+  ballotInitiatives: BallotInitiative[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

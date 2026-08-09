@@ -1,6 +1,6 @@
 import { SeededRng } from '../rng';
 import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance } from '../ideology';
-import type { Bill, EconomyDelta, Politician, WhipStance } from '../models/types';
+import type { Bill, BillProvision, EconomyDelta, Politician, WhipStance } from '../models/types';
 
 export function relationshipKey(idA: string, idB: string): string {
   return idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
@@ -185,6 +185,9 @@ export function resolveFloorVote(
   lobbyingPressure = 0
 ): FloorVoteResult {
   assertStatus(bill, 'floor');
+  if (bill.filibustered) {
+    throw new Error(`Bill "${bill.id}" is filibustered — cloture must succeed before the floor vote can resolve`);
+  }
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
   if (!sponsor) {
     throw new Error(`Sponsor "${bill.sponsorId}" not found among politicians`);
@@ -230,6 +233,115 @@ export function applyFloorVoteResult(bill: Bill, result: FloorVoteResult): Bill 
     ...bill,
     status: result.passed ? 'passed' : 'failed',
     whipCount: result.finalWhipCount,
+  };
+}
+
+/**
+ * BILL AMENDMENTS — provisions can be reworked while a bill is still in
+ * drafting or committee, so a sponsor can trade away or add provisions to
+ * chase votes before the floor vote locks anything in. Amending after a
+ * bill reaches the floor isn't allowed — that's what the vote is for.
+ */
+function assertAmendable(bill: Bill) {
+  if (bill.status !== 'drafting' && bill.status !== 'committee') {
+    throw new Error(
+      `Bill "${bill.id}" can only be amended while drafting or in committee, but is "${bill.status}"`
+    );
+  }
+}
+
+export function addBillProvision(bill: Bill, provision: BillProvision): Bill {
+  assertAmendable(bill);
+  return { ...bill, provisions: [...bill.provisions, provision] };
+}
+
+export function removeBillProvision(bill: Bill, provisionId: string): Bill {
+  assertAmendable(bill);
+  return { ...bill, provisions: bill.provisions.filter((p) => p.id !== provisionId) };
+}
+
+export function amendBillProvision(
+  bill: Bill,
+  provisionId: string,
+  updates: Partial<Omit<BillProvision, 'id'>>
+): Bill {
+  assertAmendable(bill);
+  return {
+    ...bill,
+    provisions: bill.provisions.map((p) => (p.id === provisionId ? { ...p, ...updates } : p)),
+  };
+}
+
+/**
+ * FILIBUSTER & CLOTURE — a minority can stall a floor vote indefinitely
+ * once invoked; only a supermajority cloture vote can break it and let the
+ * real floor vote proceed. Cloture reuses the same support-probability
+ * model as the floor vote itself (a member's likely cloture vote tracks
+ * their likely bill vote), so it costs real political capital to model
+ * separately from just whipping harder.
+ */
+export const CLOTURE_THRESHOLD = 0.6;
+
+export function invokeFilibuster(bill: Bill): Bill {
+  assertStatus(bill, 'floor');
+  return { ...bill, filibustered: true };
+}
+
+export interface ClotureResult {
+  succeeded: boolean;
+  yesCount: number;
+  totalCount: number;
+  requiredCount: number;
+}
+
+export function attemptCloture(
+  bill: Bill,
+  politicians: Politician[],
+  relationships: Record<string, number>,
+  favorBank: Record<string, number>,
+  rng: SeededRng,
+  weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
+  lobbyingPressure = 0,
+  threshold: number = CLOTURE_THRESHOLD
+): { bill: Bill; result: ClotureResult } {
+  assertStatus(bill, 'floor');
+  const sponsor = politicians.find((p) => p.id === bill.sponsorId);
+  if (!sponsor) {
+    throw new Error(`Sponsor "${bill.sponsorId}" not found among politicians`);
+  }
+
+  let yesCount = 0;
+  for (const member of politicians) {
+    const existing = bill.whipCount[member.id];
+    let votesYes: boolean;
+    if (existing === 'yes' || existing === 'no') {
+      votesYes = existing === 'yes';
+    } else if (member.id === sponsor.id) {
+      votesYes = true;
+    } else {
+      const relationshipScore = relationships[relationshipKey(sponsor.id, member.id)] ?? 0;
+      const favorBankScore = favorBank[member.id] ?? 0;
+      const probability = computeSupportProbability(
+        member,
+        sponsor,
+        relationshipScore,
+        favorBankScore,
+        weights,
+        MAX_FAVORS,
+        lobbyingPressure
+      );
+      votesYes = resolveVote(probability, rng) === 'yes';
+    }
+    if (votesYes) yesCount++;
+  }
+
+  const totalCount = politicians.length;
+  const requiredCount = Math.ceil(totalCount * threshold);
+  const succeeded = yesCount >= requiredCount;
+
+  return {
+    bill: succeeded ? { ...bill, filibustered: false } : bill,
+    result: { succeeded, yesCount, totalCount, requiredCount },
   };
 }
 

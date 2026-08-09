@@ -186,6 +186,13 @@ function BillRow({
   const holdFloorVote = useStatecraftStore((s) => s.holdFloorVote);
   const nudgeRelationship = useStatecraftStore((s) => s.nudgeRelationship);
   const addFavor = useStatecraftStore((s) => s.addFavor);
+  const addProvisionAction = useStatecraftStore((s) => s.addProvisionAction);
+  const removeProvisionAction = useStatecraftStore((s) => s.removeProvisionAction);
+  const invokeFilibusterAction = useStatecraftStore((s) => s.invokeFilibusterAction);
+  const attemptClotureAction = useStatecraftStore((s) => s.attemptClotureAction);
+  const lastClotureResult = useStatecraftStore((s) => s.lastClotureResult);
+  const [newProvisionDesc, setNewProvisionDesc] = useState('');
+  const [newProvisionImpact, setNewProvisionImpact] = useState(0);
 
   if (!game) return null;
 
@@ -224,9 +231,42 @@ function BillRow({
             {bill.provisions.map((p) => (
               <li key={p.id}>
                 {p.description} <span className="muted">({p.budgetImpact >= 0 ? '+' : ''}{p.budgetImpact})</span>
+                {isPlayerBill && (bill.status === 'drafting' || bill.status === 'committee') && (
+                  <button className="ghost-button" onClick={() => removeProvisionAction(bill.id, p.id)}>
+                    Remove
+                  </button>
+                )}
               </li>
             ))}
           </ul>
+
+          {isPlayerBill && (bill.status === 'drafting' || bill.status === 'committee') && (
+            <div className="provision-row">
+              <input
+                type="text"
+                value={newProvisionDesc}
+                onChange={(e) => setNewProvisionDesc(e.target.value)}
+                placeholder="Amendment: new provision"
+              />
+              <input
+                type="number"
+                value={newProvisionImpact}
+                onChange={(e) => setNewProvisionImpact(Number(e.target.value) || 0)}
+                placeholder="Budget impact"
+              />
+              <button
+                className="ghost-button"
+                onClick={() => {
+                  if (!newProvisionDesc.trim()) return;
+                  addProvisionAction(bill.id, newProvisionDesc, newProvisionImpact);
+                  setNewProvisionDesc('');
+                  setNewProvisionImpact(0);
+                }}
+              >
+                + Amend
+              </button>
+            </div>
+          )}
 
           {isPlayerBill ? (
             <div className="bill-actions">
@@ -236,8 +276,11 @@ function BillRow({
               {bill.status === 'committee' && (
                 <button onClick={() => sendToFloor(bill.id)}>Send to Floor</button>
               )}
-              {bill.status === 'floor' && (
+              {bill.status === 'floor' && !bill.filibustered && (
                 <button onClick={() => holdFloorVote(bill.id)}>Hold Floor Vote</button>
+              )}
+              {bill.status === 'floor' && bill.filibustered && (
+                <button onClick={() => attemptClotureAction(bill.id)}>Attempt Cloture</button>
               )}
             </div>
           ) : (
@@ -246,6 +289,21 @@ function BillRow({
                 Rival-sponsored — progresses automatically each week. You can still whip against it below.
               </p>
             )
+          )}
+
+          {bill.status === 'floor' && !bill.filibustered && (
+            <button className="ghost-button" onClick={() => invokeFilibusterAction(bill.id)}>
+              Filibuster
+            </button>
+          )}
+          {bill.status === 'floor' && bill.filibustered && (
+            <p className="muted">Filibustered — a floor vote cannot proceed until cloture succeeds.</p>
+          )}
+          {lastClotureResult && lastClotureResult.billId === bill.id && (
+            <p className={lastClotureResult.succeeded ? 'result-pass' : 'result-fail'}>
+              Cloture {lastClotureResult.succeeded ? 'succeeded' : 'failed'} — {lastClotureResult.yesCount}/
+              {lastClotureResult.totalCount} (needed {lastClotureResult.requiredCount})
+            </p>
           )}
 
           <p className="whip-summary">

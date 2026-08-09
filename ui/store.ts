@@ -3,11 +3,18 @@ import {
   MAX_FAVORS,
   SeededRng,
   WAR_DECLARATION_RELATION_PENALTY,
+  addBillProvision,
   adjustRelation,
   advanceCareerTurn,
   advanceToCommittee,
   advanceToFloor,
   advanceTurn,
+  amendBillProvision,
+  attemptCloture,
+  removeBillProvision,
+  invokeFilibuster,
+  proposeBallotInitiativeAction as engineProposeBallotInitiative,
+  resolveBallotInitiativeAction as engineResolveBallotInitiative,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -79,9 +86,11 @@ import {
   setWhipStance,
   signTradeDeal,
   signTreaty,
+  type BallotResult,
   type CabinetPortfolio,
   type CampaignActionOutcome,
   type CareerState,
+  type ClotureResult,
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
@@ -171,6 +180,8 @@ interface StatecraftStore {
   lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
   lastLeadershipActionOutcome: (PartyActionOutcome & { action: 'rally' | 'denounce' }) | null;
   lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
+  lastClotureResult: (ClotureResult & { billId: string }) | null;
+  lastBallotResult: (BallotResult & { initiativeId: string }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -197,6 +208,18 @@ interface StatecraftStore {
   sendToFloor: (billId: string) => void;
   setStance: (billId: string, politicianId: string, stance: WhipStance) => void;
   holdFloorVote: (billId: string) => void;
+  addProvisionAction: (billId: string, description: string, budgetImpact: number) => void;
+  removeProvisionAction: (billId: string, provisionId: string) => void;
+  amendProvisionAction: (billId: string, provisionId: string, description: string, budgetImpact: number) => void;
+  invokeFilibusterAction: (billId: string) => void;
+  attemptClotureAction: (billId: string) => void;
+  proposeBallotInitiativeAction: (
+    title: string,
+    description: string,
+    ideologyStance: IdeologyPosition,
+    budgetImpact: number
+  ) => void;
+  resolveBallotInitiativeAction: (initiativeId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -255,6 +278,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastLobbyingOutcome: null,
   lastLeadershipActionOutcome: null,
   lastCovertOperationOutcome: null,
+  lastClotureResult: null,
+  lastBallotResult: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -545,6 +570,74 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastFloorResult: { ...result, billTitle: bill.title },
       lastCoverage: coverage,
     });
+  },
+
+  addProvisionAction: (billId, description, budgetImpact) => {
+    const game = get().game;
+    if (!game) return;
+    const trimmed = description.trim();
+    if (!trimmed) return;
+    const bills = game.bills.map((b) =>
+      b.id === billId
+        ? addBillProvision(b, { id: `${billId}-p${b.provisions.length + 1}`, description: trimmed, budgetImpact })
+        : b
+    );
+    set({ game: { ...game, bills } });
+  },
+
+  removeProvisionAction: (billId, provisionId) => {
+    const game = get().game;
+    if (!game) return;
+    const bills = game.bills.map((b) => (b.id === billId ? removeBillProvision(b, provisionId) : b));
+    set({ game: { ...game, bills } });
+  },
+
+  amendProvisionAction: (billId, provisionId, description, budgetImpact) => {
+    const game = get().game;
+    if (!game) return;
+    const trimmed = description.trim();
+    if (!trimmed) return;
+    const bills = game.bills.map((b) =>
+      b.id === billId ? amendBillProvision(b, provisionId, { description: trimmed, budgetImpact }) : b
+    );
+    set({ game: { ...game, bills } });
+  },
+
+  invokeFilibusterAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const bills = game.bills.map((b) => (b.id === billId ? invokeFilibuster(b) : b));
+    set({ game: { ...game, bills } });
+  },
+
+  attemptClotureAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const bill = game.bills.find((b) => b.id === billId);
+    if (!bill) return;
+    const rng = SeededRng.fromState(game.rngState);
+    const { bill: updatedBill, result } = attemptCloture(bill, game.politicians, game.relationships, game.favorBank, rng);
+    const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
+    set({ game: { ...game, bills, rngState: rng.getState() }, lastClotureResult: { ...result, billId } });
+  },
+
+  proposeBallotInitiativeAction: (title, description, ideologyStance, budgetImpact) => {
+    const game = get().game;
+    if (!game) return;
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) return;
+    const id = `initiative-${game.turn}-${game.ballotInitiatives.length + 1}`;
+    const economyEffect = { budgetBalance: budgetImpact / 10_000, gdpGrowth: -budgetImpact / 40_000 };
+    const nextState = engineProposeBallotInitiative(game, id, trimmedTitle, description.trim(), ideologyStance, economyEffect);
+    set({ game: nextState });
+  },
+
+  resolveBallotInitiativeAction: (initiativeId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineResolveBallotInitiative(game, initiativeId);
+    if (!outcome) return;
+    set({ game: state, lastBallotResult: { ...outcome, initiativeId } });
   },
 
   nudgeRelationship: (politicianId, delta) => {

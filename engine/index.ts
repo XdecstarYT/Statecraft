@@ -71,6 +71,7 @@ import {
   rollForNewMovement,
   secedeProvince,
 } from './systems/secession';
+import { proposeBallotInitiative, resolveBallotInitiative, type BallotResult } from './systems/referendum';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -139,6 +140,7 @@ export * from './systems/career';
 export * from './systems/partyManagement';
 export * from './systems/nationBuilder';
 export * from './systems/secession';
+export * from './systems/referendum';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -284,6 +286,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     covertOperations: [],
     coalition: null,
     secessionistMovements: [],
+    ballotInitiatives: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -954,6 +957,43 @@ export function suppressMovementAction(
     state: replaceMovement({ ...state, politicians, rngState: rng.getState() }, provinceId, result.movement),
     outcome: { success: true, seceded: false },
   };
+}
+
+/** Puts a new national ballot initiative on the docket, active until resolveBallotInitiativeAction is called on it. */
+export function proposeBallotInitiativeAction(
+  state: GameState,
+  id: string,
+  title: string,
+  description: string,
+  ideologyStance: IdeologyPosition,
+  economyEffect: EconomyDelta
+): GameState {
+  const initiative = proposeBallotInitiative(id, title, description, ideologyStance, economyEffect, state.turn);
+  return { ...state, ballotInitiatives: [...state.ballotInitiatives, initiative] };
+}
+
+/**
+ * Puts an active initiative to the national vote. A passed initiative's
+ * economyEffect is applied immediately, same as a passed bill — a
+ * referendum is a real policy lever, not a poll.
+ */
+export function resolveBallotInitiativeAction(
+  state: GameState,
+  initiativeId: string
+): { state: GameState; outcome: BallotResult | null } {
+  const initiative = state.ballotInitiatives.find((i) => i.id === initiativeId);
+  if (!initiative || initiative.status !== 'active') return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const { initiative: resolved, result } = resolveBallotInitiative(initiative, state.voterBlocs, rng);
+  const ballotInitiatives = state.ballotInitiatives.map((i) => (i.id === initiativeId ? resolved : i));
+
+  let economy = state.economy;
+  if (result.passed) {
+    economy = applyImmediateEffect(economy, initiative.economyEffect);
+  }
+
+  return { state: { ...state, ballotInitiatives, economy, rngState: rng.getState() }, outcome: result };
 }
 
 /**

@@ -2,13 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import type { Bill, Politician } from '../models/types';
 import {
+  addBillProvision,
   advanceToCommittee,
   advanceToFloor,
+  amendBillProvision,
   applyFloorVoteResult,
+  attemptCloture,
   computeBillEconomyEffect,
   computeSupportProbability,
+  invokeFilibuster,
   proposeBill,
   relationshipKey,
+  removeBillProvision,
   resolveFloorVote,
   resolveVote,
   setWhipStance,
@@ -279,5 +284,108 @@ describe('computeBillEconomyEffect', () => {
       proposeBill({ id: 'b5', title: 'Large', sponsorId: 's', provisions: [{ id: 'p1', description: 'x', budgetImpact: -5000 }] })
     );
     expect(Math.abs(large.budgetBalance!)).toBeGreaterThan(Math.abs(small.budgetBalance!));
+  });
+});
+
+describe('bill amendments', () => {
+  const base = () =>
+    proposeBill({
+      id: 'amend-bill',
+      title: 'Amendable Bill',
+      sponsorId: 'sponsor',
+      provisions: [{ id: 'p1', description: 'Original', budgetImpact: 100 }],
+    });
+
+  it('allows adding a provision while drafting', () => {
+    const bill = addBillProvision(base(), { id: 'p2', description: 'New', budgetImpact: -50 });
+    expect(bill.provisions).toHaveLength(2);
+  });
+
+  it('allows adding a provision in committee', () => {
+    const bill = addBillProvision(advanceToCommittee(base()), { id: 'p2', description: 'New', budgetImpact: -50 });
+    expect(bill.provisions).toHaveLength(2);
+  });
+
+  it('allows removing a provision', () => {
+    const withSecond = addBillProvision(base(), { id: 'p2', description: 'New', budgetImpact: -50 });
+    const bill = removeBillProvision(withSecond, 'p1');
+    expect(bill.provisions.map((p) => p.id)).toEqual(['p2']);
+  });
+
+  it('allows amending a provision in place', () => {
+    const bill = amendBillProvision(base(), 'p1', { budgetImpact: 999 });
+    expect(bill.provisions[0].budgetImpact).toBe(999);
+    expect(bill.provisions[0].description).toBe('Original');
+  });
+
+  it('rejects amendment once the bill has reached the floor', () => {
+    const onFloor = advanceToFloor(advanceToCommittee(base()));
+    expect(() => addBillProvision(onFloor, { id: 'p2', description: 'x', budgetImpact: 1 })).toThrow();
+    expect(() => removeBillProvision(onFloor, 'p1')).toThrow();
+    expect(() => amendBillProvision(onFloor, 'p1', { budgetImpact: 1 })).toThrow();
+  });
+});
+
+describe('filibuster and cloture', () => {
+  const sponsor = makePolitician({ id: 'sponsor', partyId: 'party-a', ideology: { economic: 50, social: 50 } });
+
+  function makeChamber(count: number, aligned: boolean): Politician[] {
+    const members = Array.from({ length: count }, (_, i) =>
+      makePolitician({
+        id: `m${i}`,
+        partyId: aligned ? 'party-a' : 'party-b',
+        ideology: aligned ? { economic: 50, social: 50 } : { economic: -80, social: -80 },
+      })
+    );
+    return [sponsor, ...members];
+  }
+
+  function floorBill(): Bill {
+    return advanceToFloor(
+      advanceToCommittee(
+        proposeBill({ id: 'fb1', title: 'Filibuster Test', sponsorId: 'sponsor', provisions: [{ id: 'p1', description: 'x', budgetImpact: 0 }] })
+      )
+    );
+  }
+
+  it('invokeFilibuster only works on a floor-stage bill', () => {
+    expect(() => invokeFilibuster(proposeBill({ id: 'x', title: 'x', sponsorId: 'sponsor', provisions: [] }))).toThrow();
+    const bill = invokeFilibuster(floorBill());
+    expect(bill.filibustered).toBe(true);
+  });
+
+  it('resolveFloorVote refuses to run while filibustered', () => {
+    const bill = invokeFilibuster(floorBill());
+    const rng = new SeededRng(1);
+    expect(() => resolveFloorVote(bill, [sponsor], {}, {}, rng)).toThrow();
+  });
+
+  it('a supportive supermajority chamber breaks cloture', () => {
+    const bill = invokeFilibuster(floorBill());
+    const politicians = makeChamber(9, true);
+    const rng = new SeededRng(7);
+    const { bill: after, result } = attemptCloture(bill, politicians, {}, {}, rng);
+    expect(result.succeeded).toBe(true);
+    expect(after.filibustered).toBe(false);
+  });
+
+  it('a hostile chamber fails to break cloture and the bill stays filibustered', () => {
+    const bill = invokeFilibuster(floorBill());
+    const politicians = makeChamber(9, false);
+    const rng = new SeededRng(7);
+    const { bill: after, result } = attemptCloture(bill, politicians, {}, {}, rng);
+    expect(result.succeeded).toBe(false);
+    expect(after.filibustered).toBe(true);
+  });
+
+  it('a successful cloture then allows the floor vote to resolve', () => {
+    let bill = invokeFilibuster(floorBill());
+    const politicians = makeChamber(9, true);
+    const rng = new SeededRng(7);
+    const cloture = attemptCloture(bill, politicians, {}, {}, rng);
+    expect(cloture.result.succeeded).toBe(true);
+    bill = cloture.bill;
+    const vote = resolveFloorVote(bill, politicians, {}, {}, rng);
+    expect(vote.passed).toBe(true);
   });
 });
