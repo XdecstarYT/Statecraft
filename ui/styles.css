@@ -544,6 +544,20 @@ button:disabled {
   margin-bottom: 0.85rem;
 }
 
+.province-report-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.election-night-provinces .bill-status {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.6rem;
+}
+
 .nation-detail h3 {
   margin: 0 0 0.15rem;
   font-size: 1rem;

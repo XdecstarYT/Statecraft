@@ -13,6 +13,11 @@ import {
   declareWar,
   proposeTradeDeal,
   signTradeDeal,
+  beginElectionNight,
+  reportNextProvinceAction,
+  concludeElectionNightAction,
+  dismissElectionNight,
+  appointToCabinet,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -416,6 +421,147 @@ describe('runLegislativeElection', () => {
     const popularResult = runLegislativeElection(popular).outcome.seatsWon[player.partyId] ?? 0;
     const unpopularResult = runLegislativeElection(unpopular).outcome.seatsWon[player.partyId] ?? 0;
     expect(popularResult).toBeGreaterThanOrEqual(unpopularResult);
+  });
+});
+
+describe('election night flow', () => {
+  it('runs polls-open through a concluded, dismissable night for an FPTP country', () => {
+    let state = createNewGame(11);
+    state = beginElectionNight(state);
+    expect(state.electionNight).not.toBeNull();
+    expect(state.electionNight!.status).toBe('reporting');
+
+    while (state.electionNight!.status === 'reporting') {
+      state = reportNextProvinceAction(state);
+    }
+    expect(state.electionNight!.status).toBe('called');
+    expect(state.electionNight!.finalSeats).toBeDefined();
+
+    state = concludeElectionNightAction(state);
+    expect(state.electionNight!.status).toBe('concluded');
+    expect(state.electionNight!.victorySpeech).toBeTruthy();
+    // The real seat counts should now match what the night called.
+    const totalSeats = state.parties.reduce((sum, p) => sum + p.seats, 0);
+    expect(totalSeats).toBe(Object.values(state.electionNight!.finalSeats!).reduce((a, b) => a + b, 0));
+
+    state = dismissElectionNight(state);
+    expect(state.electionNight).toBeNull();
+  });
+
+  it('runs a full night for a PR country too', () => {
+    let state = createNewGame(11, { country: VANTORRA_COUNTRY, parties: VANTORRA_PARTIES });
+    state = beginElectionNight(state);
+    while (state.electionNight!.status === 'reporting') {
+      state = reportNextProvinceAction(state);
+    }
+    expect(state.electionNight!.status).toBe('called');
+    const totalSeats = Object.values(state.electionNight!.finalSeats!).reduce((a, b) => a + b, 0);
+    expect(totalSeats).toBe(VANTORRA_COUNTRY.legislature.totalSeats);
+  });
+
+  it('is deterministic for the same seed across the whole night', () => {
+    const runOnce = () => {
+      let state = createNewGame(11);
+      state = beginElectionNight(state);
+      while (state.electionNight!.status === 'reporting') {
+        state = reportNextProvinceAction(state);
+      }
+      return concludeElectionNightAction(state).electionNight;
+    };
+    expect(runOnce()).toEqual(runOnce());
+  });
+});
+
+describe('cabinet effects wired into gameplay', () => {
+  it('a Finance minister measurably calms economy volatility on average across many runs', () => {
+    // A single-seed comparison of a noise-derived metric is inherently
+    // flaky (25% less volatility doesn't mean every individual run is
+    // calmer) — average the metric across many independent seeds instead.
+    const runVariance = (seed: number, withMinister: boolean) => {
+      let state = createNewGame(seed);
+      const sharpFinanceMinister = state.politicians.find((p) => !p.isPlayer)!;
+      if (withMinister) {
+        state = {
+          ...state,
+          cabinet: appointToCabinet([], 'finance', sharpFinanceMinister.id),
+          politicians: state.politicians.map((p) =>
+            p.id === sharpFinanceMinister.id ? { ...p, attributes: { ...p.attributes, intellect: 10 } } : p
+          ),
+        };
+      }
+      const growthValues: number[] = [];
+      for (let i = 0; i < 30; i++) {
+        state = advanceTurn(state);
+        growthValues.push(state.economy.gdpGrowth);
+      }
+      const mean = growthValues.reduce((a, b) => a + b, 0) / growthValues.length;
+      return growthValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / growthValues.length;
+    };
+
+    const trials = 40;
+    let totalWith = 0;
+    let totalWithout = 0;
+    for (let seed = 1; seed <= trials; seed++) {
+      totalWith += runVariance(seed, true);
+      totalWithout += runVariance(seed, false);
+    }
+
+    expect(totalWith / trials).toBeLessThan(totalWithout / trials);
+  });
+
+  it('a Defense minister adds real strength to a war (advantage improves over the same seed)', () => {
+    let base = createNewGame(21);
+    const counterpart = base.foreignCounterparts[0];
+    base = {
+      ...base,
+      playerMilitary: { strength: 40, personnel: 400, techLevel: 40 },
+      foreignCounterparts: base.foreignCounterparts.map((c) =>
+        c.id === counterpart.id ? { ...c, military: { strength: 45, personnel: 400, techLevel: 40 } } : c
+      ),
+    };
+    const defenseMinister = base.politicians.find((p) => !p.isPlayer)!;
+
+    const alone = { ...base, wars: [declareWar(counterpart.id, base.turn)] };
+    const withMinister = {
+      ...base,
+      cabinet: appointToCabinet([], 'defense', defenseMinister.id),
+      politicians: base.politicians.map((p) =>
+        p.id === defenseMinister.id ? { ...p, attributes: { ...p.attributes, intellect: 10 } } : p
+      ),
+      wars: [declareWar(counterpart.id, base.turn)],
+    };
+
+    const afterAlone = runWarTurns(alone, SeededRng.fromState(alone.rngState));
+    const afterMinister = runWarTurns(withMinister, SeededRng.fromState(withMinister.rngState));
+
+    expect(afterMinister.wars[0].advantage).toBeGreaterThan(afterAlone.wars[0].advantage);
+  });
+
+  it('a Justice minister raises detection odds for corruption (including the player\'s own)', () => {
+    const base = createNewGame(21);
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const target = base.politicians.find((p) => p.id !== player.id)!;
+    const justiceMinister = base.politicians.find((p) => !p.isPlayer && p.id !== target.id)!;
+
+    const withMinister = {
+      ...base,
+      cabinet: appointToCabinet([], 'justice', justiceMinister.id),
+      politicians: base.politicians.map((p) =>
+        p.id === justiceMinister.id ? { ...p, attributes: { ...p.attributes, integrity: 10 } } : p
+      ),
+    };
+
+    let detectedWithout = 0;
+    let detectedWith = 0;
+    const trials = 200;
+    for (let seed = 1; seed <= trials; seed++) {
+      const withoutState = { ...base, rngState: seed };
+      const withState = { ...withMinister, rngState: seed };
+      if (commitCorruption(withoutState, player.id, target.id, 'hard').outcome.detected) detectedWithout++;
+      if (commitCorruption(withState, player.id, target.id, 'hard').outcome.detected) detectedWith++;
+    }
+
+    expect(detectedWith).toBeGreaterThan(detectedWithout);
   });
 });
 

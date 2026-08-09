@@ -137,6 +137,22 @@ export interface District {
   name: string;
 }
 
+/**
+ * A sub-national reporting region for election night — groups districts
+ * under FPTP (results are just the sum of its own districts); under PR
+ * there are no districts to group, so a province instead carries its own
+ * relative turnout weight and reports a vote sample of its own. See
+ * engine/systems/electionNight.ts.
+ */
+export interface Province {
+  id: string;
+  name: string;
+  /** FPTP only: which districts belong to this province. */
+  districtIds: string[];
+  /** Relative population/turnout weight, used to size a PR province's vote sample. */
+  weight: number;
+}
+
 export interface Legislature {
   name: string;
   electoralSystem: ElectoralSystem;
@@ -146,6 +162,8 @@ export interface Legislature {
   totalSeats: number;
   /** Minimum vote-share fraction (e.g. 0.05) a party needs to win PR seats. */
   prThreshold: number;
+  /** Optional hand-authored reporting regions; auto-generated when omitted. See getProvinces in electionNight.ts. */
+  provinces?: Province[];
 }
 
 export interface Country {
@@ -254,6 +272,48 @@ export interface War {
   endTurn?: number;
 }
 
+/** One FPTP district's vote tally. See engine/systems/elections.ts. */
+export interface DistrictResult {
+  districtId: string;
+  votesByParty: Record<string, number>;
+}
+
+/** One party's vote total in a PR/national/runoff/primary tally. See engine/systems/elections.ts. */
+export interface PartyVoteShare {
+  partyId: string;
+  votes: number;
+}
+
+export type ElectionNightStatus = 'reporting' | 'called' | 'concluded';
+
+/**
+ * A province-by-province live-reveal election, rather than the instant
+ * one-shot result runLegislativeElection produces. See
+ * engine/systems/electionNight.ts.
+ */
+export interface ElectionNightState {
+  status: ElectionNightStatus;
+  system: ElectoralSystem;
+  /** Province ids in the order they'll report, precomputed and fixed for the whole night. */
+  reportingOrder: string[];
+  reportedProvinceIds: string[];
+  /** FPTP: every district's full result, precomputed up front (not just the reported ones). */
+  districtResults: DistrictResult[];
+  /** PR: each province's own simulated vote sample; summed once every province has reported. */
+  provinceVotes: Record<string, PartyVoteShare[]>;
+  /** Final seats, populated once status is 'called'. */
+  finalSeats?: Record<string, number>;
+  winnerPartyId?: string;
+  victorySpeech?: string;
+}
+
+export type CabinetPortfolio = 'finance' | 'defense' | 'foreignAffairs' | 'justice';
+
+export interface CabinetAppointment {
+  portfolio: CabinetPortfolio;
+  politicianId: string;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -295,6 +355,9 @@ export interface GameState {
   treaties: Treaty[];
   tradeDeals: TradeDeal[];
   wars: War[];
+  /** Live province-by-province election in progress, if any. Null between elections. */
+  electionNight: ElectionNightState | null;
+  cabinet: CabinetAppointment[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

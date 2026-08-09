@@ -16,6 +16,6 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['engine/**/*.test.ts'],
+    include: ['engine/**/*.test.ts', 'content/**/*.test.ts'],
   },
 });

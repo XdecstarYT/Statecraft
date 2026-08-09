@@ -7,14 +7,19 @@ import {
   advanceToCommittee,
   advanceToFloor,
   advanceTurn,
+  appointToCabinet,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
   applyImmediateEffect,
+  beginElectionNight,
   breakTreaty,
   cancelTradeDeal,
   commitCorruption,
+  computeCabinetEffects,
+  concludeElectionNightAction as engineConcludeElectionNight,
   createNewGame,
   declareWar,
+  dismissElectionNight,
   enactPassedBill,
   generateEventCoverage,
   generateNationalVotes,
@@ -33,6 +38,8 @@ import {
   proposeTreaty,
   pushApprovalEvent,
   relationshipKey,
+  removeFromCabinet,
+  reportNextProvinceAction as engineReportNextProvince,
   resolveFloorVote,
   resolveMMP,
   resolvePrimary,
@@ -45,6 +52,7 @@ import {
   setWhipStance,
   signTradeDeal,
   signTreaty,
+  type CabinetPortfolio,
   type CampaignActionOutcome,
   type CommodityType,
   type CorruptionAttemptOutcome,
@@ -134,6 +142,12 @@ interface StatecraftStore {
   cancelTradeDealAction: (dealId: string) => void;
   imposeEmbargoAction: (counterpartId: string) => void;
   investInMilitaryAction: (tier: MilitaryInvestmentTier) => void;
+  startElectionNightAction: () => void;
+  reportNextProvinceAction: () => void;
+  concludeElectionNightAction: () => void;
+  dismissElectionNightAction: () => void;
+  appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string) => void;
+  removeFromCabinetAction: (portfolio: CabinetPortfolio) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -463,7 +477,9 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     if (game.wars.some((w) => w.counterpartId === counterpartId && w.status === 'active')) return;
     const war = declareWar(counterpartId, game.turn);
-    const foreignRelations = adjustRelation(game.foreignRelations, counterpartId, WAR_DECLARATION_RELATION_PENALTY);
+    const softening = computeCabinetEffects(game.cabinet, game.politicians).warDeclarationRelationSoftening;
+    const penalty = WAR_DECLARATION_RELATION_PENALTY * (1 - softening);
+    const foreignRelations = adjustRelation(game.foreignRelations, counterpartId, penalty);
     set({ game: { ...game, wars: [...game.wars, war], foreignRelations } });
   },
 
@@ -522,5 +538,41 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { military, economyEffect } = investInMilitary(game.playerMilitary, tier);
     const economy = applyImmediateEffect(game.economy, economyEffect);
     set({ game: { ...game, playerMilitary: military, economy } });
+  },
+
+  startElectionNightAction: () => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: beginElectionNight(game), lastElection: null });
+  },
+
+  reportNextProvinceAction: () => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineReportNextProvince(game) });
+  },
+
+  concludeElectionNightAction: () => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineConcludeElectionNight(game) });
+  },
+
+  dismissElectionNightAction: () => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: dismissElectionNight(game) });
+  },
+
+  appointToCabinetAction: (portfolio, politicianId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, cabinet: appointToCabinet(game.cabinet, portfolio, politicianId) } });
+  },
+
+  removeFromCabinetAction: (portfolio) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio) } });
   },
 }));

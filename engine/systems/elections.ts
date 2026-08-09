@@ -1,15 +1,12 @@
 import { SeededRng } from '../rng';
 import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance } from '../ideology';
-import type { District, IdeologyPosition, Party } from '../models/types';
+import type { District, DistrictResult, IdeologyPosition, Party, PartyVoteShare } from '../models/types';
+
+export type { DistrictResult, PartyVoteShare } from '../models/types';
 
 /**
  * FIRST PAST THE POST
  */
-
-export interface DistrictResult {
-  districtId: string;
-  votesByParty: Record<string, number>;
-}
 
 /** Highest vote count wins the district's single seat. Ties favor the party listed first. */
 export function resolveFPTPDistrict(result: DistrictResult): string {
@@ -69,11 +66,6 @@ export function generateDistrictVotes(
 /**
  * PARTY-LIST PR (D'HONDT)
  */
-
-export interface PartyVoteShare {
-  partyId: string;
-  votes: number;
-}
 
 /**
  * Allocates `totalSeats` by repeatedly awarding the next seat to whichever

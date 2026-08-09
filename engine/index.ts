@@ -47,6 +47,13 @@ import {
   computeWarResolutionRelationDelta,
   resolveWarTurn,
 } from './systems/military';
+import { computeCabinetEffects } from './systems/cabinet';
+import {
+  computeVictoryMarginFraction,
+  concludeElectionNight as concludeElectionNightState,
+  reportNextProvince,
+  startElectionNight,
+} from './systems/electionNight';
 import {
   applyNpcStances,
   computeAllPartyMomentum,
@@ -66,6 +73,7 @@ import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
 import { nationsExcluding, startingMilitaryProfile } from '../content/diplomacy/nations';
 import { CRISIS_TABLE } from '../content/events/crisisTable';
 import { BILL_TEMPLATES } from '../content/flavor/billTemplates';
+import { pickVictorySpeech } from '../content/flavor/victorySpeeches';
 
 export * from './rng';
 export * from './ideology';
@@ -85,6 +93,8 @@ export * from './systems/npc';
 export * from './systems/campaign';
 export * from './systems/military';
 export * from './systems/trade';
+export * from './systems/cabinet';
+export * from './systems/electionNight';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -179,6 +189,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     treaties: [],
     tradeDeals: [],
     wars: [],
+    electionNight: null,
+    cabinet: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -281,12 +293,13 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
 
     if (actor && tier && target) {
       const settings = getDifficultySettings(state.difficulty);
+      const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
       const result = attemptCorruptionAction(
         tier,
         actor.attributes.integrity,
         0,
         rng,
-        settings.corruptionDetectionMultiplier
+        settings.corruptionDetectionMultiplier * cabinetEffects.corruptionDetectionMultiplier
       );
       favorBank = {
         ...favorBank,
@@ -328,8 +341,13 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
  */
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
+  const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
   const rng = SeededRng.fromState(state.rngState);
-  const economy = advanceEconomy(state.economy, rng, settings.economyVolatilityMultiplier);
+  const economy = advanceEconomy(
+    state.economy,
+    rng,
+    settings.economyVolatilityMultiplier * cabinetEffects.economyVolatilityMultiplier
+  );
   const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
   let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
 
@@ -380,13 +398,14 @@ export function runWarTurns(state: GameState, rng: SeededRng): GameState {
   let foreignRelations = state.foreignRelations;
   let playerMilitary = state.playerMilitary;
   let foreignCounterparts = state.foreignCounterparts;
+  const cabinetWarBonus = computeCabinetEffects(state.cabinet, state.politicians).warStrengthBonus;
 
   const wars = state.wars.map((war) => {
     if (war.status !== 'active') return war;
     const counterpart = foreignCounterparts.find((c) => c.id === war.counterpartId);
     if (!counterpart) return war;
 
-    const allyBonus = computeAllyStrengthBonus(state, war.counterpartId);
+    const allyBonus = computeAllyStrengthBonus(state, war.counterpartId) + cabinetWarBonus;
     const result = resolveWarTurn(war, playerMilitary, counterpart.military, state.turn, rng, allyBonus);
     economy = applyImmediateEffect(economy, result.economyEffect);
     playerMilitary = applyWarAttrition(playerMilitary);
@@ -520,12 +539,13 @@ export function commitCorruption(
   }
 
   const settings = getDifficultySettings(state.difficulty);
+  const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
   const result = attemptCorruptionAction(
     tier,
     actor.attributes.integrity,
     investigativePressure,
     rng,
-    settings.corruptionDetectionMultiplier
+    settings.corruptionDetectionMultiplier * cabinetEffects.corruptionDetectionMultiplier
   );
 
   const favorBank = {
@@ -624,4 +644,51 @@ export function runLegislativeElection(
     state: { ...state, parties, rngState: rng.getState() },
     outcome,
   };
+}
+
+/**
+ * Starts a live, province-by-province election night instead of the
+ * instant runLegislativeElection above — same underlying vote generation
+ * and momentum, but revealed progressively via reportNextProvinceAction.
+ */
+export function beginElectionNight(state: GameState, turnout = 500_000): GameState {
+  const rng = SeededRng.fromState(state.rngState);
+  const momentum = computeAllPartyMomentum(state.politicians, state.parties);
+  const electionNight = startElectionNight(state.country, state.parties, turnout, rng, momentum);
+  return { ...state, electionNight, rngState: rng.getState() };
+}
+
+/** Reveals the next province's results. Once every province has reported, the race is called. */
+export function reportNextProvinceAction(state: GameState): GameState {
+  if (!state.electionNight) return state;
+  const electionNight = reportNextProvince(state.electionNight, state.country, state.parties);
+  return { ...state, electionNight };
+}
+
+/**
+ * Once the race is called, applies the final seats to the parties (the
+ * same mutation runLegislativeElection makes), picks a victory speech for
+ * the winner, and marks the night 'concluded' so the UI can show the
+ * result before returning to normal play.
+ */
+export function concludeElectionNightAction(state: GameState): GameState {
+  if (!state.electionNight || state.electionNight.status !== 'called' || !state.electionNight.finalSeats) {
+    return state;
+  }
+  const rng = SeededRng.fromState(state.rngState);
+  const finalSeats = state.electionNight.finalSeats;
+  const winner = state.parties.find((p) => p.id === state.electionNight!.winnerPartyId);
+  const marginFraction = computeVictoryMarginFraction(finalSeats);
+  const speech = winner ? pickVictorySpeech(winner.name, winner.ideology, marginFraction, rng) : '';
+
+  const parties = state.parties.map((party) => ({ ...party, seats: finalSeats[party.id] ?? 0 }));
+  const electionNight = concludeElectionNightState(state.electionNight, speech);
+
+  return { ...state, parties, electionNight, rngState: rng.getState() };
+}
+
+/** Dismisses a concluded election night, returning to normal play. A no-op unless it's actually concluded. */
+export function dismissElectionNight(state: GameState): GameState {
+  if (!state.electionNight || state.electionNight.status !== 'concluded') return state;
+  return { ...state, electionNight: null };
 }
