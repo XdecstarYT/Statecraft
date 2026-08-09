@@ -4,8 +4,11 @@ import type {
   EconomyState,
   ElectoralSystem,
   GameState,
+  IdeologyPosition,
+  MediaOutlet,
   Party,
   Politician,
+  VoterBloc,
 } from './models/types';
 import { advanceEconomy } from './systems/economy';
 import {
@@ -16,18 +19,23 @@ import {
   type DistrictResult,
   type PartyVoteShare,
 } from './systems/elections';
+import { advanceApproval, pushApprovalEvent } from './systems/opinion';
+import { generateCoverage, type CoverageEvent, type EventKind } from './systems/media';
+import { clampAxis } from './ideology';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
+import { STARTER_VOTER_BLOCS } from '../content/opinion/blocs';
+import { STARTER_MEDIA_OUTLETS } from '../content/media/outlets';
+import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
 
 export * from './rng';
+export * from './ideology';
 export * from './models/types';
 export * from './systems/legislative';
 export * from './systems/elections';
 export * from './systems/economy';
-
-function clampAxis(value: number): number {
-  return Math.max(-100, Math.min(100, value));
-}
+export * from './systems/opinion';
+export * from './systems/media';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -65,6 +73,7 @@ function generatePoliticians(parties: Party[], rng: SeededRng): Politician[] {
         },
         partyId: party.id,
         approval: { public: 50, base: 55, partyElite: 55 },
+        approvalEvents: [],
       });
     }
   }
@@ -74,6 +83,8 @@ function generatePoliticians(parties: Party[], rng: SeededRng): Politician[] {
 export interface NewGameOptions {
   country?: Country;
   parties?: Party[];
+  voterBlocs?: VoterBloc[];
+  mediaOutlets?: MediaOutlet[];
   playerPartyId?: string;
   playerName?: string;
 }
@@ -105,14 +116,60 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     economy: { ...STARTING_ECONOMY, pendingEffects: [] },
     relationships: {},
     favorBank: {},
+    voterBlocs: options.voterBlocs ?? STARTER_VOTER_BLOCS,
+    mediaOutlets: options.mediaOutlets ?? STARTER_MEDIA_OUTLETS,
   };
 }
 
-/** Advances the economy by one turn. Does not touch bills — call legislative actions separately. */
+/**
+ * Advances the economy and every politician's multi-audience approval by
+ * one turn. Does not touch bills — call legislative actions separately.
+ */
 export function advanceTurn(state: GameState): GameState {
   const rng = SeededRng.fromState(state.rngState);
   const economy = advanceEconomy(state.economy, rng);
-  return { ...state, economy, turn: state.turn + 1, rngState: rng.getState() };
+  const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
+  return { ...state, economy, politicians, turn: state.turn + 1, rngState: rng.getState() };
+}
+
+/**
+ * Generates every media outlet's framing of one event (a bill's fate, an
+ * election result, ...) about a given politician, using the game's seeded
+ * RNG to pick among pre-authored headline variants.
+ */
+export function generateEventCoverage(
+  state: GameState,
+  eventKind: EventKind,
+  subjectName: string,
+  subjectIdeology: IdeologyPosition
+): { state: GameState; coverage: CoverageEvent[] } {
+  const rng = SeededRng.fromState(state.rngState);
+  const coverage = generateCoverage(
+    state.mediaOutlets,
+    HEADLINE_TEMPLATES,
+    subjectName,
+    subjectIdeology,
+    eventKind,
+    rng
+  );
+  return { state: { ...state, rngState: rng.getState() }, coverage };
+}
+
+/**
+ * Pushes a decaying public-approval nudge onto a bill's sponsor after a
+ * floor vote — a win bumps them up, a loss knocks them down, but per the
+ * approval-update rules in opinion.ts it fades in gradually rather than
+ * jumping straight there.
+ */
+export function applyBillOutcomeToApproval(
+  state: GameState,
+  sponsorId: string,
+  passed: boolean
+): GameState {
+  const politicians = state.politicians.map((p) =>
+    p.id === sponsorId ? pushApprovalEvent(p, 'public', passed ? 15 : -15, 6) : p
+  );
+  return { ...state, politicians };
 }
 
 export interface ElectionOutcome {

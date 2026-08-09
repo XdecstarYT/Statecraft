@@ -41,6 +41,18 @@ export interface PoliticianApproval {
   partyElite: number;
 }
 
+/**
+ * A temporary, decaying nudge toward a new approval level for one audience —
+ * how a single event's influence fades over a few turns instead of causing
+ * an instant jump. See engine/systems/opinion.ts.
+ */
+export interface ApprovalEvent {
+  audience: keyof PoliticianApproval;
+  impact: number;
+  turnsRemaining: number;
+  initialTurns: number;
+}
+
 export interface Politician {
   id: string;
   name: string;
@@ -49,6 +61,24 @@ export interface Politician {
   attributes: PoliticianAttributes;
   partyId: string;
   approval: PoliticianApproval;
+  approvalEvents: ApprovalEvent[];
+}
+
+/**
+ * A segment of the electorate, not a single approval number — voters are
+ * modeled as blocs with their own size, ideology, and how easily events
+ * move them. See engine/systems/opinion.ts.
+ */
+export interface VoterBloc {
+  id: string;
+  name: string;
+  /** Fraction of the electorate, 0..1. Bloc sizes across a country should sum to ~1. */
+  size: number;
+  ideology: IdeologyPosition;
+  /** 0 (locked-in, ignores events) .. 1 (swings easily). */
+  persuadability: number;
+  /** Ranked issues this bloc cares about most right now; weights should sum to ~1. */
+  issueSalience: { issue: string; weight: number }[];
 }
 
 export type WhipStance = 'yes' | 'no' | 'undecided';
@@ -123,6 +153,15 @@ export interface Country {
   legislature: Legislature;
 }
 
+/** A static bias profile for a press outlet. See engine/systems/media.ts. */
+export interface MediaOutlet {
+  id: string;
+  name: string;
+  bias: IdeologyPosition;
+  /** Fraction of the public this outlet reaches, 0..1. */
+  reach: number;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -137,4 +176,6 @@ export interface GameState {
   relationships: Record<string, number>;
   /** politicianId -> favors owed to the player, 0..maxFavors. Used by the whip formula. */
   favorBank: Record<string, number>;
+  voterBlocs: VoterBloc[];
+  mediaOutlets: MediaOutlet[];
 }

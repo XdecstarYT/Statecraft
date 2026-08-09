@@ -1,17 +1,12 @@
 import { SeededRng } from '../rng';
-import type { Bill, IdeologyPosition, Politician, WhipStance } from '../models/types';
+import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance } from '../ideology';
+import type { Bill, Politician, WhipStance } from '../models/types';
 
 export function relationshipKey(idA: string, idB: string): string {
   return idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
 }
 
 export const MAX_FAVORS = 10;
-
-const MAX_IDEOLOGICAL_DISTANCE = Math.sqrt(200 ** 2 + 200 ** 2);
-
-function ideologicalDistance(a: IdeologyPosition, b: IdeologyPosition): number {
-  return Math.sqrt((a.economic - b.economic) ** 2 + (a.social - b.social) ** 2);
-}
 
 function sigmoid(x: number): number {
   return 1 / (1 + Math.exp(-x));

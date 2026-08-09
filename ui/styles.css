@@ -244,3 +244,66 @@ button:hover {
   padding: 0.2rem 0.4rem;
   font-size: 0.72rem;
 }
+
+.coverage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.coverage-item {
+  border: 1px solid #eceef2;
+  border-left-width: 4px;
+  border-radius: 6px;
+  padding: 0.5rem 0.7rem;
+}
+
+.coverage-item.frame-favorable {
+  border-left-color: #15803d;
+}
+
+.coverage-item.frame-neutral {
+  border-left-color: #6b7280;
+}
+
+.coverage-item.frame-critical {
+  border-left-color: #b91c1c;
+}
+
+.coverage-outlet {
+  font-weight: 600;
+  font-size: 0.85rem;
+  margin-right: 0.5rem;
+}
+
+.coverage-frame {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.frame-badge-favorable {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.frame-badge-neutral {
+  background: #e5e7eb;
+  color: #374151;
+}
+
+.frame-badge-critical {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.coverage-headline {
+  margin: 0.35rem 0 0;
+  font-size: 0.88rem;
+}

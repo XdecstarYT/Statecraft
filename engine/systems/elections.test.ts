@@ -2,11 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import {
   allocateSeatsDHondt,
+  droopQuota,
   generateDistrictVotes,
   generateNationalVotes,
+  generatePrimaryVotes,
+  generateRankedBallots,
+  getMajorityWinner,
+  getRunoffPair,
   resolveFPTPDistrict,
   resolveFPTPElection,
+  resolveMMP,
+  resolvePrimary,
+  resolveRunoffRound,
+  resolveSTV,
   type DistrictResult,
+  type PartyVoteShare,
+  type RankedBallot,
 } from './elections';
 import type { Party } from '../models/types';
 
@@ -149,5 +160,198 @@ describe('generateDistrictVotes / generateNationalVotes', () => {
     for (const v of votes) {
       expect(v.votes).toBeGreaterThanOrEqual(0);
     }
+  });
+});
+
+describe('two-round runoff', () => {
+  it('declares an outright winner who clears the majority threshold', () => {
+    const votes: PartyVoteShare[] = [
+      { partyId: 'A', votes: 55 },
+      { partyId: 'B', votes: 30 },
+      { partyId: 'C', votes: 15 },
+    ];
+    expect(getMajorityWinner(votes)).toBe('A');
+  });
+
+  it('requires a runoff when no candidate clears the majority threshold', () => {
+    const votes: PartyVoteShare[] = [
+      { partyId: 'A', votes: 40 },
+      { partyId: 'B', votes: 35 },
+      { partyId: 'C', votes: 25 },
+    ];
+    expect(getMajorityWinner(votes)).toBeNull();
+    expect(getRunoffPair(votes)).toEqual(['A', 'B']);
+  });
+
+  it('resolves the runoff round by highest vote count', () => {
+    const secondRound: PartyVoteShare[] = [
+      { partyId: 'A', votes: 48 },
+      { partyId: 'B', votes: 52 },
+    ];
+    expect(resolveRunoffRound(secondRound)).toBe('B');
+  });
+});
+
+describe('droopQuota', () => {
+  it('matches the standard formula', () => {
+    expect(droopQuota(6, 2)).toBe(3); // floor(6/3)+1
+    expect(droopQuota(100, 4)).toBe(21); // floor(100/5)+1
+  });
+});
+
+describe('resolveSTV', () => {
+  it('matches a hand-traced worked example', () => {
+    // 6 ballots, 2 seats, candidates A, B, C. Quota = floor(6/3)+1 = 3.
+    // 3x A>B>C, 2x B>A>C, 1x C>A>B
+    // Round 1: A=3 (meets quota, elected, 0 surplus), B=2, C=1.
+    // Round 2 (active {B,C}): B=2, C=1 (A's ballots carry 0 weight) -> eliminate C.
+    // Only B remains for the last seat -> B elected.
+    const ballots: RankedBallot[] = [
+      { ranking: ['A', 'B', 'C'] },
+      { ranking: ['A', 'B', 'C'] },
+      { ranking: ['A', 'B', 'C'] },
+      { ranking: ['B', 'A', 'C'] },
+      { ranking: ['B', 'A', 'C'] },
+      { ranking: ['C', 'A', 'B'] },
+    ];
+    const result = resolveSTV(ballots, ['A', 'B', 'C'], 2);
+    expect(result.quota).toBe(3);
+    expect(result.elected).toEqual(['A', 'B']);
+  });
+
+  it('elects exactly `seats` candidates whenever enough candidates stand', () => {
+    const ballots: RankedBallot[] = Array.from({ length: 40 }, (_, i) => ({
+      ranking: ['A', 'B', 'C', 'D', 'E'].sort(() => (i % 2 === 0 ? 1 : -1)),
+    }));
+    const result = resolveSTV(ballots, ['A', 'B', 'C', 'D', 'E'], 3);
+    expect(result.elected).toHaveLength(3);
+  });
+
+  it('seats every remaining candidate once the field shrinks to the number of open seats', () => {
+    const ballots: RankedBallot[] = [
+      { ranking: ['A', 'B'] },
+      { ranking: ['A', 'B'] },
+      { ranking: ['B', 'A'] },
+    ];
+    const result = resolveSTV(ballots, ['A', 'B'], 2);
+    expect(result.elected.sort()).toEqual(['A', 'B']);
+  });
+
+  it('is a pure function of its inputs', () => {
+    const ballots: RankedBallot[] = [
+      { ranking: ['A', 'B', 'C'] },
+      { ranking: ['B', 'C', 'A'] },
+      { ranking: ['C', 'A', 'B'] },
+    ];
+    const a = resolveSTV(ballots, ['A', 'B', 'C'], 1);
+    const b = resolveSTV(ballots, ['A', 'B', 'C'], 1);
+    expect(a).toEqual(b);
+  });
+});
+
+describe('resolveMMP', () => {
+  it('grants overhang seats when a party wins more constituencies than its list entitlement', () => {
+    // Party A wins 6 of 10 constituencies but its list vote share only
+    // entitles it to 4 of the nominal 10 total seats.
+    const constituencyResults: DistrictResult[] = [
+      ...Array.from({ length: 6 }, (_, i) => ({
+        districtId: `a-win-${i}`,
+        votesByParty: { A: 100, B: 20 },
+      })),
+      ...Array.from({ length: 4 }, (_, i) => ({
+        districtId: `b-win-${i}`,
+        votesByParty: { A: 20, B: 100 },
+      })),
+    ];
+    const partyListVotes: PartyVoteShare[] = [
+      { partyId: 'A', votes: 4000 },
+      { partyId: 'B', votes: 6000 },
+    ];
+
+    const result = resolveMMP(constituencyResults, partyListVotes, 10);
+
+    expect(result.constituencySeats).toEqual({ A: 6, B: 4 });
+    expect(result.overhangSeats.A).toBe(2); // 6 won vs 4 entitled
+    expect(result.totalSeatsByParty.A).toBe(6);
+    expect(result.listSeats.B).toBe(2); // 6 entitled - 4 won
+    expect(result.totalSeatsByParty.B).toBe(6);
+    expect(result.totalSeatsInLegislature).toBe(12); // grew past the nominal 10
+  });
+
+  it('matches the nominal seat count when there is no overhang', () => {
+    const constituencyResults: DistrictResult[] = Array.from({ length: 10 }, (_, i) => ({
+      districtId: `d${i}`,
+      votesByParty: i < 5 ? { A: 100, B: 20 } : { A: 20, B: 100 },
+    }));
+    const partyListVotes: PartyVoteShare[] = [
+      { partyId: 'A', votes: 5000 },
+      { partyId: 'B', votes: 5000 },
+    ];
+    const result = resolveMMP(constituencyResults, partyListVotes, 10);
+    expect(result.totalSeatsInLegislature).toBe(10);
+  });
+});
+
+describe('primaries', () => {
+  it('favors candidates closer to the party base over the general-electorate median', () => {
+    const partyBase = { economic: 80, social: 80 };
+    const candidates = [
+      { id: 'purist', ideology: { economic: 80, social: 80 } },
+      { id: 'moderate', ideology: { economic: 10, social: 10 } },
+    ];
+    const votes = generatePrimaryVotes(candidates, partyBase, 100000, new SeededRng(1));
+    const purist = votes.find((v) => v.partyId === 'purist')!;
+    const moderate = votes.find((v) => v.partyId === 'moderate')!;
+    expect(purist.votes).toBeGreaterThan(moderate.votes);
+  });
+
+  it('resolvePrimary picks the highest vote-getter', () => {
+    const votes: PartyVoteShare[] = [
+      { partyId: 'x', votes: 500 },
+      { partyId: 'y', votes: 900 },
+    ];
+    expect(resolvePrimary(votes)).toBe('y');
+  });
+});
+
+describe('generateRankedBallots', () => {
+  const candidateIdeology = {
+    left: { economic: -80, social: -80 },
+    right: { economic: 80, social: 80 },
+  };
+
+  it('produces roughly `totalBallots` ballots, split proportionally by voter weight', () => {
+    const voters = [
+      { ideology: candidateIdeology.left, weight: 0.5 },
+      { ideology: candidateIdeology.right, weight: 0.5 },
+    ];
+    const ballots = generateRankedBallots(voters, ['left', 'right'], candidateIdeology, 1000, new SeededRng(1));
+    expect(ballots.length).toBeGreaterThan(950);
+    expect(ballots.length).toBeLessThanOrEqual(1000);
+  });
+
+  it('ranks every candidate on every ballot', () => {
+    const voters = [{ ideology: { economic: 0, social: 0 }, weight: 1 }];
+    const ballots = generateRankedBallots(voters, ['left', 'right'], candidateIdeology, 20, new SeededRng(2));
+    for (const ballot of ballots) {
+      expect(ballot.ranking.sort()).toEqual(['left', 'right']);
+    }
+  });
+
+  it('a bloc mostly ranks the ideologically closest candidate first', () => {
+    const leftLeaningVoters = [{ ideology: { economic: -90, social: -90 }, weight: 1 }];
+    const ballots = generateRankedBallots(leftLeaningVoters, ['left', 'right'], candidateIdeology, 200, new SeededRng(3));
+    const firstChoiceLeft = ballots.filter((b) => b.ranking[0] === 'left').length;
+    expect(firstChoiceLeft).toBeGreaterThan(ballots.length * 0.8);
+  });
+
+  it('feeds into resolveSTV to elect the candidate closer to the larger voter bloc', () => {
+    const voters = [
+      { ideology: candidateIdeology.left, weight: 0.7 },
+      { ideology: candidateIdeology.right, weight: 0.3 },
+    ];
+    const ballots = generateRankedBallots(voters, ['left', 'right'], candidateIdeology, 500, new SeededRng(4));
+    const result = resolveSTV(ballots, ['left', 'right'], 1);
+    expect(result.elected).toEqual(['left']);
   });
 });

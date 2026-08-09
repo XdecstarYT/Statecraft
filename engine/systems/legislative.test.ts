@@ -21,6 +21,7 @@ function makePolitician(overrides: Partial<Politician> & { id: string }): Politi
     attributes: { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 },
     partyId: 'party-a',
     approval: { public: 50, base: 50, partyElite: 50 },
+    approvalEvents: [],
     ...overrides,
   };
 }
