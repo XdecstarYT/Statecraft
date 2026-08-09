@@ -1,10 +1,64 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance, type ForeignCounterpart, type GameState } from '../../engine';
 import { useStatecraftStore } from '../store';
 import { getWorldLandTexture } from './worldLandTexture';
 
 const GLOBE_RADIUS = 5;
+
+/**
+ * Every filter is driven by data the engine actually tracks — no
+ * placeholder numbers. "military" is the original default; the other
+ * three reuse foreignRelations, each nation's own trade.production, and
+ * ideological distance from the player's own politician respectively.
+ */
+export type GlobeFilter = 'military' | 'relations' | 'trade' | 'ideology';
+
+export const GLOBE_FILTER_LABELS: Record<GlobeFilter, string> = {
+  military: 'Military Strength',
+  relations: 'Foreign Relations',
+  trade: 'Economic Activity',
+  ideology: 'Ideological Alignment',
+};
+
+interface MarkerAppearance {
+  hue: number;
+  /** A scale multiplier on the marker's fixed base geometry, not an absolute radius — cheap to update without rebuilding meshes. */
+  scale: number;
+}
+
+function sumProduction(nation: ForeignCounterpart): number {
+  return Object.values(nation.trade.production).reduce((a, b) => a + b, 0);
+}
+
+const MIN_SCALE = 0.55;
+const MAX_SCALE = 1.85;
+
+function computeMarkerAppearance(
+  filter: GlobeFilter,
+  nation: ForeignCounterpart,
+  game: GameState | null,
+  maxProduction: number
+): MarkerAppearance {
+  if (filter === 'relations') {
+    const relation = game?.foreignRelations[nation.id] ?? 0; // -100..100
+    const normalized = (relation + 100) / 200; // 0 (hostile) .. 1 (friendly)
+    return { hue: normalized * 0.35, scale: MIN_SCALE + (Math.abs(relation) / 100) * (MAX_SCALE - MIN_SCALE) };
+  }
+  if (filter === 'trade') {
+    const normalized = maxProduction > 0 ? sumProduction(nation) / maxProduction : 0;
+    return { hue: 0.13 - normalized * 0.13, scale: MIN_SCALE + normalized * (MAX_SCALE - MIN_SCALE) }; // gold (high) -> dim red (low)
+  }
+  if (filter === 'ideology') {
+    const player = game?.politicians.find((p) => p.isPlayer);
+    const distance = player ? ideologicalDistance(nation.ideology, player.ideology) : MAX_IDEOLOGICAL_DISTANCE / 2;
+    const normalized = 1 - distance / MAX_IDEOLOGICAL_DISTANCE; // 1 (aligned) .. 0 (opposed)
+    return { hue: normalized * 0.35, scale: MIN_SCALE + normalized * (MAX_SCALE - MIN_SCALE) };
+  }
+  const strength = nation.military.strength;
+  return { hue: 0.58 - (strength / 100) * 0.58, scale: MIN_SCALE + (strength / 100) * (MAX_SCALE - MIN_SCALE) };
+}
 
 function latLngToVector3(lat: number, lng: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -19,6 +73,7 @@ function latLngToVector3(lat: number, lng: number, radius: number): THREE.Vector
 interface GlobeProps {
   selectedId: string | null;
   onSelect: (id: string) => void;
+  filter: GlobeFilter;
 }
 
 /**
@@ -28,7 +83,7 @@ interface GlobeProps {
  * approximate capital coordinates. Click a marker to select that nation;
  * drag to orbit, scroll to zoom.
  */
-export function Globe({ selectedId, onSelect }: GlobeProps) {
+export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const onSelectRef = useRef(onSelect);
@@ -88,17 +143,16 @@ export function Globe({ selectedId, onSelect }: GlobeProps) {
     );
     scene.add(atmosphere);
 
+    const BASE_MARKER_RADIUS = 0.11;
     markersRef.current.clear();
     for (const nation of nations) {
-      const strength = nation.military.strength;
-      const size = 0.06 + (strength / 100) * 0.16;
-      const hue = 0.58 - (strength / 100) * 0.58; // blue (weak) -> red (strong)
       const marker = new THREE.Mesh(
-        new THREE.SphereGeometry(size, 10, 10),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color().setHSL(hue, 0.8, 0.55) })
+        new THREE.SphereGeometry(BASE_MARKER_RADIUS, 10, 10),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
       );
       marker.position.copy(latLngToVector3(nation.location.lat, nation.location.lng, GLOBE_RADIUS + 0.05));
       marker.userData.nationId = nation.id;
+      marker.userData.baseScale = 1;
       scene.add(marker);
       markersRef.current.set(nation.id, marker);
     }
@@ -171,11 +225,24 @@ export function Globe({ selectedId, onSelect }: GlobeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed]);
 
+  // Recolors and rescales markers per the active filter — cheap (material
+  // color + mesh scale only, no geometry rebuild), so this can safely run
+  // on every filter switch, selection change, or live game-state update
+  // (relations shift from diplomacy, trade deals, etc.) without touching
+  // the WebGL scene itself.
   useEffect(() => {
+    if (!game) return;
+    const nations = game.foreignCounterparts;
+    const maxProduction = Math.max(1, ...nations.map(sumProduction));
     markersRef.current.forEach((mesh, id) => {
-      mesh.scale.setScalar(id === selectedId ? 1.9 : 1);
+      const nation = nations.find((n) => n.id === id);
+      if (!nation) return;
+      const appearance = computeMarkerAppearance(filter, nation, game, maxProduction);
+      (mesh.material as THREE.MeshBasicMaterial).color.setHSL(appearance.hue, 0.8, 0.55);
+      mesh.userData.baseScale = appearance.scale;
+      mesh.scale.setScalar(appearance.scale * (id === selectedId ? 1.9 : 1));
     });
-  }, [selectedId]);
+  }, [filter, game, selectedId]);
 
   return <div ref={containerRef} className="globe-container" />;
 }
