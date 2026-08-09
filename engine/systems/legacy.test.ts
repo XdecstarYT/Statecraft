@@ -65,6 +65,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     cabinet: [],
     nextElectionTurn: 999,
     interestGroups: [],
+    partyLeaderId: {},
+    leadershipChallenge: null,
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,

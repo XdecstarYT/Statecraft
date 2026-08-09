@@ -11,6 +11,7 @@ import { MediaPanel } from './components/MediaPanel';
 import { ElectoralLabPanel } from './components/ElectoralLabPanel';
 import { CorruptionPanel } from './components/CorruptionPanel';
 import { LobbyingPanel } from './components/LobbyingPanel';
+import { LeadershipPanel } from './components/LeadershipPanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
@@ -126,10 +127,13 @@ export default function App() {
       )}
 
       {activeTab === 'power' && (
-        <div className="panel-columns">
-          <CorruptionPanel />
-          <LobbyingPanel />
-        </div>
+        <>
+          <div className="panel-columns">
+            <CorruptionPanel />
+            <LobbyingPanel />
+          </div>
+          <LeadershipPanel />
+        </>
       )}
       {activeTab === 'world' && <WorldTab />}
 

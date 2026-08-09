@@ -22,7 +22,9 @@ import {
   courtInterestGroupAction as engineCourtInterestGroup,
   createNewGame,
   declareWar,
+  denounceChallengerAction as engineDenounceChallenger,
   dismissElectionNight,
+  dismissLeadershipChallenge as engineDismissLeadershipChallenge,
   enactPassedBill,
   generateEventCoverage,
   generateNationalVotes,
@@ -40,6 +42,7 @@ import {
   proposeTradeDeal,
   proposeTreaty,
   pushApprovalEvent,
+  rallyPartySupportAction as engineRallyPartySupport,
   relationshipKey,
   removeFromCabinet,
   reportNextProvinceAction as engineReportNextProvince,
@@ -68,6 +71,7 @@ import {
   type GameState,
   type MilitaryInvestmentTier,
   type MmpResult,
+  type PartyActionOutcome,
   type PartyVoteShare,
   type ScandalResponse,
   type WhipStance,
@@ -116,6 +120,7 @@ interface StatecraftStore {
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
   lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' }) | null;
   lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
+  lastLeadershipActionOutcome: (PartyActionOutcome & { action: 'rally' | 'denounce' }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
@@ -154,6 +159,9 @@ interface StatecraftStore {
   appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string) => void;
   removeFromCabinetAction: (portfolio: CabinetPortfolio) => void;
   courtInterestGroupAction: (groupId: string) => void;
+  rallyPartySupportAction: () => void;
+  denounceChallengerAction: () => void;
+  dismissLeadershipChallengeAction: () => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -166,6 +174,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCorruptionOutcome: null,
   lastCampaignOutcome: null,
   lastLobbyingOutcome: null,
+  lastLeadershipActionOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -181,6 +190,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
       lastLobbyingOutcome: null,
+      lastLeadershipActionOutcome: null,
     });
   },
 
@@ -203,6 +213,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
       lastLobbyingOutcome: null,
+      lastLeadershipActionOutcome: null,
     });
     return true;
   },
@@ -600,5 +611,25 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = engineCourtInterestGroup(game, groupId);
     set({ game: state, lastLobbyingOutcome: { ...outcome, groupId } });
+  },
+
+  rallyPartySupportAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineRallyPartySupport(game);
+    set({ game: state, lastLeadershipActionOutcome: { ...outcome, action: 'rally' } });
+  },
+
+  denounceChallengerAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineDenounceChallenger(game);
+    set({ game: state, lastLeadershipActionOutcome: { ...outcome, action: 'denounce' } });
+  },
+
+  dismissLeadershipChallengeAction: () => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineDismissLeadershipChallenge(game), lastLeadershipActionOutcome: null });
   },
 }));

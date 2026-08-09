@@ -37,6 +37,7 @@ import {
   applyFloorVoteResult,
   computeBillEconomyEffect,
   proposeBill,
+  relationshipKey,
   resolveFloorVote,
 } from './systems/legislative';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
@@ -48,6 +49,13 @@ import {
   decayGroupDispositions,
   type CourtGroupOutcome,
 } from './systems/lobbying';
+import {
+  denounceChallenger,
+  rallyPartySupport,
+  resolveLeadershipVote,
+  rollForLeadershipChallenge,
+  type PartyActionOutcome,
+} from './systems/leadership';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -108,6 +116,7 @@ export * from './systems/trade';
 export * from './systems/cabinet';
 export * from './systems/electionNight';
 export * from './systems/lobbying';
+export * from './systems/leadership';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -186,6 +195,12 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
 
   const startingEconomy: EconomyState = { ...STARTING_ECONOMY, pendingEffects: [] };
 
+  const partyLeaderId: Record<string, string> = {};
+  for (const party of parties) {
+    partyLeaderId[party.id] =
+      party.id === playerPartyId ? player.id : (politicians.find((p) => p.partyId === party.id)?.id ?? player.id);
+  }
+
   return {
     seed,
     rngState: rng.getState(),
@@ -210,6 +225,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     nextElectionTurn: 1 + TERM_LENGTH_TURNS,
     cabinet: [],
     interestGroups: options.interestGroups ?? STARTER_INTEREST_GROUPS.map((g) => ({ ...g })),
+    partyLeaderId,
+    leadershipChallenge: null,
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -371,6 +388,69 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   };
 }
 
+const LEADERSHIP_RELATIONSHIP_RIFT_PENALTY = 30;
+
+/**
+ * Runs one turn of the player's own party-leadership drama: if a challenge
+ * is already brewing (announced last turn), the vote is held now — every
+ * other party member casts a seeded ballot per resolveLeadershipVote,
+ * losing and winning both leave a real, decaying approval mark rather than
+ * an instant jump, the loser's relationship with the winner takes a
+ * lasting hit, and the party's recorded leader updates on an upset. If
+ * nothing is brewing and the player currently leads their own party, a new
+ * challenge may spontaneously emerge — likelier the further their
+ * partyElite approval has sunk below the threshold. At most one challenge
+ * is ever in flight; a resolved one blocks new rolls until the player
+ * dismisses it.
+ */
+export function runLeadershipChallengeTurn(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) return state;
+
+  const challenge = state.leadershipChallenge;
+
+  if (challenge && challenge.status === 'brewing') {
+    const result = resolveLeadershipVote(challenge, state.politicians, state.relationships, rng);
+    const winnerId = result.winnerId;
+    const loserId = winnerId === challenge.incumbentId ? challenge.challengerId : challenge.incumbentId;
+
+    const politicians = state.politicians.map((p) => {
+      if (p.id === winnerId) return pushApprovalEvent(p, 'partyElite', 20, 6);
+      if (p.id === loserId) return pushApprovalEvent(pushApprovalEvent(p, 'partyElite', -25, 6), 'public', -8, 6);
+      return p;
+    });
+
+    const key = relationshipKey(challenge.incumbentId, challenge.challengerId);
+    const relationships = {
+      ...state.relationships,
+      [key]: Math.max(-100, (state.relationships[key] ?? 0) - LEADERSHIP_RELATIONSHIP_RIFT_PENALTY),
+    };
+
+    const partyLeaderId = { ...state.partyLeaderId, [challenge.partyId]: winnerId };
+
+    return {
+      ...state,
+      politicians,
+      relationships,
+      partyLeaderId,
+      leadershipChallenge: {
+        ...challenge,
+        status: 'resolved',
+        winnerId,
+        incumbentVotes: result.incumbentVotes,
+        challengerVotes: result.challengerVotes,
+      },
+    };
+  }
+
+  if (!challenge && state.partyLeaderId[player.partyId] === player.id) {
+    const rolled = rollForLeadershipChallenge(player, state.politicians, state.turn, rng);
+    if (rolled) return { ...state, leadershipChallenge: rolled };
+  }
+
+  return state;
+}
+
 /**
  * Advances the economy and every politician's multi-audience approval by
  * one turn, runs rule-based NPC legislative behavior, then rolls the
@@ -394,6 +474,7 @@ export function advanceTurn(state: GameState): GameState {
 
   next = runNpcTurn(next, rng);
   next = runWarTurns(next, rng);
+  next = runLeadershipChallengeTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -519,6 +600,53 @@ export function courtInterestGroupAction(
     g.id === groupId ? applyCourtOutcome(g, outcome) : g
   );
   return { state: { ...state, interestGroups, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * While a leadership challenge against the player is brewing, works the
+ * party's phones to shore up support — a real chance to blunt or head off
+ * the vote before it happens. A no-op outside that exact window (no active
+ * challenge, the player isn't its incumbent, or it's already been
+ * resolved) so callers don't need to pre-validate.
+ */
+export function rallyPartySupportAction(state: GameState): { state: GameState; outcome: PartyActionOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const challenge = state.leadershipChallenge;
+  if (!player || !challenge || challenge.status !== 'brewing' || challenge.incumbentId !== player.id) {
+    return { state, outcome: { outcome: 'solid', impact: 0 } };
+  }
+  const outcome = rallyPartySupport(player, rng);
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'partyElite', outcome.impact, 4) : p
+  );
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * While a leadership challenge against the player is brewing, goes on the
+ * attack against the challenger directly — real chance to knock them down,
+ * real risk of a sympathy backfire. Same no-op guard as
+ * rallyPartySupportAction.
+ */
+export function denounceChallengerAction(state: GameState): { state: GameState; outcome: PartyActionOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const challenge = state.leadershipChallenge;
+  if (!player || !challenge || challenge.status !== 'brewing' || challenge.incumbentId !== player.id) {
+    return { state, outcome: { outcome: 'solid', impact: 0 } };
+  }
+  const outcome = denounceChallenger(player, rng);
+  const politicians = state.politicians.map((p) =>
+    p.id === challenge.challengerId ? pushApprovalEvent(p, 'partyElite', outcome.impact, 4) : p
+  );
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/** Dismisses a resolved leadership challenge, clearing the way for a future one to emerge. A no-op unless it's actually resolved. */
+export function dismissLeadershipChallenge(state: GameState): GameState {
+  if (!state.leadershipChallenge || state.leadershipChallenge.status !== 'resolved') return state;
+  return { ...state, leadershipChallenge: null };
 }
 
 /**

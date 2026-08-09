@@ -343,6 +343,28 @@ export interface InterestGroup {
   disposition: number;
 }
 
+export type LeadershipChallengeStatus = 'brewing' | 'resolved';
+
+/**
+ * A rival from within the incumbent's own party contesting party
+ * leadership — a real "primary challenge" / leadership-spill mechanic, not
+ * just a scandal variant. See engine/systems/leadership.ts. `status`
+ * starts 'brewing' (the challenge has been announced but the vote hasn't
+ * been held yet, giving the incumbent one turn to respond) and moves to
+ * 'resolved' once resolveLeadershipVote has run.
+ */
+export interface LeadershipChallenge {
+  id: string;
+  partyId: string;
+  incumbentId: string;
+  challengerId: string;
+  turnCalled: number;
+  status: LeadershipChallengeStatus;
+  winnerId?: string;
+  incumbentVotes?: number;
+  challengerVotes?: number;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -390,6 +412,10 @@ export interface GameState {
   nextElectionTurn: number;
   cabinet: CabinetAppointment[];
   interestGroups: InterestGroup[];
+  /** partyId -> the politician currently leading it. Used by leadership challenges and (later) coalition PM selection. */
+  partyLeaderId: Record<string, string>;
+  /** At most one leadership contest in flight at a time. Null between challenges. */
+  leadershipChallenge: LeadershipChallenge | null;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
