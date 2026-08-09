@@ -64,20 +64,27 @@ export function Globe({ selectedId, onSelect }: GlobeProps) {
     controls.maxDistance = 25;
     controls.rotateSpeed = 0.5;
 
-    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
-    const pointLight = new THREE.PointLight(0xffffff, 0.7);
-    pointLight.position.set(15, 10, 15);
-    scene.add(pointLight);
+    // Bright, evenly-lit "daytime" globe: a strong sun-like directional
+    // light plus a dimmer fill light from the opposite side, so there's no
+    // dark unlit hemisphere, and a high enough ambient floor that the whole
+    // sphere reads as sunlit rather than dim/night-like.
+    scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+    const sunLight = new THREE.DirectionalLight(0xfff4e0, 1.6);
+    sunLight.position.set(12, 8, 14);
+    scene.add(sunLight);
+    const fillLight = new THREE.DirectionalLight(0xcfe4ff, 0.5);
+    fillLight.position.set(-14, -6, -10);
+    scene.add(fillLight);
 
     const globe = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64),
-      new THREE.MeshPhongMaterial({ map: getWorldLandTexture(), shininess: 6 })
+      new THREE.MeshPhongMaterial({ map: getWorldLandTexture(), shininess: 10, specular: 0x1a2a3a })
     );
     scene.add(globe);
 
     const atmosphere = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS * 1.02, 48, 48),
-      new THREE.MeshBasicMaterial({ color: 0x4a7fb5, transparent: true, opacity: 0.06, side: THREE.BackSide })
+      new THREE.MeshBasicMaterial({ color: 0x7ec8ff, transparent: true, opacity: 0.1, side: THREE.BackSide })
     );
     scene.add(atmosphere);
 

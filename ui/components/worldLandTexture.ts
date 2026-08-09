@@ -10,10 +10,10 @@ import land110 from 'world-atlas/land-110m.json';
 const TEXTURE_WIDTH = 2048;
 const TEXTURE_HEIGHT = 1024;
 
-const OCEAN_COLOR = '#0a1424';
-const LAND_COLOR = '#233b52';
-const LAND_STROKE = '#3a5a78';
-const GRATICULE_COLOR = 'rgba(120, 150, 190, 0.12)';
+const OCEAN_COLOR = '#1c5c8a';
+const LAND_COLOR = '#4a7c4f';
+const LAND_STROKE = '#6fae72';
+const GRATICULE_COLOR = 'rgba(230, 245, 255, 0.15)';
 
 function project(lng: number, lat: number): [number, number] {
   const x = ((lng + 180) / 360) * TEXTURE_WIDTH;
