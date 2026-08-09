@@ -58,6 +58,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     leadershipChallenge: null,
     intelligenceCapability: 20,
     covertOperations: [],
+    coalition: null,
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: { gdpGrowth: 2, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] },

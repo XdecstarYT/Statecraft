@@ -3,6 +3,7 @@ import type {
   Bill,
   CorruptionTier,
   Country,
+  EconomyDelta,
   EconomyState,
   ElectoralSystem,
   ForeignCounterpart,
@@ -56,6 +57,7 @@ import {
   rollForLeadershipChallenge,
   type PartyActionOutcome,
 } from './systems/leadership';
+import { formGovernment, hasOutrightMajority } from './systems/coalition';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -118,6 +120,7 @@ export * from './systems/electionNight';
 export * from './systems/lobbying';
 export * from './systems/leadership';
 export * from './systems/espionage';
+export * from './systems/coalition';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -202,7 +205,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
       party.id === playerPartyId ? player.id : (politicians.find((p) => p.partyId === party.id)?.id ?? player.id);
   }
 
-  return {
+  const baseState: GameState = {
     seed,
     rngState: rng.getState(),
     turn: 1,
@@ -230,10 +233,53 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     leadershipChallenge: null,
     intelligenceCapability: 20,
     covertOperations: [],
+    coalition: null,
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
   };
+
+  return resolveGovernment(baseState, rng);
+}
+
+const COALITION_COLLAPSE_ECONOMY_EFFECT: EconomyDelta = { budgetBalance: -0.5, gdpGrowth: -0.3 };
+
+/**
+ * Recomputes who governs, given the legislature's current seat
+ * distribution: null (single-party majority, no coalition drama needed)
+ * when one party alone clears half the seats, otherwise a full
+ * formGovernment pass — the resulting coalition's Prime Minister is the
+ * formateur party's recorded leader (see partyLeaderId), and if the
+ * confidence vote that comes with it fails, the collapse carries a real
+ * cost: a real economic hit for the instability and an immediate snap
+ * election (nextElectionTurn reset to right now) rather than waiting out
+ * the rest of the term.
+ */
+function resolveGovernment(state: GameState, rng: SeededRng): GameState {
+  if (hasOutrightMajority(state.parties)) {
+    return { ...state, coalition: null, rngState: rng.getState() };
+  }
+
+  const coalition = formGovernment(
+    state.parties,
+    state.politicians,
+    state.partyLeaderId,
+    state.relationships,
+    state.turn,
+    rng
+  );
+
+  if (coalition.status === 'collapsed') {
+    return {
+      ...state,
+      coalition,
+      economy: applyImmediateEffect(state.economy, COALITION_COLLAPSE_ECONOMY_EFFECT),
+      nextElectionTurn: state.turn,
+      rngState: rng.getState(),
+    };
+  }
+
+  return { ...state, coalition, rngState: rng.getState() };
 }
 
 const NPC_BILL_SPONSOR_CHANCE = 0.3;
@@ -835,10 +881,14 @@ export function runLegislativeElection(
     seats: outcome.seatsWon[party.id] ?? 0,
   }));
 
-  return {
-    state: { ...state, parties, nextElectionTurn: state.turn + TERM_LENGTH_TURNS, rngState: rng.getState() },
-    outcome,
+  const afterVote: GameState = {
+    ...state,
+    parties,
+    nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
+    rngState: rng.getState(),
   };
+
+  return { state: resolveGovernment(afterVote, rng), outcome };
 }
 
 /**
@@ -879,13 +929,15 @@ export function concludeElectionNightAction(state: GameState): GameState {
   const parties = state.parties.map((party) => ({ ...party, seats: finalSeats[party.id] ?? 0 }));
   const electionNight = concludeElectionNightState(state.electionNight, speech);
 
-  return {
+  const afterVote: GameState = {
     ...state,
     parties,
     electionNight,
     nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
     rngState: rng.getState(),
   };
+
+  return resolveGovernment(afterVote, rng);
 }
 
 /** Dismisses a concluded election night, returning to normal play. A no-op unless it's actually concluded. */

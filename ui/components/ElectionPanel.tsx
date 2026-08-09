@@ -158,6 +158,9 @@ export function ElectionPanel() {
         </table>
       </div>
 
+      <h3 className="subheading">Government</h3>
+      <GovernmentStatus />
+
       <h3 className="subheading">Cabinet</h3>
       {cabinetCandidates.length === 0 ? (
         <p className="muted">No party members available to appoint.</p>
@@ -208,5 +211,50 @@ export function ElectionPanel() {
         </div>
       )}
     </section>
+  );
+}
+
+function GovernmentStatus() {
+  const game = useStatecraftStore((s) => s.game);
+  if (!game) return null;
+
+  const { coalition } = game;
+  const player = game.politicians.find((p) => p.isPlayer);
+
+  if (!coalition) {
+    const majorityParty = game.parties.find((p) => p.seats > game.parties.reduce((sum, x) => sum + x.seats, 0) / 2);
+    return (
+      <p className="muted">
+        {majorityParty ? `${majorityParty.name} governs alone with an outright majority.` : 'No election has been held yet.'}
+      </p>
+    );
+  }
+
+  const pm = game.politicians.find((p) => p.id === coalition.primeMinisterId);
+  const memberNames = coalition.memberPartyIds
+    .map((id) => game.parties.find((p) => p.id === id)?.name ?? id)
+    .join(', ');
+  const playerInCoalition = player ? coalition.memberPartyIds.includes(player.partyId) : false;
+  const playerIsPm = player ? player.id === coalition.primeMinisterId : false;
+
+  return (
+    <div className="billboard-slide">
+      <span className={coalition.status === 'governing' ? 'result-pass' : 'result-fail'}>
+        {coalition.status === 'governing' ? 'Coalition Governing' : 'Coalition Collapsed'}
+      </span>
+      <h3>
+        {pm?.name ?? coalition.primeMinisterId} (Prime Minister)
+        {playerIsPm && ' — that’s you'}
+      </h3>
+      <p className="muted">
+        Coalition: {memberNames} — {coalition.seatsHeld}/{coalition.totalSeats} seats
+        {playerInCoalition && !playerIsPm && ' — your party is in government'}
+        {!playerInCoalition && ' — your party is in opposition'}
+      </p>
+      <p className="muted">
+        Confidence vote: {coalition.confidenceVotesFor} for / {coalition.confidenceVotesAgainst} against
+        {coalition.status === 'collapsed' && ' — a snap election is now due.'}
+      </p>
+    </div>
   );
 }

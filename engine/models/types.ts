@@ -382,6 +382,28 @@ export interface CovertOperationRecord {
   detected: boolean;
 }
 
+export type CoalitionStatus = 'governing' | 'collapsed';
+
+/**
+ * The governing coalition assembled after an election where no single
+ * party won an outright majority. See engine/systems/coalition.ts for how
+ * membership, the Prime Minister, and the initial confidence vote are all
+ * resolved deterministically. Null on GameState whenever a single party
+ * holds a majority outright — no coalition was needed.
+ */
+export interface Coalition {
+  id: string;
+  memberPartyIds: string[];
+  formateurPartyId: string;
+  primeMinisterId: string;
+  seatsHeld: number;
+  totalSeats: number;
+  status: CoalitionStatus;
+  confidenceVotesFor: number;
+  confidenceVotesAgainst: number;
+  formedTurn: number;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -436,6 +458,8 @@ export interface GameState {
   /** 0..100 — the player's own intelligence-agency strength, grown via investInIntelligence. Lowers detection risk and raises success odds on covert operations. */
   intelligenceCapability: number;
   covertOperations: CovertOperationRecord[];
+  /** The current governing coalition, or null when a single party holds an outright majority and none was needed. */
+  coalition: Coalition | null;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
