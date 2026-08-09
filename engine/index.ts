@@ -1,5 +1,6 @@
 import { SeededRng } from './rng';
 import type {
+  Bill,
   CorruptionTier,
   Country,
   EconomyState,
@@ -26,9 +27,23 @@ import {
 } from './systems/elections';
 import { advanceApproval, pushApprovalEvent } from './systems/opinion';
 import { generateCoverage, type CoverageEvent, type EventKind } from './systems/media';
-import { MAX_FAVORS } from './systems/legislative';
+import {
+  MAX_FAVORS,
+  advanceToCommittee,
+  advanceToFloor,
+  applyFloorVoteResult,
+  proposeBill,
+  resolveFloorVote,
+} from './systems/legislative';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
+import {
+  applyNpcStances,
+  computePartyMomentum,
+  selectNpcBillSponsor,
+  selectNpcBillTemplate,
+  updateRelationshipsAfterVote,
+} from './systems/npc';
 import { clampAxis } from './ideology';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
@@ -37,6 +52,7 @@ import { STARTER_MEDIA_OUTLETS } from '../content/media/outlets';
 import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
 import { STARTER_FOREIGN_COUNTERPARTS } from '../content/diplomacy/counterparts';
 import { CRISIS_TABLE } from '../content/events/crisisTable';
+import { BILL_TEMPLATES } from '../content/flavor/billTemplates';
 
 export * from './rng';
 export * from './ideology';
@@ -52,6 +68,7 @@ export * from './systems/corruption';
 export * from './systems/diplomacy';
 export * from './systems/events';
 export * from './systems/legacy';
+export * from './systems/npc';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -148,12 +165,77 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   };
 }
 
+const NPC_BILL_SPONSOR_CHANCE = 0.3;
+
+/**
+ * Runs one turn's worth of rule-based NPC behavior: existing NPC-sponsored
+ * bills advance one stage through the pipeline (nobody else acts on them),
+ * NPC members lock in clear-cut stances on whatever's now on the floor,
+ * any NPC bill that reaches the floor is resolved immediately (updating
+ * relationships from how the floor lined up), and — if no NPC bill is
+ * currently in flight — a new one might get sponsored.
+ */
+export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
+  const { politicians } = state;
+  const player = politicians.find((p) => p.isPlayer);
+
+  const isNpcBill = (bill: Bill): boolean => {
+    const sponsor = politicians.find((p) => p.id === bill.sponsorId);
+    return sponsor !== undefined && !sponsor.isPlayer;
+  };
+
+  let bills = state.bills.map((bill) => {
+    if (!isNpcBill(bill)) return bill;
+    if (bill.status === 'drafting') return advanceToCommittee(bill);
+    if (bill.status === 'committee') return advanceToFloor(bill);
+    return bill;
+  });
+
+  bills = bills.map((bill) => {
+    if (bill.status !== 'floor') return bill;
+    const sponsor = politicians.find((p) => p.id === bill.sponsorId);
+    return sponsor ? applyNpcStances(bill, politicians, sponsor, state.relationships) : bill;
+  });
+
+  let relationships = state.relationships;
+  bills = bills.map((bill) => {
+    if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
+    const result = resolveFloorVote(bill, politicians, relationships, state.favorBank, rng);
+    if (player) {
+      relationships = updateRelationshipsAfterVote(relationships, player.id, result.finalWhipCount);
+    }
+    return applyFloorVoteResult(bill, result);
+  });
+
+  const npcBillInFlight = bills.some(
+    (b) => isNpcBill(b) && (b.status === 'drafting' || b.status === 'committee' || b.status === 'floor')
+  );
+  if (!npcBillInFlight && rng.next() < NPC_BILL_SPONSOR_CHANCE) {
+    const sponsor = selectNpcBillSponsor(politicians, rng);
+    if (sponsor) {
+      const template = selectNpcBillTemplate(sponsor, BILL_TEMPLATES, rng);
+      bills = [
+        ...bills,
+        proposeBill({
+          id: `npc-bill-${state.turn}-${bills.length + 1}`,
+          title: template.title,
+          provisions: template.provisions,
+          sponsorId: sponsor.id,
+        }),
+      ];
+    }
+  }
+
+  return { ...state, bills, relationships };
+}
+
 /**
  * Advances the economy and every politician's multi-audience approval by
- * one turn, then rolls the weighted crisis-event table against the new
- * state. Both the economy's volatility and the event chance are scaled by
- * the game's difficulty setting. Does not touch bills — call legislative
- * actions separately.
+ * one turn, runs rule-based NPC legislative behavior, then rolls the
+ * weighted crisis-event table against the new state. Both the economy's
+ * volatility and the event chance are scaled by the game's difficulty
+ * setting. Does not touch the player's own bills — call legislative
+ * actions separately for those.
  */
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
@@ -161,6 +243,8 @@ export function advanceTurn(state: GameState): GameState {
   const economy = advanceEconomy(state.economy, rng, settings.economyVolatilityMultiplier);
   const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
   let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
+
+  next = runNpcTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -303,7 +387,9 @@ export interface ElectionOutcome {
 /**
  * Runs a legislative election using whichever system the country's
  * legislature is configured for, and updates each party's seat count from
- * the result.
+ * the result. The player's own party's vote share is scaled by their
+ * current approval — how they governed feeds back into how their party
+ * fares at the ballot box.
  */
 export function runLegislativeElection(
   state: GameState,
@@ -311,17 +397,21 @@ export function runLegislativeElection(
 ): { state: GameState; outcome: ElectionOutcome } {
   const rng = SeededRng.fromState(state.rngState);
   const { legislature } = state.country;
+  const player = state.politicians.find((p) => p.isPlayer);
+  const momentum: Record<string, number> = player
+    ? { [player.partyId]: computePartyMomentum(player.approval.public) }
+    : {};
   let outcome: ElectionOutcome;
 
   if (legislature.electoralSystem === 'FPTP') {
     const perDistrictTurnout = Math.round(turnout / legislature.districts.length);
     const districtResults = legislature.districts.map((district) =>
-      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng)
+      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng, momentum)
     );
     const seatsWon = resolveFPTPElection(districtResults);
     outcome = { system: 'FPTP', seatsWon, districtResults };
   } else {
-    const nationalVotes = generateNationalVotes(state.parties, turnout, rng);
+    const nationalVotes = generateNationalVotes(state.parties, turnout, rng, momentum);
     const seatsWon = allocateSeatsDHondt(
       nationalVotes,
       legislature.totalSeats,

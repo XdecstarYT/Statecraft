@@ -42,13 +42,16 @@ export function resolveFPTPElection(
 /**
  * Generates a plausible vote split for one district from each party's
  * national standing (current seat share, as a stand-in for polling support)
- * plus per-district random noise. Deterministic given the RNG's state.
+ * plus per-district random noise. `momentum` (default 1 for every party)
+ * lets a party's real-world performance — e.g. the player's own approval —
+ * scale its vote share up or down. Deterministic given the RNG's state.
  */
 export function generateDistrictVotes(
   district: District,
   parties: Party[],
   turnout: number,
-  rng: SeededRng
+  rng: SeededRng,
+  momentum: Record<string, number> = {}
 ): DistrictResult {
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
   const votesByParty: Record<string, number> = {};
@@ -56,7 +59,7 @@ export function generateDistrictVotes(
   for (const party of parties) {
     const baseShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
     const noise = (rng.next() - 0.5) * 0.3; // +/- 15 points of district-level swing
-    const share = Math.max(0.01, baseShare + noise);
+    const share = Math.max(0.01, baseShare + noise) * (momentum[party.id] ?? 1);
     votesByParty[party.id] = Math.round(share * turnout);
   }
 
@@ -109,17 +112,22 @@ export function allocateSeatsDHondt(
   return seatsWon;
 }
 
-/** Generates each party's national vote total from current seat share plus noise. */
+/**
+ * Generates each party's national vote total from current seat share plus
+ * noise. `momentum` (default 1 for every party) lets a party's real-world
+ * performance scale its vote share up or down.
+ */
 export function generateNationalVotes(
   parties: Party[],
   turnout: number,
-  rng: SeededRng
+  rng: SeededRng,
+  momentum: Record<string, number> = {}
 ): PartyVoteShare[] {
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
   return parties.map((party) => {
     const baseShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
     const noise = (rng.next() - 0.5) * 0.2; // +/- 10 points of national swing
-    const share = Math.max(0.005, baseShare + noise);
+    const share = Math.max(0.005, baseShare + noise) * (momentum[party.id] ?? 1);
     return { partyId: party.id, votes: Math.round(share * turnout) };
   });
 }

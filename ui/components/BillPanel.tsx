@@ -58,6 +58,9 @@ function BillRow({
 
   if (!game) return null;
 
+  const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
+  const isPlayerBill = sponsor?.isPlayer ?? false;
+
   const projections = expanded
     ? pollWhipCount(bill, game.politicians, game.relationships, game.favorBank)
     : [];
@@ -69,7 +72,10 @@ function BillRow({
   return (
     <li className="bill-row">
       <div className="bill-summary" onClick={onToggle}>
-        <span className="bill-title">{bill.title}</span>
+        <span className="bill-title">
+          {bill.title}
+          {!isPlayerBill && <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>}
+        </span>
         <span className={`bill-status status-${bill.status}`}>{bill.status}</span>
       </div>
 
@@ -83,17 +89,25 @@ function BillRow({
             ))}
           </ul>
 
-          <div className="bill-actions">
-            {bill.status === 'drafting' && (
-              <button onClick={() => sendToCommittee(bill.id)}>Send to Committee</button>
-            )}
-            {bill.status === 'committee' && (
-              <button onClick={() => sendToFloor(bill.id)}>Send to Floor</button>
-            )}
-            {bill.status === 'floor' && (
-              <button onClick={() => holdFloorVote(bill.id)}>Hold Floor Vote</button>
-            )}
-          </div>
+          {isPlayerBill ? (
+            <div className="bill-actions">
+              {bill.status === 'drafting' && (
+                <button onClick={() => sendToCommittee(bill.id)}>Send to Committee</button>
+              )}
+              {bill.status === 'committee' && (
+                <button onClick={() => sendToFloor(bill.id)}>Send to Floor</button>
+              )}
+              {bill.status === 'floor' && (
+                <button onClick={() => holdFloorVote(bill.id)}>Hold Floor Vote</button>
+              )}
+            </div>
+          ) : (
+            (bill.status === 'drafting' || bill.status === 'committee' || bill.status === 'floor') && (
+              <p className="muted">
+                Rival-sponsored — progresses automatically each week. You can still whip against it below.
+              </p>
+            )
+          )}
 
           <p className="whip-summary">
             Whip count: {yesCount} Yes / {noCount} No / {undecidedCount} Undecided

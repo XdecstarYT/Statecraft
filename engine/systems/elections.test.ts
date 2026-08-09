@@ -161,6 +161,25 @@ describe('generateDistrictVotes / generateNationalVotes', () => {
       expect(v.votes).toBeGreaterThanOrEqual(0);
     }
   });
+
+  it('scales a party\'s national vote share by its momentum multiplier', () => {
+    const parties = [party('A', 5), party('B', 5)];
+    const neutral = generateNationalVotes(parties, 100000, new SeededRng(11));
+    const boosted = generateNationalVotes(parties, 100000, new SeededRng(11), { A: 1.3 });
+    const aNeutral = neutral.find((v) => v.partyId === 'A')!.votes;
+    const aBoosted = boosted.find((v) => v.partyId === 'A')!.votes;
+    expect(aBoosted).toBeGreaterThan(aNeutral);
+    // B's votes are untouched since it wasn't given a momentum entry.
+    expect(boosted.find((v) => v.partyId === 'B')!.votes).toBe(neutral.find((v) => v.partyId === 'B')!.votes);
+  });
+
+  it('scales a party\'s district vote share by its momentum multiplier', () => {
+    const parties = [party('A', 5), party('B', 5)];
+    const district = { id: 'd1', name: 'District 1' };
+    const neutral = generateDistrictVotes(district, parties, 10000, new SeededRng(22));
+    const dampened = generateDistrictVotes(district, parties, 10000, new SeededRng(22), { A: 0.7 });
+    expect(dampened.votesByParty.A).toBeLessThan(neutral.votesByParty.A);
+  });
 });
 
 describe('two-round runoff', () => {

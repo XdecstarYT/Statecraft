@@ -62,6 +62,53 @@ describe('advanceTurn', () => {
   });
 });
 
+describe('runNpcTurn via advanceTurn', () => {
+  it('eventually sponsors, progresses, and resolves an NPC bill over many turns', () => {
+    let state = createNewGame(21);
+    let sawDrafting = false;
+    let sawResolved = false;
+
+    for (let i = 0; i < 30; i++) {
+      state = advanceTurn(state);
+      const npcBills = state.bills.filter((b) => {
+        const sponsor = state.politicians.find((p) => p.id === b.sponsorId);
+        return sponsor && !sponsor.isPlayer;
+      });
+      if (npcBills.some((b) => b.status === 'drafting' || b.status === 'committee')) sawDrafting = true;
+      if (npcBills.some((b) => b.status === 'passed' || b.status === 'failed')) sawResolved = true;
+    }
+
+    expect(sawDrafting).toBe(true);
+    expect(sawResolved).toBe(true);
+  });
+
+  it('resolves the player into the final tally on any NPC bill that reaches a vote, rather than skipping them', () => {
+    let state = createNewGame(21);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    let sawPlayerVote = false;
+    for (let i = 0; i < 10; i++) {
+      state = advanceTurn(state);
+      for (const bill of state.bills) {
+        const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
+        if (sponsor && !sponsor.isPlayer && (bill.status === 'passed' || bill.status === 'failed')) {
+          expect(['yes', 'no']).toContain(bill.whipCount[player.id]);
+          sawPlayerVote = true;
+        }
+      }
+    }
+    expect(sawPlayerVote).toBe(true);
+  });
+
+  it('replays identically from the same seed, including NPC bill activity', () => {
+    const runOnce = () => {
+      let state = createNewGame(21);
+      for (let i = 0; i < 15; i++) state = advanceTurn(state);
+      return state;
+    };
+    expect(runOnce()).toEqual(runOnce());
+  });
+});
+
 describe('commitCorruption / respondToScandal', () => {
   it('always banks the configured favor gain with the target, detected or not', () => {
     const state = createNewGame(3);
@@ -143,5 +190,27 @@ describe('runLegislativeElection', () => {
     const a = runLegislativeElection(state);
     const b = runLegislativeElection(state);
     expect(a.outcome).toEqual(b.outcome);
+  });
+
+  it('gives the player\'s party a better result when their approval is high than when it is low', () => {
+    const base = createNewGame(99);
+    const player = base.politicians.find((p) => p.isPlayer)!;
+
+    const popular = {
+      ...base,
+      politicians: base.politicians.map((p) =>
+        p.id === player.id ? { ...p, approval: { ...p.approval, public: 90 } } : p
+      ),
+    };
+    const unpopular = {
+      ...base,
+      politicians: base.politicians.map((p) =>
+        p.id === player.id ? { ...p, approval: { ...p.approval, public: 10 } } : p
+      ),
+    };
+
+    const popularResult = runLegislativeElection(popular).outcome.seatsWon[player.partyId] ?? 0;
+    const unpopularResult = runLegislativeElection(unpopular).outcome.seatsWon[player.partyId] ?? 0;
+    expect(popularResult).toBeGreaterThanOrEqual(unpopularResult);
   });
 });

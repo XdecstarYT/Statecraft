@@ -10,7 +10,7 @@ export interface BillTemplate {
   provisions: BillProvision[];
 }
 
-const TEMPLATES: BillTemplate[] = [
+export const BILL_TEMPLATES: BillTemplate[] = [
   {
     title: 'Public Infrastructure Investment Act',
     provisions: [
@@ -56,5 +56,5 @@ const TEMPLATES: BillTemplate[] = [
 ];
 
 export function pickBillTemplate(rng: SeededRng): BillTemplate {
-  return rng.pick(TEMPLATES);
+  return rng.pick(BILL_TEMPLATES);
 }
