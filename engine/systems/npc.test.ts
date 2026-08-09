@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
-import type { Bill, Politician } from '../models/types';
+import type { Bill, Party, Politician } from '../models/types';
 import {
   applyNpcStances,
+  computeAllPartyMomentum,
   computePartyMomentum,
+  decideNpcScandalResponse,
   decideNpcStance,
   selectNpcBillSponsor,
   selectNpcBillTemplate,
+  selectNpcCampaigner,
+  selectNpcCorruptionTier,
   updateRelationshipsAfterVote,
 } from './npc';
 
@@ -183,5 +187,121 @@ describe('computePartyMomentum', () => {
   it('stays within the 0.7..1.3 bounds', () => {
     expect(computePartyMomentum(0)).toBeCloseTo(0.7, 5);
     expect(computePartyMomentum(100)).toBeCloseTo(1.3, 5);
+  });
+});
+
+function makeParty(overrides: Partial<Party> & { id: string }): Party {
+  return { name: overrides.id, ideology: { economic: 0, social: 0 }, seats: 1, factions: [], ...overrides };
+}
+
+describe('computeAllPartyMomentum', () => {
+  it('gives every party its own momentum from its members\' average approval, not just the player\'s', () => {
+    const partyA = makeParty({ id: 'party-a' });
+    const partyB = makeParty({ id: 'party-b' });
+    const politicians = [
+      makePolitician({ id: 'p1', partyId: 'party-a', approval: { public: 90, base: 50, partyElite: 50 } }),
+      makePolitician({ id: 'p2', partyId: 'party-b', approval: { public: 10, base: 50, partyElite: 50 } }),
+    ];
+    const momentum = computeAllPartyMomentum(politicians, [partyA, partyB]);
+    expect(momentum['party-a']).toBeGreaterThan(momentum['party-b']);
+  });
+
+  it('averages across every member of a party', () => {
+    const party = makeParty({ id: 'party-a' });
+    const politicians = [
+      makePolitician({ id: 'p1', partyId: 'party-a', approval: { public: 100, base: 50, partyElite: 50 } }),
+      makePolitician({ id: 'p2', partyId: 'party-a', approval: { public: 0, base: 50, partyElite: 50 } }),
+    ];
+    const momentum = computeAllPartyMomentum(politicians, [party]);
+    expect(momentum['party-a']).toBeCloseTo(computePartyMomentum(50), 5);
+  });
+
+  it('omits a party with no sitting members', () => {
+    const empty = makeParty({ id: 'party-empty' });
+    const momentum = computeAllPartyMomentum([], [empty]);
+    expect(momentum['party-empty']).toBeUndefined();
+  });
+});
+
+describe('selectNpcCampaigner', () => {
+  it('never selects the player', () => {
+    const player = makePolitician({ id: 'player', isPlayer: true });
+    const others = [makePolitician({ id: 'a' }), makePolitician({ id: 'b' })];
+    const rng = new SeededRng(1);
+    for (let i = 0; i < 50; i++) {
+      expect(selectNpcCampaigner([player, ...others], rng)?.isPlayer).toBe(false);
+    }
+  });
+
+  it('returns null with no NPCs to choose from', () => {
+    const player = makePolitician({ id: 'player', isPlayer: true });
+    expect(selectNpcCampaigner([player], new SeededRng(1))).toBeNull();
+  });
+
+  it('favors a more charismatic/media-savvy/well-connected candidate over many draws', () => {
+    const star = makePolitician({
+      id: 'star',
+      attributes: { charisma: 10, intellect: 5, integrity: 5, network: 10, mediaSavvy: 10 },
+    });
+    const wallflower = makePolitician({
+      id: 'wallflower',
+      attributes: { charisma: 1, intellect: 5, integrity: 5, network: 1, mediaSavvy: 1 },
+    });
+    const rng = new SeededRng(11);
+    let starCount = 0;
+    const trials = 500;
+    for (let i = 0; i < trials; i++) {
+      if (selectNpcCampaigner([star, wallflower], rng)?.id === 'star') starCount++;
+    }
+    expect(starCount / trials).toBeGreaterThan(0.7);
+  });
+});
+
+describe('selectNpcCorruptionTier', () => {
+  it('sits out far more often for a high-integrity politician than a low-integrity one', () => {
+    const scrupulous = makePolitician({
+      id: 'clean',
+      attributes: { charisma: 5, intellect: 5, integrity: 10, network: 5, mediaSavvy: 5 },
+    });
+    const reckless = makePolitician({
+      id: 'dirty',
+      attributes: { charisma: 5, intellect: 5, integrity: 1, network: 5, mediaSavvy: 5 },
+    });
+    const trials = 500;
+    let cleanAttempts = 0;
+    let dirtyAttempts = 0;
+    const rngClean = new SeededRng(5);
+    const rngDirty = new SeededRng(5);
+    for (let i = 0; i < trials; i++) {
+      if (selectNpcCorruptionTier(scrupulous, rngClean) !== null) cleanAttempts++;
+      if (selectNpcCorruptionTier(reckless, rngDirty) !== null) dirtyAttempts++;
+    }
+    expect(dirtyAttempts).toBeGreaterThan(cleanAttempts);
+  });
+
+  it('only ever returns a valid tier or null', () => {
+    const politician = makePolitician({ id: 'p', attributes: { charisma: 5, intellect: 5, integrity: 3, network: 5, mediaSavvy: 5 } });
+    const rng = new SeededRng(9);
+    for (let i = 0; i < 200; i++) {
+      const tier = selectNpcCorruptionTier(politician, rng);
+      expect(tier === null || ['soft', 'medium', 'hard'].includes(tier)).toBe(true);
+    }
+  });
+});
+
+describe('decideNpcScandalResponse', () => {
+  it('admits fault when integrity is high', () => {
+    const p = makePolitician({ id: 'p', attributes: { charisma: 5, intellect: 5, integrity: 8, network: 2, mediaSavvy: 5 } });
+    expect(decideNpcScandalResponse(p)).toBe('admit');
+  });
+
+  it('scapegoats when integrity is low but network is high', () => {
+    const p = makePolitician({ id: 'p', attributes: { charisma: 5, intellect: 5, integrity: 3, network: 9, mediaSavvy: 5 } });
+    expect(decideNpcScandalResponse(p)).toBe('scapegoat');
+  });
+
+  it('denies when both integrity and network are low', () => {
+    const p = makePolitician({ id: 'p', attributes: { charisma: 5, intellect: 5, integrity: 2, network: 2, mediaSavvy: 5 } });
+    expect(decideNpcScandalResponse(p)).toBe('deny');
   });
 });

@@ -1,7 +1,7 @@
 import type { SeededRng } from '../rng';
 import { clamp, ideologicalAlignment } from '../ideology';
 import { relationshipKey } from './legislative';
-import type { Bill, Politician, WhipStance } from '../models/types';
+import type { Bill, CorruptionTier, Party, Politician, ScandalResponse, WhipStance } from '../models/types';
 
 /**
  * Rule-based NPC decision-making — no LLM calls, just the same kind of
@@ -115,10 +115,71 @@ const MIN_MOMENTUM = 0.7;
 const MAX_MOMENTUM = 1.3;
 
 /**
- * Converts the player's public approval into an election vote-share
- * multiplier for their own party — closes the loop between how the player
- * governed and how their party fares at the ballot box.
+ * Converts a party's public approval into an election vote-share
+ * multiplier — closes the loop between how well a party (and its members)
+ * are doing and how it fares at the ballot box.
  */
-export function computePartyMomentum(playerApproval: number): number {
-  return clamp(MIN_MOMENTUM + (playerApproval / 100) * (MAX_MOMENTUM - MIN_MOMENTUM), MIN_MOMENTUM, MAX_MOMENTUM);
+export function computePartyMomentum(approval: number): number {
+  return clamp(MIN_MOMENTUM + (approval / 100) * (MAX_MOMENTUM - MIN_MOMENTUM), MIN_MOMENTUM, MAX_MOMENTUM);
+}
+
+/**
+ * Every party gets real momentum from its members' average public
+ * approval, not just the player's — a rival party governing well (or
+ * badly) should show up at the ballot box too, not just you.
+ */
+export function computeAllPartyMomentum(
+  politicians: Politician[],
+  parties: Party[]
+): Record<string, number> {
+  const momentum: Record<string, number> = {};
+  for (const party of parties) {
+    const members = politicians.filter((p) => p.partyId === party.id);
+    if (members.length === 0) continue;
+    const avgApproval = members.reduce((sum, p) => sum + p.approval.public, 0) / members.length;
+    momentum[party.id] = computePartyMomentum(avgApproval);
+  }
+  return momentum;
+}
+
+/**
+ * Picks who fronts the next NPC campaign action — weighted toward
+ * politicians who are actually good at it (charisma/media savvy/network),
+ * same spirit as selectNpcBillSponsor.
+ */
+export function selectNpcCampaigner(politicians: Politician[], rng: SeededRng): Politician | null {
+  const candidates = politicians.filter((p) => !p.isPlayer);
+  if (candidates.length === 0) return null;
+  const weighted = candidates.map((p) => ({
+    item: p,
+    weight: p.attributes.charisma + p.attributes.mediaSavvy + p.attributes.network,
+  }));
+  return rng.pickWeighted(weighted);
+}
+
+/**
+ * Whether — and how boldly — an NPC risks a corrupt act this week. Low
+ * integrity means both a higher chance of attempting anything at all and a
+ * willingness to reach for a riskier tier; most NPCs, most weeks, attempt
+ * nothing. Returns null when they sit this week out.
+ */
+export function selectNpcCorruptionTier(politician: Politician, rng: SeededRng): CorruptionTier | null {
+  const boldness = (10 - clamp(politician.attributes.integrity, 1, 10)) / 10;
+  if (rng.next() > 0.1 + boldness * 0.3) return null;
+  if (boldness > 0.6) return rng.pick<CorruptionTier>(['medium', 'hard']);
+  if (boldness > 0.3) return rng.pick<CorruptionTier>(['soft', 'medium']);
+  return 'soft';
+}
+
+/**
+ * The rule-based response an NPC gives when their own corruption is
+ * exposed — this is their call, not the player's, so it never surfaces as
+ * a player-facing choice the way the player's own scandals do. Higher
+ * integrity means owning up; a well-connected operator finds someone to
+ * blame; everyone else just denies it.
+ */
+export function decideNpcScandalResponse(politician: Politician): ScandalResponse {
+  if (politician.attributes.integrity >= 7) return 'admit';
+  if (politician.attributes.network >= 7) return 'scapegoat';
+  return 'deny';
 }

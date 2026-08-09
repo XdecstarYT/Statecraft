@@ -41,9 +41,12 @@ import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from 
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import {
   applyNpcStances,
-  computePartyMomentum,
+  computeAllPartyMomentum,
+  decideNpcScandalResponse,
   selectNpcBillSponsor,
   selectNpcBillTemplate,
+  selectNpcCampaigner,
+  selectNpcCorruptionTier,
   updateRelationshipsAfterVote,
 } from './systems/npc';
 import { clampAxis } from './ideology';
@@ -169,14 +172,19 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
 }
 
 const NPC_BILL_SPONSOR_CHANCE = 0.3;
+const NPC_CAMPAIGN_CHANCE = 0.35;
+const NPC_CORRUPTION_CHANCE = 0.2;
 
 /**
  * Runs one turn's worth of rule-based NPC behavior: existing NPC-sponsored
  * bills advance one stage through the pipeline (nobody else acts on them),
  * NPC members lock in clear-cut stances on whatever's now on the floor,
  * any NPC bill that reaches the floor is resolved immediately (updating
- * relationships from how the floor lined up), and — if no NPC bill is
- * currently in flight — a new one might get sponsored.
+ * relationships from how the floor lined up), a new bill might get
+ * sponsored if none is in flight, a rival might front a press interview
+ * or rally of their own, and a less scrupulous rival might risk a corrupt
+ * act — resolved (and, if exposed, responded to) entirely on their own,
+ * never as a player-facing choice.
  */
 export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   const { politicians } = state;
@@ -234,7 +242,66 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     }
   }
 
-  return { ...state, bills, relationships, economy };
+  let nextPoliticians = politicians;
+  let favorBank = state.favorBank;
+  let scandals = state.scandals;
+
+  if (rng.next() < NPC_CAMPAIGN_CHANCE) {
+    const campaigner = selectNpcCampaigner(nextPoliticians, rng);
+    if (campaigner) {
+      const isRally = rng.next() < 0.5;
+      const outcome = isRally ? attemptRally(campaigner, rng) : attemptPressInterview(campaigner, rng);
+      const audience = isRally ? 'base' : 'public';
+      nextPoliticians = nextPoliticians.map((p) =>
+        p.id === campaigner.id ? pushApprovalEvent(p, audience, outcome.approvalImpact, 4) : p
+      );
+    }
+  }
+
+  if (rng.next() < NPC_CORRUPTION_CHANCE) {
+    const actorCandidates = nextPoliticians.filter((p) => !p.isPlayer);
+    const actor = actorCandidates.length > 0 ? rng.pick(actorCandidates) : null;
+    const tier = actor ? selectNpcCorruptionTier(actor, rng) : null;
+    const targetCandidates = actor ? nextPoliticians.filter((p) => p.id !== actor.id) : [];
+    const target = actor && tier && targetCandidates.length > 0 ? rng.pick(targetCandidates) : null;
+
+    if (actor && tier && target) {
+      const settings = getDifficultySettings(state.difficulty);
+      const result = attemptCorruptionAction(
+        tier,
+        actor.attributes.integrity,
+        0,
+        rng,
+        settings.corruptionDetectionMultiplier
+      );
+      favorBank = {
+        ...favorBank,
+        [target.id]: Math.min(MAX_FAVORS, (favorBank[target.id] ?? 0) + result.favorGain),
+      };
+      economy = applyImmediateEffect(economy, { budgetBalance: result.budgetImpact });
+
+      if (result.detected) {
+        const response = decideNpcScandalResponse(actor);
+        const severity = computeScandalSeverity(tier, response);
+        scandals = [
+          ...scandals,
+          {
+            id: `scandal-${state.turn}-npc-${scandals.length + 1}`,
+            politicianId: actor.id,
+            tier,
+            turn: state.turn,
+            status: 'resolved',
+            response,
+          },
+        ];
+        nextPoliticians = nextPoliticians.map((p) =>
+          p.id === actor.id ? pushApprovalEvent(p, 'public', severity, 6) : p
+        );
+      }
+    }
+  }
+
+  return { ...state, bills, relationships, economy, politicians: nextPoliticians, favorBank, scandals };
 }
 
 /**
@@ -444,9 +511,10 @@ export interface ElectionOutcome {
 /**
  * Runs a legislative election using whichever system the country's
  * legislature is configured for, and updates each party's seat count from
- * the result. The player's own party's vote share is scaled by their
- * current approval — how they governed feeds back into how their party
- * fares at the ballot box.
+ * the result. Every party's vote share is scaled by its own momentum —
+ * the average public approval of its sitting members — so how each party
+ * (not just the player's) governed feeds back into how it fares at the
+ * ballot box.
  */
 export function runLegislativeElection(
   state: GameState,
@@ -454,10 +522,7 @@ export function runLegislativeElection(
 ): { state: GameState; outcome: ElectionOutcome } {
   const rng = SeededRng.fromState(state.rngState);
   const { legislature } = state.country;
-  const player = state.politicians.find((p) => p.isPlayer);
-  const momentum: Record<string, number> = player
-    ? { [player.partyId]: computePartyMomentum(player.approval.public) }
-    : {};
+  const momentum = computeAllPartyMomentum(state.politicians, state.parties);
   let outcome: ElectionOutcome;
 
   if (legislature.electoralSystem === 'FPTP') {

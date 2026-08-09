@@ -74,6 +74,9 @@ export function CorruptionPanel() {
                 <strong>{politician?.name ?? scandal.politicianId}</strong> — {scandal.tier} tier —{' '}
                 {scandal.status}
                 {scandal.response ? ` (${scandal.response})` : ''}
+                {politician && !politician.isPlayer && scandal.status === 'resolved' && (
+                  <span className="muted"> — handled on their own</span>
+                )}
               </span>
               {scandal.status === 'unresolved' && (
                 <span className="row-actions">

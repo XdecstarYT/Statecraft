@@ -136,6 +136,42 @@ describe('runNpcTurn via advanceTurn', () => {
     };
     expect(runOnce()).toEqual(runOnce());
   });
+
+  it('eventually has a rival hold a press interview or rally of their own', () => {
+    let state = createNewGame(21);
+    const initialEvents = new Map(state.politicians.map((p) => [p.id, p.approvalEvents.length]));
+    let sawNpcCampaignEvent = false;
+
+    for (let i = 0; i < 20; i++) {
+      state = advanceTurn(state);
+      for (const p of state.politicians) {
+        if (p.isPlayer) continue;
+        if (p.approvalEvents.length > (initialEvents.get(p.id) ?? 0)) sawNpcCampaignEvent = true;
+      }
+    }
+
+    expect(sawNpcCampaignEvent).toBe(true);
+  });
+
+  it('eventually has a rival risk a corrupt act, resolved without player input', () => {
+    let state = createNewGame(21);
+    let sawNpcScandal = false;
+
+    for (let i = 0; i < 60; i++) {
+      state = advanceTurn(state);
+      const npcScandals = state.scandals.filter((s) => {
+        const politician = state.politicians.find((p) => p.id === s.politicianId);
+        return politician && !politician.isPlayer;
+      });
+      if (npcScandals.length > 0) {
+        sawNpcScandal = true;
+        // NPC scandals resolve themselves — never left dangling for the player.
+        expect(npcScandals.every((s) => s.status === 'resolved')).toBe(true);
+      }
+    }
+
+    expect(sawNpcScandal).toBe(true);
+  });
 });
 
 describe('commitCorruption / respondToScandal', () => {
