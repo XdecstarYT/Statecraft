@@ -13,6 +13,8 @@ import type {
   ScandalResponse,
   VoterBloc,
 } from './models/types';
+import type { Difficulty } from './difficulty';
+import { getDifficultySettings } from './difficulty';
 import { advanceEconomy, applyImmediateEffect } from './systems/economy';
 import {
   allocateSeatsDHondt,
@@ -26,7 +28,7 @@ import { advanceApproval, pushApprovalEvent } from './systems/opinion';
 import { generateCoverage, type CoverageEvent, type EventKind } from './systems/media';
 import { MAX_FAVORS } from './systems/legislative';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
-import { rollForEvent, applyCrisisEvent } from './systems/events';
+import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { clampAxis } from './ideology';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
@@ -39,6 +41,7 @@ import { CRISIS_TABLE } from '../content/events/crisisTable';
 export * from './rng';
 export * from './ideology';
 export * from './calendar';
+export * from './difficulty';
 export * from './models/types';
 export * from './systems/legislative';
 export * from './systems/elections';
@@ -48,6 +51,7 @@ export * from './systems/media';
 export * from './systems/corruption';
 export * from './systems/diplomacy';
 export * from './systems/events';
+export * from './systems/legacy';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -100,6 +104,7 @@ export interface NewGameOptions {
   foreignCounterparts?: ForeignCounterpart[];
   playerPartyId?: string;
   playerName?: string;
+  difficulty?: Difficulty;
 }
 
 /** Assembles a fresh, fully-populated GameState from a seed and starter content. */
@@ -118,6 +123,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   player.isPlayer = true;
   player.name = options.playerName ?? 'Alex Varga';
 
+  const startingEconomy: EconomyState = { ...STARTING_ECONOMY, pendingEffects: [] };
+
   return {
     seed,
     rngState: rng.getState(),
@@ -126,7 +133,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     politicians,
     parties,
     bills: [],
-    economy: { ...STARTING_ECONOMY, pendingEffects: [] },
+    economy: { ...startingEconomy },
     relationships: {},
     favorBank: {},
     voterBlocs: options.voterBlocs ?? STARTER_VOTER_BLOCS,
@@ -136,21 +143,27 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     foreignRelations: {},
     treaties: [],
     eventLog: [],
+    difficulty: options.difficulty ?? 'standard',
+    startingEconomy,
   };
 }
 
 /**
  * Advances the economy and every politician's multi-audience approval by
  * one turn, then rolls the weighted crisis-event table against the new
- * state. Does not touch bills — call legislative actions separately.
+ * state. Both the economy's volatility and the event chance are scaled by
+ * the game's difficulty setting. Does not touch bills — call legislative
+ * actions separately.
  */
 export function advanceTurn(state: GameState): GameState {
+  const settings = getDifficultySettings(state.difficulty);
   const rng = SeededRng.fromState(state.rngState);
-  const economy = advanceEconomy(state.economy, rng);
+  const economy = advanceEconomy(state.economy, rng, settings.economyVolatilityMultiplier);
   const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
   let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
 
-  const eventDef = rollForEvent(CRISIS_TABLE, next, rng);
+  const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
+  const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
   if (eventDef) {
     next = applyCrisisEvent(next, eventDef);
   }
@@ -225,7 +238,14 @@ export function commitCorruption(
     return { state, outcome: { detected: false, favorGain: 0, budgetImpact: 0 } };
   }
 
-  const result = attemptCorruptionAction(tier, actor.attributes.integrity, investigativePressure, rng);
+  const settings = getDifficultySettings(state.difficulty);
+  const result = attemptCorruptionAction(
+    tier,
+    actor.attributes.integrity,
+    investigativePressure,
+    rng,
+    settings.corruptionDetectionMultiplier
+  );
 
   const favorBank = {
     ...state.favorBank,

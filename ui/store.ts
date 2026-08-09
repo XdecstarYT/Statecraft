@@ -35,6 +35,7 @@ import {
   type CorruptionAttemptOutcome,
   type CorruptionTier,
   type CoverageEvent,
+  type Difficulty,
   type ElectionOutcome,
   type FloorVoteResult,
   type GameState,
@@ -45,6 +46,7 @@ import {
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
+import { saveGame as persistSave, loadGame as persistLoad } from './persistence';
 
 export interface EconomySnapshot {
   turn: number;
@@ -84,7 +86,9 @@ interface StatecraftStore {
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
 
-  newGame: (seed?: number) => void;
+  newGame: (seed?: number, difficulty?: Difficulty) => void;
+  saveGame: () => void;
+  loadGame: () => boolean;
   proposeNewBill: () => void;
   sendToCommittee: (billId: string) => void;
   sendToFloor: (billId: string) => void;
@@ -113,8 +117,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   labResult: null,
   lastCorruptionOutcome: null,
 
-  newGame: (seed = Math.floor(Math.random() * 1_000_000_000)) => {
-    const game = createNewGame(seed);
+  newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard') => {
+    const game = createNewGame(seed, { difficulty });
     set({
       game,
       economyHistory: [snapshotEconomy(game)],
@@ -124,6 +128,27 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       labResult: null,
       lastCorruptionOutcome: null,
     });
+  },
+
+  saveGame: () => {
+    const { game, economyHistory } = get();
+    if (!game) return;
+    persistSave(game, economyHistory);
+  },
+
+  loadGame: () => {
+    const save = persistLoad();
+    if (!save) return false;
+    set({
+      game: save.game,
+      economyHistory: save.economyHistory,
+      lastElection: null,
+      lastFloorResult: null,
+      lastCoverage: [],
+      labResult: null,
+      lastCorruptionOutcome: null,
+    });
+    return true;
   },
 
   proposeNewBill: () => {

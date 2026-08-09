@@ -35,6 +35,18 @@ describe('computeDetectionChance', () => {
   it('is never negative', () => {
     expect(computeDetectionChance('soft', 10, 0)).toBeGreaterThanOrEqual(0);
   });
+
+  it('scales with the difficulty detection multiplier', () => {
+    const easy = computeDetectionChance('medium', 5, 0.5, 0.7);
+    const standard = computeDetectionChance('medium', 5, 0.5, 1);
+    const hard = computeDetectionChance('medium', 5, 0.5, 1.3);
+    expect(easy).toBeLessThan(standard);
+    expect(hard).toBeGreaterThan(standard);
+  });
+
+  it('still respects the 0.95 cap with a high multiplier', () => {
+    expect(computeDetectionChance('hard', 1, 1, 3)).toBeLessThanOrEqual(0.95);
+  });
 });
 
 describe('computeScandalSeverity', () => {

@@ -43,6 +43,16 @@ function noise(rng: SeededRng): EconomyDelta {
   };
 }
 
+function scaleDelta(delta: EconomyDelta, factor: number): EconomyDelta {
+  return {
+    gdpGrowth: (delta.gdpGrowth ?? 0) * factor,
+    inflation: (delta.inflation ?? 0) * factor,
+    unemployment: (delta.unemployment ?? 0) * factor,
+    debtToGdp: (delta.debtToGdp ?? 0) * factor,
+    budgetBalance: (delta.budgetBalance ?? 0) * factor,
+  };
+}
+
 /** Applies a one-off economic effect immediately — for exogenous shocks and direct actions, not delayed policy. */
 export function applyImmediateEffect(economy: EconomyState, delta: EconomyDelta): EconomyState {
   return clampEconomy(addDelta(economy, delta));
@@ -76,8 +86,16 @@ export function queuePolicyEffect(
  * applies any effects that just landed, then layers on exogenous drift and
  * noise. Consumes RNG state, so it must run at most once per turn to stay
  * replay-deterministic.
+ *
+ * `volatilityMultiplier` (from the difficulty setting) scales only the
+ * random drift/noise, not deliberately-queued policy effects — difficulty
+ * controls how chaotic the world is, not how effective your policies are.
  */
-export function advanceEconomy(economy: EconomyState, rng: SeededRng): EconomyState {
+export function advanceEconomy(
+  economy: EconomyState,
+  rng: SeededRng,
+  volatilityMultiplier = 1
+): EconomyState {
   const ticked = economy.pendingEffects.map((effect) => ({
     ...effect,
     turnsRemaining: effect.turnsRemaining - 1,
@@ -86,11 +104,11 @@ export function advanceEconomy(economy: EconomyState, rng: SeededRng): EconomySt
   const stillPending = ticked.filter((effect) => effect.turnsRemaining > 0);
 
   let next: EconomyState = { ...economy, pendingEffects: stillPending };
-  next = addDelta(next, smallExogenousDrift(rng));
+  next = addDelta(next, scaleDelta(smallExogenousDrift(rng), volatilityMultiplier));
   for (const effect of landed) {
     next = addDelta(next, effect.delta);
   }
-  next = addDelta(next, noise(rng));
+  next = addDelta(next, scaleDelta(noise(rng), volatilityMultiplier));
 
   return clampEconomy(next);
 }

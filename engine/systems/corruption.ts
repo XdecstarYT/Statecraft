@@ -25,16 +25,18 @@ export const CORRUPTION_TIERS: Record<CorruptionTier, CorruptionTierConfig> = {
  * Detection chance rises for careless (low-Integrity) actors and under
  * active scrutiny (an investigative journalist, a hostile committee).
  * `actorIntegrity` is the 1-10 attribute scale; `investigativePressure` is
- * 0 (no scrutiny) .. 1 (actively being investigated).
+ * 0 (no scrutiny) .. 1 (actively being investigated); `detectionMultiplier`
+ * (from the difficulty setting) scales the whole result.
  */
 export function computeDetectionChance(
   tier: CorruptionTier,
   actorIntegrity: number,
-  investigativePressure: number
+  investigativePressure: number,
+  detectionMultiplier = 1
 ): number {
   const base = CORRUPTION_TIERS[tier].baseDetectionChance;
   const integrityFactor = (10 - clamp(actorIntegrity, 1, 10)) / 10;
-  const chance = base + integrityFactor * 0.25 + clamp(investigativePressure, 0, 1) * 0.3;
+  const chance = (base + integrityFactor * 0.25 + clamp(investigativePressure, 0, 1) * 0.3) * detectionMultiplier;
   return clamp(chance, 0, 0.95);
 }
 
@@ -49,10 +51,12 @@ export function attemptCorruptionAction(
   tier: CorruptionTier,
   actorIntegrity: number,
   investigativePressure: number,
-  rng: SeededRng
+  rng: SeededRng,
+  detectionMultiplier = 1
 ): CorruptionAttemptResult {
   const config = CORRUPTION_TIERS[tier];
-  const detected = rng.next() < computeDetectionChance(tier, actorIntegrity, investigativePressure);
+  const chance = computeDetectionChance(tier, actorIntegrity, investigativePressure, detectionMultiplier);
+  const detected = rng.next() < chance;
   return { detected, favorGain: config.favorGain, budgetImpact: config.budgetImpact };
 }
 

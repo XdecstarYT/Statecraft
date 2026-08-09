@@ -100,4 +100,26 @@ describe('advanceEconomy', () => {
     const distinctValues = new Set(history.map((v) => v.toFixed(6)));
     expect(distinctValues.size).toBeGreaterThan(1);
   });
+
+  it('a higher volatility multiplier produces larger swings from the same rng draws', () => {
+    const calm = advanceEconomy(baseEconomy, new SeededRng(55), 0.5);
+    const wild = advanceEconomy(baseEconomy, new SeededRng(55), 2);
+    const calmSwing = Math.abs(calm.gdpGrowth - baseEconomy.gdpGrowth);
+    const wildSwing = Math.abs(wild.gdpGrowth - baseEconomy.gdpGrowth);
+    expect(wildSwing).toBeGreaterThan(calmSwing);
+  });
+
+  it('does not scale already-queued policy effects by the volatility multiplier', () => {
+    const withEffect = queuePolicyEffect(baseEconomy, { gdpGrowth: 10 }, 2);
+    let calm = withEffect;
+    let wild = withEffect;
+    const rngCalm = new SeededRng(1);
+    const rngWild = new SeededRng(1);
+    calm = advanceEconomy(calm, rngCalm, 0.1);
+    calm = advanceEconomy(calm, rngCalm, 0.1);
+    wild = advanceEconomy(wild, rngWild, 5);
+    wild = advanceEconomy(wild, rngWild, 5);
+    // Both landed the same +10 policy effect; only the tiny drift/noise differs.
+    expect(Math.abs(calm.gdpGrowth - wild.gdpGrowth)).toBeLessThan(2);
+  });
 });

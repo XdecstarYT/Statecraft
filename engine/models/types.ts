@@ -4,6 +4,8 @@
  * rngState — both noted inline below).
  */
 
+import type { Difficulty } from '../difficulty';
+
 export interface IdeologyPosition {
   /** -100 (fully state-directed) .. 100 (fully free-market) */
   economic: number;
@@ -238,4 +240,7 @@ export interface GameState {
   foreignRelations: Record<string, number>;
   treaties: Treaty[];
   eventLog: EventLogEntry[];
+  difficulty: Difficulty;
+  /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
+  startingEconomy: EconomyState;
 }
