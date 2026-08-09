@@ -16,6 +16,8 @@ import type {
   Politician,
   PoliticianAttributes,
   Endorser,
+  PollingFirm,
+  PollResult,
   Protest,
   ScandalResponse,
   SecessionistMovement,
@@ -102,6 +104,8 @@ import {
 import { resolveDebate, DEBATE_WINNER_APPROVAL_BONUS, DEBATE_LOSER_APPROVAL_PENALTY, type DebateResult } from './systems/debate';
 import { attemptEndorsement, type EndorsementAttemptResult } from './systems/endorsements';
 import { ENDORSERS } from '../content/endorsements/endorsers';
+import { commissionApprovalPoll, commissionPartyPoll } from './systems/polling';
+import { POLLING_FIRMS } from '../content/polling/firms';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
 import {
@@ -174,6 +178,7 @@ export * from './systems/succession';
 export * from './systems/unrest';
 export * from './systems/debate';
 export * from './systems/endorsements';
+export * from './systems/polling';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -233,6 +238,7 @@ export interface NewGameOptions {
   difficulty?: Difficulty;
   interestGroups?: InterestGroup[];
   endorsers?: Endorser[];
+  pollingFirms?: PollingFirm[];
   /** Overrides the auto-generated jittered attributes — used by career mode to carry forward what was actually earned. */
   playerAttributes?: PoliticianAttributes;
   /** Overrides the party-jittered starting ideology — same purpose as playerAttributes. */
@@ -325,6 +331,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     protests: [],
     endorsers: options.endorsers ?? ENDORSERS,
     endorsements: [],
+    pollingFirms: options.pollingFirms ?? POLLING_FIRMS,
+    polls: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -915,6 +923,35 @@ export function seekEndorsementAction(
   const endorsements = [...state.endorsements, { endorserId, politicianId: player.id, turn: state.turn }];
 
   return { state: { ...state, politicians, endorsements, rngState: rng.getState() }, outcome };
+}
+
+/** Commissions a poll of the player's own public approval from the given firm. */
+export function commissionApprovalPollAction(
+  state: GameState,
+  firmId: string
+): { state: GameState; outcome: PollResult | null } {
+  const firm = state.pollingFirms.find((f) => f.id === firmId);
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!firm || !player) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const poll = commissionApprovalPoll(firm, player, state.turn, rng);
+  return { state: { ...state, polls: [...state.polls, poll], rngState: rng.getState() }, outcome: poll };
+}
+
+/** Commissions a poll of a party's current support from the given firm. */
+export function commissionPartyPollAction(
+  state: GameState,
+  firmId: string,
+  partyId: string
+): { state: GameState; outcome: PollResult | null } {
+  const firm = state.pollingFirms.find((f) => f.id === firmId);
+  const party = state.parties.find((p) => p.id === partyId);
+  if (!firm || !party) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const poll = commissionPartyPoll(firm, party, state.parties, state.turn, rng);
+  return { state: { ...state, polls: [...state.polls, poll], rngState: rng.getState() }, outcome: poll };
 }
 
 /**

@@ -443,6 +443,29 @@ export interface EndorsementRecord {
   turn: number;
 }
 
+/** A static polling-firm profile. See engine/systems/polling.ts. */
+export interface PollingFirm {
+  id: string;
+  name: string;
+  sampleSize: number;
+  /** Persistent house-effect lean in points, added to the true value before sampling. Small: -5..5. */
+  houseBias: number;
+  /** 0..1 — 1 is textbook-perfect execution; lower firms add extra noise beyond pure sampling error. */
+  reliability: number;
+}
+
+export interface PollResult {
+  id: string;
+  firmId: string;
+  turn: number;
+  subjectId: string;
+  subjectLabel: string;
+  kind: 'approval' | 'party_support';
+  sampledValue: number;
+  marginOfError: number;
+  trueValue: number;
+}
+
 export type UnrestStatus = 'protesting' | 'riot' | 'quelled';
 
 /** A nationwide civil-unrest event — see engine/systems/unrest.ts. */
@@ -535,6 +558,8 @@ export interface GameState {
   protests: Protest[];
   endorsers: Endorser[];
   endorsements: EndorsementRecord[];
+  pollingFirms: PollingFirm[];
+  polls: PollResult[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

@@ -76,6 +76,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     protests: [],
     endorsers: [],
     endorsements: [],
+    pollingFirms: [],
+    polls: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,

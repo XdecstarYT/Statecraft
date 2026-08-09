@@ -21,6 +21,8 @@ import {
   holdDebateAction as engineHoldDebate,
   holdPressConference as engineHoldPressConference,
   seekEndorsementAction as engineSeekEndorsement,
+  commissionApprovalPollAction as engineCommissionApprovalPoll,
+  commissionPartyPollAction as engineCommissionPartyPoll,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -101,6 +103,7 @@ import {
   type DispersalOutcome,
   type EndorsementAttemptResult,
   type ImpeachmentOutcome,
+  type PollResult,
   type PressTopic,
   type CommodityType,
   type CorruptionAttemptOutcome,
@@ -197,6 +200,7 @@ interface StatecraftStore {
   lastDispersalOutcome: (DispersalOutcome & { protestId: string }) | null;
   lastDebateResult: DebateResult | null;
   lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
+  lastPollResult: PollResult | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -241,6 +245,8 @@ interface StatecraftStore {
   holdPressConferenceAction: (topic: PressTopic) => void;
   holdDebateAction: (rivalId?: string) => void;
   seekEndorsementAction: (endorserId: string) => void;
+  commissionApprovalPollAction: (firmId: string) => void;
+  commissionPartyPollAction: (firmId: string, partyId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -305,6 +311,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastDispersalOutcome: null,
   lastDebateResult: null,
   lastEndorsementOutcome: null,
+  lastPollResult: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -752,6 +759,22 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineSeekEndorsement(game, endorserId);
     if (!outcome) return;
     set({ game: state, lastEndorsementOutcome: { ...outcome, endorserId } });
+  },
+
+  commissionApprovalPollAction: (firmId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineCommissionApprovalPoll(game, firmId);
+    if (!outcome) return;
+    set({ game: state, lastPollResult: outcome });
+  },
+
+  commissionPartyPollAction: (firmId, partyId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineCommissionPartyPoll(game, firmId, partyId);
+    if (!outcome) return;
+    set({ game: state, lastPollResult: outcome });
   },
 
   nextTurn: () => {
