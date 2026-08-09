@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { pollWhipCount, type Bill } from '../../engine';
+import { computeLobbyingPressure, pollWhipCount, type Bill } from '../../engine';
 import { useStatecraftStore } from '../store';
 
 export function BillPanel() {
@@ -192,9 +192,17 @@ function BillRow({
   const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
   const isPlayerBill = sponsor?.isPlayer ?? false;
 
-  const projections = expanded
-    ? pollWhipCount(bill, game.politicians, game.relationships, game.favorBank)
-    : [];
+  const projections =
+    expanded && sponsor
+      ? pollWhipCount(
+          bill,
+          game.politicians,
+          game.relationships,
+          game.favorBank,
+          undefined,
+          computeLobbyingPressure(game.interestGroups, bill, sponsor)
+        )
+      : [];
 
   const yesCount = projections.filter((p) => p.stance === 'yes').length;
   const noCount = projections.filter((p) => p.stance === 'no').length;

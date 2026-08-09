@@ -16,7 +16,10 @@ import {
   cancelTradeDeal,
   commitCorruption,
   computeCabinetEffects,
+  applyBillOutcomeToGroups,
+  computeLobbyingPressure,
   concludeElectionNightAction as engineConcludeElectionNight,
+  courtInterestGroupAction as engineCourtInterestGroup,
   createNewGame,
   declareWar,
   dismissElectionNight,
@@ -57,6 +60,7 @@ import {
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
+  type CourtGroupOutcome,
   type CoverageEvent,
   type Difficulty,
   type ElectionOutcome,
@@ -111,6 +115,7 @@ interface StatecraftStore {
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
   lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' }) | null;
+  lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
@@ -148,6 +153,7 @@ interface StatecraftStore {
   dismissElectionNightAction: () => void;
   appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string) => void;
   removeFromCabinetAction: (portfolio: CabinetPortfolio) => void;
+  courtInterestGroupAction: (groupId: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -159,6 +165,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   labResult: null,
   lastCorruptionOutcome: null,
   lastCampaignOutcome: null,
+  lastLobbyingOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -173,6 +180,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       labResult: null,
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
+      lastLobbyingOutcome: null,
     });
   },
 
@@ -194,6 +202,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       labResult: null,
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
+      lastLobbyingOutcome: null,
     });
     return true;
   },
@@ -273,11 +282,21 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!sponsor) return;
 
     const rng = SeededRng.fromState(game.rngState);
-    const result = resolveFloorVote(bill, game.politicians, game.relationships, game.favorBank, rng);
+    const lobbyingPressure = computeLobbyingPressure(game.interestGroups, bill, sponsor);
+    const result = resolveFloorVote(
+      bill,
+      game.politicians,
+      game.relationships,
+      game.favorBank,
+      rng,
+      undefined,
+      lobbyingPressure
+    );
     const updatedBill = applyFloorVoteResult(bill, result);
     const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
+    const interestGroups = applyBillOutcomeToGroups(game.interestGroups, updatedBill, sponsor, result.passed);
 
-    let nextState: GameState = { ...game, bills, rngState: rng.getState() };
+    let nextState: GameState = { ...game, bills, interestGroups, rngState: rng.getState() };
     nextState = applyBillOutcomeToApproval(nextState, sponsor.id, result.passed);
     nextState = enactPassedBill(nextState, updatedBill);
     const { state: coveredState, coverage } = generateEventCoverage(
@@ -574,5 +593,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio) } });
+  },
+
+  courtInterestGroupAction: (groupId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineCourtInterestGroup(game, groupId);
+    set({ game: state, lastLobbyingOutcome: { ...outcome, groupId } });
   },
 }));

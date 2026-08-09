@@ -17,6 +17,8 @@ export interface WhipWeights {
   relationship: number;
   partyLine: number;
   favors: number;
+  /** Weight on the aggregate interest-group lobbying pressure term (see lobbying.ts). */
+  lobbying: number;
 }
 
 /**
@@ -31,11 +33,16 @@ export const DEFAULT_WHIP_WEIGHTS: WhipWeights = {
   relationship: 0.8,
   partyLine: 1.0,
   favors: 0.6,
+  lobbying: 0.7,
 };
 
 /**
  * Computes the probability [0, 1) that `member` votes yes on a bill sponsored
- * by `sponsor`, per the whip-count formula in CLAUDE.md §5.
+ * by `sponsor`, per the whip-count formula in CLAUDE.md §5. `lobbyingPressure`
+ * is the bill-level aggregate from engine/systems/lobbying.ts's
+ * computeLobbyingPressure — a single term shared by every undecided member
+ * rather than a per-member one, since interest groups lobby the chamber as a
+ * whole rather than individual members.
  */
 export function computeSupportProbability(
   member: Politician,
@@ -43,7 +50,8 @@ export function computeSupportProbability(
   relationshipScore: number,
   favorBankScore: number,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
-  maxFavors: number = MAX_FAVORS
+  maxFavors: number = MAX_FAVORS,
+  lobbyingPressure = 0
 ): number {
   const distance = ideologicalDistance(member.ideology, sponsor.ideology);
   // 1 (perfectly aligned) .. -1 (maximally opposed)
@@ -53,12 +61,15 @@ export function computeSupportProbability(
   const partyLineTerm = member.partyId === sponsor.partyId ? 1 : -1;
   // 0 (no favors owed) .. 1 (fully banked)
   const favorsTerm = maxFavors > 0 ? Math.max(0, Math.min(1, favorBankScore / maxFavors)) : 0;
+  // -1 (chamber-wide lobbying against) .. 1 (chamber-wide lobbying for)
+  const lobbyingTerm = Math.max(-1, Math.min(1, lobbyingPressure));
 
   const supportScore =
     weights.ideology * ideologyTerm +
     weights.relationship * relationshipTerm +
     weights.partyLine * partyLineTerm +
-    weights.favors * favorsTerm;
+    weights.favors * favorsTerm +
+    weights.lobbying * lobbyingTerm;
 
   return sigmoid(supportScore);
 }
@@ -121,7 +132,8 @@ export function pollWhipCount(
   politicians: Politician[],
   relationships: Record<string, number>,
   favorBank: Record<string, number>,
-  weights: WhipWeights = DEFAULT_WHIP_WEIGHTS
+  weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
+  lobbyingPressure = 0
 ): WhipProjection[] {
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
   if (!sponsor) {
@@ -142,7 +154,9 @@ export function pollWhipCount(
         sponsor,
         relationshipScore,
         favorBankScore,
-        weights
+        weights,
+        MAX_FAVORS,
+        lobbyingPressure
       );
       return { politicianId: member.id, stance: 'undecided' as const, projectedProbability };
     });
@@ -167,7 +181,8 @@ export function resolveFloorVote(
   relationships: Record<string, number>,
   favorBank: Record<string, number>,
   rng: SeededRng,
-  weights: WhipWeights = DEFAULT_WHIP_WEIGHTS
+  weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
+  lobbyingPressure = 0
 ): FloorVoteResult {
   assertStatus(bill, 'floor');
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
@@ -195,7 +210,9 @@ export function resolveFloorVote(
         sponsor,
         relationshipScore,
         favorBankScore,
-        weights
+        weights,
+        MAX_FAVORS,
+        lobbyingPressure
       );
       vote = resolveVote(probability, rng);
     }

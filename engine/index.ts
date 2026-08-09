@@ -8,6 +8,7 @@ import type {
   ForeignCounterpart,
   GameState,
   IdeologyPosition,
+  InterestGroup,
   MediaOutlet,
   MilitaryProfile,
   Party,
@@ -29,6 +30,7 @@ import {
 import { advanceApproval, pushApprovalEvent } from './systems/opinion';
 import { generateCoverage, type CoverageEvent, type EventKind } from './systems/media';
 import {
+  DEFAULT_WHIP_WEIGHTS,
   MAX_FAVORS,
   advanceToCommittee,
   advanceToFloor,
@@ -38,6 +40,14 @@ import {
   resolveFloorVote,
 } from './systems/legislative';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
+import {
+  applyBillOutcomeToGroups,
+  applyCourtOutcome,
+  computeLobbyingPressure,
+  courtInterestGroup,
+  decayGroupDispositions,
+  type CourtGroupOutcome,
+} from './systems/lobbying';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -75,6 +85,7 @@ import { nationsExcluding, startingMilitaryProfile } from '../content/diplomacy/
 import { CRISIS_TABLE } from '../content/events/crisisTable';
 import { BILL_TEMPLATES } from '../content/flavor/billTemplates';
 import { pickVictorySpeech } from '../content/flavor/victorySpeeches';
+import { STARTER_INTEREST_GROUPS } from '../content/lobbying/groups';
 
 export * from './rng';
 export * from './ideology';
@@ -96,6 +107,7 @@ export * from './systems/military';
 export * from './systems/trade';
 export * from './systems/cabinet';
 export * from './systems/electionNight';
+export * from './systems/lobbying';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -153,6 +165,7 @@ export interface NewGameOptions {
   playerPartyId?: string;
   playerName?: string;
   difficulty?: Difficulty;
+  interestGroups?: InterestGroup[];
 }
 
 /** Assembles a fresh, fully-populated GameState from a seed and starter content. */
@@ -196,6 +209,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     electionNight: null,
     nextElectionTurn: 1 + TERM_LENGTH_TURNS,
     cabinet: [],
+    interestGroups: options.interestGroups ?? STARTER_INTEREST_GROUPS.map((g) => ({ ...g })),
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -241,9 +255,20 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
 
   let relationships = state.relationships;
   let economy = state.economy;
+  let interestGroups = state.interestGroups;
   bills = bills.map((bill) => {
     if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
-    const result = resolveFloorVote(bill, politicians, relationships, state.favorBank, rng);
+    const sponsor = politicians.find((p) => p.id === bill.sponsorId)!;
+    const lobbyingPressure = computeLobbyingPressure(interestGroups, bill, sponsor);
+    const result = resolveFloorVote(
+      bill,
+      politicians,
+      relationships,
+      state.favorBank,
+      rng,
+      DEFAULT_WHIP_WEIGHTS,
+      lobbyingPressure
+    );
     if (player) {
       relationships = updateRelationshipsAfterVote(relationships, player.id, result.finalWhipCount);
     }
@@ -251,6 +276,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     if (resolvedBill.status === 'passed') {
       economy = enactPassedBill({ ...state, economy }, resolvedBill).economy;
     }
+    interestGroups = applyBillOutcomeToGroups(interestGroups, resolvedBill, sponsor, resolvedBill.status === 'passed');
     return resolvedBill;
   });
 
@@ -333,7 +359,16 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     }
   }
 
-  return { ...state, bills, relationships, economy, politicians: nextPoliticians, favorBank, scandals };
+  return {
+    ...state,
+    bills,
+    relationships,
+    economy,
+    politicians: nextPoliticians,
+    favorBank,
+    scandals,
+    interestGroups,
+  };
 }
 
 /**
@@ -354,7 +389,8 @@ export function advanceTurn(state: GameState): GameState {
     settings.economyVolatilityMultiplier * cabinetEffects.economyVolatilityMultiplier
   );
   const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
-  let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
+  const interestGroups = decayGroupDispositions(state.interestGroups);
+  let next: GameState = { ...state, economy, politicians, interestGroups, turn: state.turn + 1 };
 
   next = runNpcTurn(next, rng);
   next = runWarTurns(next, rng);
@@ -460,6 +496,29 @@ export function holdRally(state: GameState): { state: GameState; outcome: Campai
     p.id === player.id ? pushApprovalEvent(p, 'base', outcome.approvalImpact, 4) : p
   );
   return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * The player directly courts one interest group — meetings, funding
+ * pledges, an endorsement ask — driven by their network and charisma. A
+ * no-op (identity outcome) if the group id doesn't exist, so callers don't
+ * need to pre-validate.
+ */
+export function courtInterestGroupAction(
+  state: GameState,
+  groupId: string
+): { state: GameState; outcome: CourtGroupOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const group = state.interestGroups.find((g) => g.id === groupId);
+  if (!player || !group) {
+    return { state, outcome: { success: false, dispositionDelta: 0 } };
+  }
+  const outcome = courtInterestGroup(player, rng);
+  const interestGroups = state.interestGroups.map((g) =>
+    g.id === groupId ? applyCourtOutcome(g, outcome) : g
+  );
+  return { state: { ...state, interestGroups, rngState: rng.getState() }, outcome };
 }
 
 /**

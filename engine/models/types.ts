@@ -314,6 +314,35 @@ export interface CabinetAppointment {
   politicianId: string;
 }
 
+export type InterestGroupFocus =
+  | 'business'
+  | 'labor'
+  | 'environment'
+  | 'social_conservative'
+  | 'social_progressive'
+  | 'civil_liberties'
+  | 'healthcare'
+  | 'defense'
+  | 'agriculture'
+  | 'seniors';
+
+/**
+ * An organized lobby with a real ideological stance and financial/organizing
+ * clout — not just flavor text. See engine/systems/lobbying.ts for how a
+ * group's stance on a bill and its disposition toward the player feed a real
+ * term into the whip-count formula.
+ */
+export interface InterestGroup {
+  id: string;
+  name: string;
+  focus: InterestGroupFocus;
+  ideology: IdeologyPosition;
+  /** 0..100 organizational/financial clout — scales how much this group's stance actually moves undecided legislators. */
+  influence: number;
+  /** -100 (openly hostile to the player) .. 100 (firmly in the player's camp). Drifts toward 0 each turn unless reinforced. */
+  disposition: number;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -360,6 +389,7 @@ export interface GameState {
   /** The turn a new legislative election is next due — advisory (nothing auto-fires), reset whenever an election is held. */
   nextElectionTurn: number;
   cabinet: CabinetAppointment[];
+  interestGroups: InterestGroup[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
