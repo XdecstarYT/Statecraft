@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { useStatecraftStore } from '../store';
+import { getWorldLandTexture } from './worldLandTexture';
 
 const GLOBE_RADIUS = 5;
 
@@ -69,16 +70,16 @@ export function Globe({ selectedId, onSelect }: GlobeProps) {
     scene.add(pointLight);
 
     const globe = new THREE.Mesh(
-      new THREE.SphereGeometry(GLOBE_RADIUS, 48, 48),
-      new THREE.MeshPhongMaterial({ color: 0x14213d, shininess: 8 })
+      new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64),
+      new THREE.MeshPhongMaterial({ map: getWorldLandTexture(), shininess: 6 })
     );
     scene.add(globe);
 
-    const wireframe = new THREE.Mesh(
-      new THREE.SphereGeometry(GLOBE_RADIUS * 1.001, 24, 16),
-      new THREE.MeshBasicMaterial({ color: 0x2a3a5c, wireframe: true, transparent: true, opacity: 0.35 })
+    const atmosphere = new THREE.Mesh(
+      new THREE.SphereGeometry(GLOBE_RADIUS * 1.02, 48, 48),
+      new THREE.MeshBasicMaterial({ color: 0x4a7fb5, transparent: true, opacity: 0.06, side: THREE.BackSide })
     );
-    scene.add(wireframe);
+    scene.add(atmosphere);
 
     markersRef.current.clear();
     for (const nation of nations) {
