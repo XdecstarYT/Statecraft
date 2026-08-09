@@ -560,6 +560,8 @@ export interface GameState {
   endorsements: EndorsementRecord[];
   pollingFirms: PollingFirm[];
   polls: PollResult[];
+  /** politicianId -> abstracted personal wealth accrued from corrupt acts. See engine/systems/wealth.ts. */
+  personalWealth: Record<string, number>;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { CorruptionTier } from '../../engine';
+import { WEALTH_SCANDAL_THRESHOLD } from '../../engine';
 import { CORRUPTION_ACTIONS } from '../../content/flavor/corruptionActions';
 import { useStatecraftStore } from '../store';
 
@@ -28,11 +29,23 @@ export function CorruptionPanel() {
   const actionPool = CORRUPTION_ACTIONS[tier];
   const actionText = actionPool[pickFlavorIndex(`${tier}:${selectedTarget}`, actionPool.length)];
 
+  const player = game.politicians.find((p) => p.isPlayer);
+  const playerWealth = player ? game.personalWealth[player.id] ?? 0 : 0;
+
   return (
     <section className="panel">
       <div className="panel-header">
         <h2>Power &amp; Patronage</h2>
       </div>
+
+      {player && (
+        <p className="muted">
+          Your personal wealth: <strong>{playerWealth.toFixed(0)}</strong>
+          {playerWealth > WEALTH_SCANDAL_THRESHOLD && (
+            <span className="result-fail"> — past this point, conflict-of-interest scandals can break on their own.</span>
+          )}
+        </p>
+      )}
 
       <div className="corruption-controls">
         <select value={tier} onChange={(e) => setTier(e.target.value as CorruptionTier)}>
@@ -71,7 +84,8 @@ export function CorruptionPanel() {
           return (
             <li key={scandal.id} className={`scandal-item status-${scandal.status}`}>
               <span>
-                <strong>{politician?.name ?? scandal.politicianId}</strong> — {scandal.tier} tier —{' '}
+                <strong>{politician?.name ?? scandal.politicianId}</strong> —{' '}
+                {scandal.id.startsWith('wealth-scandal-') ? 'Conflict of Interest' : `${scandal.tier} tier`} —{' '}
                 {scandal.status}
                 {scandal.response ? ` (${scandal.response})` : ''}
                 {politician && !politician.isPlayer && scandal.status === 'resolved' && (

@@ -72,7 +72,7 @@ import {
   type ImpeachmentResult,
 } from './systems/succession';
 import type { CareerGraduationPayload } from './systems/career';
-import { foundParty, type FoundPartyResult } from './systems/partyManagement';
+import { foundParty, mergeParties, rebrandParty, type FoundPartyResult } from './systems/partyManagement';
 import {
   advanceMovementSentiment,
   computeNationalGrievance,
@@ -106,6 +106,7 @@ import { attemptEndorsement, type EndorsementAttemptResult } from './systems/end
 import { ENDORSERS } from '../content/endorsements/endorsers';
 import { commissionApprovalPoll, commissionPartyPoll } from './systems/polling';
 import { POLLING_FIRMS } from '../content/polling/firms';
+import { BASE_PERSONAL_WEALTH, WEALTH_TIER_GAIN, rollForWealthScandal } from './systems/wealth';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
 import {
@@ -179,6 +180,7 @@ export * from './systems/unrest';
 export * from './systems/debate';
 export * from './systems/endorsements';
 export * from './systems/polling';
+export * from './systems/wealth';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -333,6 +335,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     endorsements: [],
     pollingFirms: options.pollingFirms ?? POLLING_FIRMS,
     polls: [],
+    personalWealth: Object.fromEntries(politicians.map((p) => [p.id, BASE_PERSONAL_WEALTH])),
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -721,6 +724,29 @@ export function runUnrestTurn(state: GameState, rng: SeededRng): GameState {
   };
 }
 
+/**
+ * Rolls, once per turn, whether any politician's standing personal wealth
+ * alone triggers a conflict-of-interest scandal — independent of any
+ * single corrupt act's own detection roll. Skips anyone who already has
+ * an unresolved scandal, so this never piles up multiple simultaneous
+ * scandals on the same target.
+ */
+export function runWealthScandalTurn(state: GameState, rng: SeededRng): GameState {
+  let scandals = state.scandals;
+  for (const politician of state.politicians) {
+    const wealth = state.personalWealth[politician.id] ?? BASE_PERSONAL_WEALTH;
+    const alreadyUnresolved = scandals.some((s) => s.politicianId === politician.id && s.status === 'unresolved');
+    if (alreadyUnresolved) continue;
+    if (rollForWealthScandal(wealth, rng)) {
+      scandals = [
+        ...scandals,
+        { id: `wealth-scandal-${state.turn}-${politician.id}`, politicianId: politician.id, tier: 'hard', turn: state.turn, status: 'unresolved' },
+      ];
+    }
+  }
+  return { ...state, scandals };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -739,6 +765,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runLeadershipChallengeTurn(next, rng);
   next = runSecessionTurn(next, rng);
   next = runUnrestTurn(next, rng);
+  next = runWealthScandalTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1071,6 +1098,51 @@ export function foundNewPartyAction(
     },
     result,
   };
+}
+
+/**
+ * Merges one party into another: every member of the absorbed party
+ * switches allegiance and the surviving party's seat count grows by the
+ * absorbed party's real seat count — a real structural change, not a
+ * cosmetic relabel. The absorbed party's leadership entry is dropped
+ * since it no longer exists.
+ */
+export function mergePartiesAction(state: GameState, absorbedPartyId: string, survivingPartyId: string): GameState {
+  if (absorbedPartyId === survivingPartyId) return state;
+  const { updatedParties, updatedPoliticians } = mergeParties(
+    state.politicians,
+    state.parties,
+    absorbedPartyId,
+    survivingPartyId
+  );
+  const partyLeaderId = { ...state.partyLeaderId };
+  delete partyLeaderId[absorbedPartyId];
+
+  // The absorbed party no longer exists — if it was part of the sitting
+  // coalition (or was the coalition's formateur), fold its membership
+  // into the surviving party rather than leaving a dangling party id.
+  let coalition = state.coalition;
+  if (coalition && coalition.memberPartyIds.includes(absorbedPartyId)) {
+    const memberPartyIds = Array.from(
+      new Set(coalition.memberPartyIds.map((id) => (id === absorbedPartyId ? survivingPartyId : id)))
+    );
+    const formateurPartyId = coalition.formateurPartyId === absorbedPartyId ? survivingPartyId : coalition.formateurPartyId;
+    const totalSeats = updatedParties.reduce((sum, p) => sum + p.seats, 0);
+    const seatsHeld = updatedParties.filter((p) => memberPartyIds.includes(p.id)).reduce((sum, p) => sum + p.seats, 0);
+    coalition = { ...coalition, memberPartyIds, formateurPartyId, totalSeats, seatsHeld };
+  }
+
+  return { ...state, parties: updatedParties, politicians: updatedPoliticians, partyLeaderId, coalition };
+}
+
+/** Rebrands a party's name and, optionally, its ideological position — every member keeps their seat and relationships intact. */
+export function rebrandPartyAction(
+  state: GameState,
+  partyId: string,
+  newName: string,
+  newIdeology?: IdeologyPosition
+): GameState {
+  return { ...state, parties: rebrandParty(state.parties, partyId, newName, newIdeology) };
 }
 
 function replaceMovement(state: GameState, provinceId: string, updated: SecessionistMovement): GameState {
@@ -1432,8 +1504,13 @@ export function commitCorruption(
     ];
   }
 
+  const personalWealth = {
+    ...state.personalWealth,
+    [actorId]: (state.personalWealth[actorId] ?? BASE_PERSONAL_WEALTH) + WEALTH_TIER_GAIN[tier],
+  };
+
   return {
-    state: { ...state, favorBank, economy, scandals, rngState: rng.getState() },
+    state: { ...state, favorBank, economy, scandals, personalWealth, rngState: rng.getState() },
     outcome: { detected: result.detected, favorGain: result.favorGain, budgetImpact: result.budgetImpact, scandalId },
   };
 }

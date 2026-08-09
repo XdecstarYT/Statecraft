@@ -18,6 +18,7 @@ import {
   concludeElectionNightAction,
   dismissElectionNight,
   appointToCabinet,
+  mergePartiesAction,
   TERM_LENGTH_TURNS,
   type GameState,
 } from './index';
@@ -620,5 +621,48 @@ describe('the second starter country (Vantorra, presidential/PR)', () => {
     let state = createNewGame(5, { country: VANTORRA_COUNTRY, parties: VANTORRA_PARTIES });
     for (let i = 0; i < 15; i++) state = advanceTurn(state);
     expect(state.turn).toBe(16);
+  });
+});
+
+describe('mergePartiesAction', () => {
+  it('cleans up a dangling coalition membership when the absorbed party was a coalition member', () => {
+    const state = createNewGame(1);
+    expect(state.coalition).not.toBeNull();
+    const coalition = state.coalition!;
+    const absorbedPartyId = coalition.memberPartyIds[coalition.memberPartyIds.length - 1];
+    const survivingPartyId = state.parties.find((p) => p.id !== absorbedPartyId)!.id;
+
+    const merged = mergePartiesAction(state, absorbedPartyId, survivingPartyId);
+
+    expect(merged.parties.some((p) => p.id === absorbedPartyId)).toBe(false);
+    expect(merged.coalition!.memberPartyIds).not.toContain(absorbedPartyId);
+    expect(merged.coalition!.memberPartyIds).toContain(survivingPartyId);
+    // every remaining member id must resolve to a real party
+    for (const id of merged.coalition!.memberPartyIds) {
+      expect(merged.parties.some((p) => p.id === id)).toBe(true);
+    }
+    // seat totals stay internally consistent with the post-merge party list
+    const totalSeats = merged.parties.reduce((sum, p) => sum + p.seats, 0);
+    expect(merged.coalition!.totalSeats).toBe(totalSeats);
+  });
+
+  it('reassigns the formateur when the absorbed party was the formateur', () => {
+    const state = createNewGame(1);
+    const coalition = state.coalition!;
+    const formateurPartyId = coalition.formateurPartyId;
+    const survivingPartyId = state.parties.find((p) => p.id !== formateurPartyId)!.id;
+
+    const merged = mergePartiesAction(state, formateurPartyId, survivingPartyId);
+
+    expect(merged.coalition!.formateurPartyId).toBe(survivingPartyId);
+  });
+
+  it('leaves the coalition untouched when neither party is a coalition member', () => {
+    const state = createNewGame(1);
+    const coalition = state.coalition!;
+    const nonMemberParties = state.parties.filter((p) => !coalition.memberPartyIds.includes(p.id));
+    if (nonMemberParties.length < 2) return; // not applicable for this seed's party split
+    const merged = mergePartiesAction(state, nonMemberParties[0].id, nonMemberParties[1].id);
+    expect(merged.coalition!.memberPartyIds).toEqual(coalition.memberPartyIds);
   });
 });

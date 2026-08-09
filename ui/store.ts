@@ -23,6 +23,8 @@ import {
   seekEndorsementAction as engineSeekEndorsement,
   commissionApprovalPollAction as engineCommissionApprovalPoll,
   commissionPartyPollAction as engineCommissionPartyPoll,
+  mergePartiesAction as engineMergeParties,
+  rebrandPartyAction as engineRebrandParty,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -247,6 +249,8 @@ interface StatecraftStore {
   seekEndorsementAction: (endorserId: string) => void;
   commissionApprovalPollAction: (firmId: string) => void;
   commissionPartyPollAction: (firmId: string, partyId: string) => void;
+  mergePartiesAction: (absorbedPartyId: string, survivingPartyId: string) => void;
+  rebrandPartyAction: (partyId: string, newName: string, newIdeology?: { economic: number; social: number }) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -775,6 +779,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineCommissionPartyPoll(game, firmId, partyId);
     if (!outcome) return;
     set({ game: state, lastPollResult: outcome });
+  },
+
+  mergePartiesAction: (absorbedPartyId, survivingPartyId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineMergeParties(game, absorbedPartyId, survivingPartyId) });
+  },
+
+  rebrandPartyAction: (partyId, newName, newIdeology) => {
+    const game = get().game;
+    if (!game) return;
+    const trimmed = newName.trim();
+    if (!trimmed) return;
+    set({ game: engineRebrandParty(game, partyId, trimmed, newIdeology) });
   },
 
   nextTurn: () => {

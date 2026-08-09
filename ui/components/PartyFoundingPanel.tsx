@@ -79,6 +79,91 @@ export function PartyFoundingPanel() {
             ` — ${lastFoundPartyResult.defectorIds.length} colleague${lastFoundPartyResult.defectorIds.length === 1 ? '' : 's'} followed you.`}
         </p>
       )}
+
+      <MergeAndRebrandSection />
     </section>
+  );
+}
+
+function MergeAndRebrandSection() {
+  const game = useStatecraftStore((s) => s.game);
+  const mergePartiesAction = useStatecraftStore((s) => s.mergePartiesAction);
+  const rebrandPartyAction = useStatecraftStore((s) => s.rebrandPartyAction);
+
+  const [absorbedId, setAbsorbedId] = useState<string | null>(null);
+  const [survivingId, setSurvivingId] = useState<string | null>(null);
+  const [rebrandTargetId, setRebrandTargetId] = useState<string | null>(null);
+  const [rebrandName, setRebrandName] = useState('');
+
+  if (!game) return null;
+  if (game.parties.length < 2) return null;
+
+  const absorbed = absorbedId ?? game.parties[0]?.id;
+  const surviving = survivingId ?? game.parties[1]?.id;
+  const rebrandTarget = rebrandTargetId ?? game.parties[0]?.id;
+
+  return (
+    <>
+      <p className="subheading">Merge Parties</p>
+      <div className="custom-bill-form">
+        <label>
+          Absorbed Party
+          <select value={absorbed} onChange={(e) => setAbsorbedId(e.target.value)}>
+            {game.parties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.seats} seats)
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Surviving Party
+          <select value={surviving} onChange={(e) => setSurvivingId(e.target.value)}>
+            {game.parties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} ({p.seats} seats)
+              </option>
+            ))}
+          </select>
+        </label>
+        <div className="row-actions">
+          <button
+            disabled={absorbed === surviving}
+            onClick={() => mergePartiesAction(absorbed, surviving)}
+          >
+            Merge
+          </button>
+        </div>
+      </div>
+
+      <p className="subheading">Rebrand a Party</p>
+      <div className="custom-bill-form">
+        <label>
+          Party
+          <select value={rebrandTarget} onChange={(e) => setRebrandTargetId(e.target.value)}>
+            {game.parties.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          New Name
+          <input type="text" value={rebrandName} onChange={(e) => setRebrandName(e.target.value)} placeholder="New party name" />
+        </label>
+        <div className="row-actions">
+          <button
+            disabled={!rebrandName.trim()}
+            onClick={() => {
+              rebrandPartyAction(rebrandTarget, rebrandName);
+              setRebrandName('');
+            }}
+          >
+            Rebrand
+          </button>
+        </div>
+      </div>
+    </>
   );
 }
