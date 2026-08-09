@@ -404,6 +404,23 @@ export interface Coalition {
   formedTurn: number;
 }
 
+export type SecessionStatus = 'agitating' | 'suppressed' | 'independent';
+
+/**
+ * A region's independence movement — sentiment rises with national
+ * grievance (unemployment, low approval) and can be resolved by autonomy
+ * concessions, a referendum, or armed suppression. See
+ * engine/systems/secession.ts.
+ */
+export interface SecessionistMovement {
+  provinceId: string;
+  provinceName: string;
+  /** 0..100 — support for independence within the region. */
+  sentiment: number;
+  status: SecessionStatus;
+  turnStarted: number;
+}
+
 export type CrisisCategory =
   | 'scandal'
   | 'natural_disaster'
@@ -460,6 +477,7 @@ export interface GameState {
   covertOperations: CovertOperationRecord[];
   /** The current governing coalition, or null when a single party holds an outright majority and none was needed. */
   coalition: Coalition | null;
+  secessionistMovements: SecessionistMovement[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

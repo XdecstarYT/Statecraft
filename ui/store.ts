@@ -28,6 +28,9 @@ import {
   applyFloorVoteResult,
   applyImmediateEffect,
   attemptCovertOperation,
+  callReferendumAction as engineCallReferendum,
+  grantAutonomyAction as engineGrantAutonomy,
+  suppressMovementAction as engineSuppressMovement,
   beginElectionNight,
   breakTreaty,
   cancelTradeDeal,
@@ -103,7 +106,9 @@ import {
   type PartyActionOutcome,
   type PartyVoteShare,
   type PartyWorkOutcome,
+  type ReferendumOutcome,
   type ScandalResponse,
+  type SuppressionOutcome,
   type WhipStance,
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
@@ -154,6 +159,8 @@ interface StatecraftStore {
   lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
   lastCareerNominationOutcome: NominationOutcome | null;
   lastFoundPartyResult: FoundPartyResult | null;
+  lastReferendumOutcome: (ReferendumOutcome & { provinceId: string }) | null;
+  lastSuppressionOutcome: (SuppressionOutcome & { provinceId: string }) | null;
   economyHistory: EconomySnapshot[];
   lastElection: ElectionOutcome | null;
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
@@ -224,6 +231,9 @@ interface StatecraftStore {
   attemptCovertOperationAction: (counterpartId: string, type: CovertOperationType) => void;
   investInIntelligenceAction: (tier: IntelligenceInvestmentTier) => void;
   foundNewPartyAction: (partyId: string, name: string, ideology: IdeologyPosition) => void;
+  grantAutonomyAction: (provinceId: string) => void;
+  callReferendumAction: (provinceId: string) => void;
+  suppressMovementAction: (provinceId: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -233,6 +243,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCareerLocalRaceOutcome: null,
   lastCareerNominationOutcome: null,
   lastFoundPartyResult: null,
+  lastReferendumOutcome: null,
+  lastSuppressionOutcome: null,
   economyHistory: [],
   lastElection: null,
   lastFloorResult: null,
@@ -903,5 +915,27 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const outcome = engineFoundNewParty(game, partyId, name.trim() || 'New Party', ideology);
     if (!outcome) return;
     set({ game: outcome.state, lastFoundPartyResult: outcome.result });
+  },
+
+  grantAutonomyAction: (provinceId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineGrantAutonomy(game, provinceId) });
+  },
+
+  callReferendumAction: (provinceId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineCallReferendum(game, provinceId);
+    if (!outcome) return;
+    set({ game: state, lastReferendumOutcome: { ...outcome, provinceId } });
+  },
+
+  suppressMovementAction: (provinceId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineSuppressMovement(game, provinceId);
+    if (!outcome) return;
+    set({ game: state, lastSuppressionOutcome: { ...outcome, provinceId } });
   },
 }));

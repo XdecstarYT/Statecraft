@@ -217,7 +217,13 @@ describe('runNpcTurn via advanceTurn', () => {
     let state = createNewGame(21);
     let sawNpcScandal = false;
 
-    for (let i = 0; i < 60; i++) {
+    // A generous turn count, not just enough to make the seed-21 average
+    // work out today: every new per-turn system added to advanceTurn
+    // shifts the single shared rng stream for every later draw, so a tight
+    // cutoff tuned against one exact sequence breaks the next time
+    // anything upstream changes. Detection is rare enough that even 200
+    // turns isn't a safe margin for this seed — 400 comfortably clears it.
+    for (let i = 0; i < 400; i++) {
       state = advanceTurn(state);
       const npcScandals = state.scandals.filter((s) => {
         const politician = state.politicians.find((p) => p.id === s.politicianId);
@@ -522,7 +528,11 @@ describe('cabinet effects wired into gameplay', () => {
       return growthValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / growthValues.length;
     };
 
-    const trials = 40;
+    // A generous trial count for the same reason as the NPC-scandal test
+    // above: the shared rng stream shifts whenever a new per-turn system
+    // is added upstream, so this needs enough samples to stay robust to
+    // that rather than being tuned against one exact sequence.
+    const trials = 150;
     let totalWith = 0;
     let totalWithout = 0;
     for (let seed = 1; seed <= trials; seed++) {

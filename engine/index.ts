@@ -16,6 +16,7 @@ import type {
   Politician,
   PoliticianAttributes,
   ScandalResponse,
+  SecessionistMovement,
   VoterBloc,
 } from './models/types';
 import type { Difficulty } from './difficulty';
@@ -61,6 +62,15 @@ import {
 import { formGovernment, hasOutrightMajority } from './systems/coalition';
 import type { CareerGraduationPayload } from './systems/career';
 import { foundParty, type FoundPartyResult } from './systems/partyManagement';
+import {
+  advanceMovementSentiment,
+  computeNationalGrievance,
+  grantAutonomy,
+  resolveReferendum,
+  resolveSuppression,
+  rollForNewMovement,
+  secedeProvince,
+} from './systems/secession';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -74,6 +84,7 @@ import { computeCabinetEffects } from './systems/cabinet';
 import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
+  getProvinces,
   reportNextProvince,
   startElectionNight,
 } from './systems/electionNight';
@@ -127,6 +138,7 @@ export * from './systems/coalition';
 export * from './systems/career';
 export * from './systems/partyManagement';
 export * from './systems/nationBuilder';
+export * from './systems/secession';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -271,6 +283,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     intelligenceCapability: 20,
     covertOperations: [],
     coalition: null,
+    secessionistMovements: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -574,6 +587,29 @@ export function runLeadershipChallengeTurn(state: GameState, rng: SeededRng): Ga
  * setting. Does not touch the player's own bills — call legislative
  * actions separately for those.
  */
+/**
+ * Runs one turn of separatist activity: every existing movement's
+ * sentiment drifts toward what current national grievance (unemployment,
+ * low public approval) implies, and — if no movement already exists for
+ * every province — a new one may spontaneously emerge, likelier the more
+ * aggrieved the nation is. Purely a background simulation; resolving a
+ * movement (autonomy, referendum, suppression) is always a player action.
+ */
+export function runSecessionTurn(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const grievance = computeNationalGrievance(state.economy, player?.approval.public ?? 50);
+
+  const secessionistMovements = state.secessionistMovements.map((m) => advanceMovementSentiment(m, grievance));
+
+  const provinces = getProvinces(state.country);
+  const newMovement = rollForNewMovement(provinces, secessionistMovements, grievance, state.turn, rng);
+
+  return {
+    ...state,
+    secessionistMovements: newMovement ? [...secessionistMovements, newMovement] : secessionistMovements,
+  };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -590,6 +626,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runNpcTurn(next, rng);
   next = runWarTurns(next, rng);
   next = runLeadershipChallengeTurn(next, rng);
+  next = runSecessionTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -810,6 +847,112 @@ export function foundNewPartyAction(
       rngState: rng.getState(),
     },
     result,
+  };
+}
+
+function replaceMovement(state: GameState, provinceId: string, updated: SecessionistMovement): GameState {
+  return {
+    ...state,
+    secessionistMovements: state.secessionistMovements.map((m) => (m.provinceId === provinceId ? updated : m)),
+  };
+}
+
+/** Concedes autonomy to a specific movement, cooling its sentiment by a real, fixed amount. A no-op if that province has no movement. */
+export function grantAutonomyAction(state: GameState, provinceId: string): GameState {
+  const movement = state.secessionistMovements.find((m) => m.provinceId === provinceId);
+  if (!movement || movement.status !== 'agitating') return state;
+  return replaceMovement(state, provinceId, grantAutonomy(movement));
+}
+
+export interface ReferendumOutcome {
+  passed: boolean;
+  yesShare: number;
+  seceded: boolean;
+}
+
+/**
+ * Puts a movement to an actual vote. A passed referendum immediately
+ * secedes the province — the country's legislature and every party's
+ * seat count shrink for real, not just a status flag. A failed one cools
+ * the movement's momentum without fully resolving it.
+ */
+export function callReferendumAction(
+  state: GameState,
+  provinceId: string
+): { state: GameState; outcome: ReferendumOutcome | null } {
+  const movement = state.secessionistMovements.find((m) => m.provinceId === provinceId);
+  if (!movement || movement.status !== 'agitating') return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveReferendum(movement, rng);
+
+  if (!result.passed) {
+    const cooled = { ...movement, sentiment: Math.max(0, movement.sentiment - 15) };
+    return {
+      state: replaceMovement({ ...state, rngState: rng.getState() }, provinceId, cooled),
+      outcome: { ...result, seceded: false },
+    };
+  }
+
+  const provinces = getProvinces(state.country);
+  const province = provinces.find((p) => p.id === provinceId);
+  if (!province) return { state: { ...state, rngState: rng.getState() }, outcome: { ...result, seceded: false } };
+
+  const { country, parties } = secedeProvince(state.country, state.parties, province);
+  const independent = { ...movement, status: 'independent' as const };
+  return {
+    state: replaceMovement({ ...state, country, parties, rngState: rng.getState() }, provinceId, independent),
+    outcome: { ...result, seceded: true },
+  };
+}
+
+export interface SuppressionOutcome {
+  success: boolean;
+  seceded: boolean;
+}
+
+/**
+ * Sends in the military. Success crushes the movement (a lasting
+ * sentiment hit, not full resolution); failure means the rebels win
+ * outright and the province secedes immediately, same territorial
+ * consequences as a passed referendum. Costs the player's own public
+ * approval and relations regardless of outcome — repression is never
+ * free, win or lose.
+ */
+export function suppressMovementAction(
+  state: GameState,
+  provinceId: string
+): { state: GameState; outcome: SuppressionOutcome | null } {
+  const movement = state.secessionistMovements.find((m) => m.provinceId === provinceId);
+  if (!movement || movement.status !== 'agitating') return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveSuppression(movement, state.playerMilitary, rng);
+
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', -12, 6) : p))
+    : state.politicians;
+
+  if (!result.success) {
+    const provinces = getProvinces(state.country);
+    const province = provinces.find((p) => p.id === provinceId);
+    if (!province) {
+      return {
+        state: replaceMovement({ ...state, politicians, rngState: rng.getState() }, provinceId, result.movement),
+        outcome: { success: false, seceded: false },
+      };
+    }
+    const { country, parties } = secedeProvince(state.country, state.parties, province);
+    return {
+      state: replaceMovement({ ...state, country, parties, politicians, rngState: rng.getState() }, provinceId, result.movement),
+      outcome: { success: false, seceded: true },
+    };
+  }
+
+  return {
+    state: replaceMovement({ ...state, politicians, rngState: rng.getState() }, provinceId, result.movement),
+    outcome: { success: true, seceded: false },
   };
 }
 

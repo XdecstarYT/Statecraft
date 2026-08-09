@@ -70,6 +70,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     intelligenceCapability: 20,
     covertOperations: [],
     coalition: null,
+    secessionistMovements: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,
