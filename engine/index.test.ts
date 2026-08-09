@@ -18,11 +18,35 @@ import {
   concludeElectionNightAction,
   dismissElectionNight,
   appointToCabinet,
+  TERM_LENGTH_TURNS,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
 import { VANTORRA_COUNTRY, VANTORRA_PARTIES } from '../content/countries/vantorra';
 import { ALL_NATIONS } from '../content/diplomacy/nations';
+
+describe('election term schedule', () => {
+  it('a fresh game has a next election scheduled a full term out', () => {
+    const state = createNewGame(1);
+    expect(state.nextElectionTurn).toBeGreaterThan(state.turn);
+  });
+
+  it('running an instant election resets the schedule a full term from now', () => {
+    const state = createNewGame(1);
+    const { state: after } = runLegislativeElection(state);
+    expect(after.nextElectionTurn).toBe(after.turn + TERM_LENGTH_TURNS);
+  });
+
+  it('concluding an election night also resets the schedule', () => {
+    let state = createNewGame(1);
+    state = beginElectionNight(state);
+    while (state.electionNight!.status === 'reporting') {
+      state = reportNextProvinceAction(state);
+    }
+    state = concludeElectionNightAction(state);
+    expect(state.nextElectionTurn).toBe(state.turn + TERM_LENGTH_TURNS);
+  });
+});
 
 describe('createNewGame', () => {
   it('produces one politician per starting seat, and exactly one player', () => {

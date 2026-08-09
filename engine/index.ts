@@ -65,6 +65,7 @@ import {
   updateRelationshipsAfterVote,
 } from './systems/npc';
 import { clampAxis } from './ideology';
+import { WEEKS_PER_YEAR } from './calendar';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
 import { STARTER_VOTER_BLOCS } from '../content/opinion/blocs';
@@ -95,6 +96,9 @@ export * from './systems/military';
 export * from './systems/trade';
 export * from './systems/cabinet';
 export * from './systems/electionNight';
+
+/** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
+export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -190,6 +194,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     tradeDeals: [],
     wars: [],
     electionNight: null,
+    nextElectionTurn: 1 + TERM_LENGTH_TURNS,
     cabinet: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
@@ -641,7 +646,7 @@ export function runLegislativeElection(
   }));
 
   return {
-    state: { ...state, parties, rngState: rng.getState() },
+    state: { ...state, parties, nextElectionTurn: state.turn + TERM_LENGTH_TURNS, rngState: rng.getState() },
     outcome,
   };
 }
@@ -684,7 +689,13 @@ export function concludeElectionNightAction(state: GameState): GameState {
   const parties = state.parties.map((party) => ({ ...party, seats: finalSeats[party.id] ?? 0 }));
   const electionNight = concludeElectionNightState(state.electionNight, speech);
 
-  return { ...state, parties, electionNight, rngState: rng.getState() };
+  return {
+    ...state,
+    parties,
+    electionNight,
+    nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
+    rngState: rng.getState(),
+  };
 }
 
 /** Dismisses a concluded election night, returning to normal play. A no-op unless it's actually concluded. */

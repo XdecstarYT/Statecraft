@@ -1,12 +1,9 @@
-import { Suspense, lazy } from 'react';
 import { formatCalendarDate, turnToCalendarDate } from '../../engine';
 import { useStatecraftStore } from '../store';
-
-const EconomyChart = lazy(() => import('./EconomyChart'));
+import { Billboard } from './Billboard';
 
 export function Dashboard() {
   const game = useStatecraftStore((s) => s.game);
-  const economyHistory = useStatecraftStore((s) => s.economyHistory);
   const nextTurn = useStatecraftStore((s) => s.nextTurn);
 
   if (!game) return null;
@@ -30,9 +27,7 @@ export function Dashboard() {
         <Indicator label="Pending Effects" value={economy.pendingEffects.length} suffix="" />
       </div>
 
-      <Suspense fallback={<div style={{ height: 260 }} />}>
-        <EconomyChart data={economyHistory} />
-      </Suspense>
+      <Billboard />
     </section>
   );
 }

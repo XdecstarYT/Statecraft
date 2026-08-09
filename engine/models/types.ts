@@ -357,6 +357,8 @@ export interface GameState {
   wars: War[];
   /** Live province-by-province election in progress, if any. Null between elections. */
   electionNight: ElectionNightState | null;
+  /** The turn a new legislative election is next due — advisory (nothing auto-fires), reset whenever an election is held. */
+  nextElectionTurn: number;
   cabinet: CabinetAppointment[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
