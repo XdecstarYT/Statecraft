@@ -38,7 +38,7 @@ export function CorruptionPanel() {
         <h2>Power &amp; Patronage</h2>
       </div>
 
-      {player && (
+      {player && !game.houseRules.noCorruption && (
         <p className="muted">
           Your personal wealth: <strong>{playerWealth.toFixed(0)}</strong>
           {playerWealth > WEALTH_SCANDAL_THRESHOLD && (
@@ -47,6 +47,11 @@ export function CorruptionPanel() {
         </p>
       )}
 
+      {game.houseRules.noCorruption && (
+        <p className="muted">House rule: corruption is disabled for this playthrough.</p>
+      )}
+
+      {!game.houseRules.noCorruption && (
       <div className="corruption-controls">
         <select value={tier} onChange={(e) => setTier(e.target.value as CorruptionTier)}>
           {TIERS.map((t) => (
@@ -66,7 +71,8 @@ export function CorruptionPanel() {
           Attempt
         </button>
       </div>
-      <p className="muted">"{actionText}"</p>
+      )}
+      {!game.houseRules.noCorruption && <p className="muted">"{actionText}"</p>}
 
       {lastOutcome && (
         <p className={lastOutcome.detected ? 'result-fail' : 'result-pass'}>

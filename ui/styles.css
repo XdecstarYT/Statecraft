@@ -44,6 +44,58 @@ html {
   font-size: 15px;
 }
 
+/* ---------- Accessibility settings ---------- */
+
+/* Font scale: overriding the root rem base scales every rem-sized element site-wide. */
+html[data-font-scale='large'] {
+  font-size: 18px;
+}
+
+html[data-font-scale='xlarge'] {
+  font-size: 21px;
+}
+
+/* Colorblind-safe palette: swaps green/red for a blue/orange pair (Okabe-Ito-inspired),
+   distinguishable under the common red-green colorblindness types. Every pass/fail,
+   yes/no, and status indicator in the app is driven by these same variables. */
+html[data-colorblind='true'] {
+  --success: #3d9be9;
+  --success-soft: rgba(61, 155, 233, 0.16);
+  --success-text: #8fc9f5;
+
+  --danger: #e8850c;
+  --danger-soft: rgba(232, 133, 12, 0.16);
+  --danger-text: #f5b768;
+}
+
+html[data-reduced-motion='true'] *,
+html[data-reduced-motion='true'] *::before,
+html[data-reduced-motion='true'] *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+label.checkbox-label {
+  flex-direction: row;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -65,6 +117,12 @@ button, select {
   max-width: 1180px;
   margin: 0 auto;
   padding: 1.25rem 1.25rem 3rem;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 0.85rem 0.75rem 2rem;
+  }
 }
 
 .app-header {
@@ -656,6 +714,11 @@ button:disabled {
   color: var(--text-secondary);
 }
 
+.custom-bill-form label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+
 .custom-bill-form input[type='text'],
 .custom-bill-form input[type='number'] {
   background: var(--bg-elevated);
@@ -790,6 +853,7 @@ button:disabled {
 
 .row-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem;
 }
 

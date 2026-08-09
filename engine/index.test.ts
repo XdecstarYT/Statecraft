@@ -19,6 +19,7 @@ import {
   dismissElectionNight,
   appointToCabinet,
   mergePartiesAction,
+  MAX_HEAD_OF_GOVERNMENT_TERMS,
   TERM_LENGTH_TURNS,
   type GameState,
 } from './index';
@@ -664,5 +665,60 @@ describe('mergePartiesAction', () => {
     if (nonMemberParties.length < 2) return; // not applicable for this seed's party split
     const merged = mergePartiesAction(state, nonMemberParties[0].id, nonMemberParties[1].id);
     expect(merged.coalition!.memberPartyIds).toEqual(coalition.memberPartyIds);
+  });
+});
+
+describe('house rules', () => {
+  it('defaults to all-standard rules when none are given', () => {
+    const state = createNewGame(1);
+    expect(state.houseRules).toEqual({ disableTermLimits: false, doubleEventFrequency: false, noCorruption: false });
+  });
+
+  it('createNewGame accepts partial house rule overrides', () => {
+    const state = createNewGame(1, { houseRules: { noCorruption: true } });
+    expect(state.houseRules.noCorruption).toBe(true);
+    expect(state.houseRules.disableTermLimits).toBe(false);
+  });
+
+  it('noCorruption blocks the player corruption action entirely', () => {
+    const state = createNewGame(1, { houseRules: { noCorruption: true } });
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const target = state.politicians.find((p) => p.id !== player.id)!;
+    const { state: after, outcome } = commitCorruption(state, player.id, target.id, 'hard');
+    expect(outcome).toEqual({ detected: false, favorGain: 0, budgetImpact: 0 });
+    expect(after).toBe(state);
+  });
+
+  it('disableTermLimits lets a single leader keep accumulating terms past the normal cap', () => {
+    let state = createNewGame(3, { houseRules: { disableTermLimits: true } });
+    for (let i = 0; i < 10; i++) {
+      state = runLegislativeElection(state).state;
+    }
+    const maxTerms = Math.max(...Object.values(state.termsServed));
+    expect(maxTerms).toBeGreaterThan(MAX_HEAD_OF_GOVERNMENT_TERMS);
+  });
+
+  it('with term limits on (the default), leadership actually changes hands over repeated elections', () => {
+    let state = createNewGame(3);
+    const leaderIds = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      state = runLegislativeElection(state).state;
+      const totalSeats = state.parties.reduce((sum, p) => sum + p.seats, 0);
+      const majorityParty = state.parties.find((p) => p.seats > totalSeats / 2);
+      if (majorityParty) leaderIds.add(state.partyLeaderId[majorityParty.id]);
+    }
+    expect(leaderIds.size).toBeGreaterThan(1);
+  });
+
+  it('with term limits disabled, the same leader holds on for every election', () => {
+    let state = createNewGame(3, { houseRules: { disableTermLimits: true } });
+    const leaderIds = new Set<string>();
+    for (let i = 0; i < 10; i++) {
+      state = runLegislativeElection(state).state;
+      const totalSeats = state.parties.reduce((sum, p) => sum + p.seats, 0);
+      const majorityParty = state.parties.find((p) => p.seats > totalSeats / 2);
+      if (majorityParty) leaderIds.add(state.partyLeaderId[majorityParty.id]);
+    }
+    expect(leaderIds.size).toBe(1);
   });
 });

@@ -115,6 +115,37 @@ export function clearHallOfFame(): void {
   localStorage.removeItem(HALL_OF_FAME_KEY);
 }
 
+const ACCESSIBILITY_KEY = 'statecraft-accessibility-v1';
+
+export type FontScale = 'normal' | 'large' | 'xlarge';
+
+export interface AccessibilitySettings {
+  colorblindMode: boolean;
+  fontScale: FontScale;
+  reducedMotion: boolean;
+}
+
+export const DEFAULT_ACCESSIBILITY_SETTINGS: AccessibilitySettings = {
+  colorblindMode: false,
+  fontScale: 'normal',
+  reducedMotion: false,
+};
+
+export function saveAccessibilitySettings(settings: AccessibilitySettings): void {
+  localStorage.setItem(ACCESSIBILITY_KEY, JSON.stringify(settings));
+}
+
+export function loadAccessibilitySettings(): AccessibilitySettings {
+  const raw = localStorage.getItem(ACCESSIBILITY_KEY);
+  if (!raw) return DEFAULT_ACCESSIBILITY_SETTINGS;
+  try {
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_ACCESSIBILITY_SETTINGS, ...parsed };
+  } catch {
+    return DEFAULT_ACCESSIBILITY_SETTINGS;
+  }
+}
+
 const ONBOARDING_KEY = 'statecraft-onboarding-dismissed-v1';
 
 export function hasSeenOnboarding(): boolean {

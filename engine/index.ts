@@ -16,6 +16,7 @@ import type {
   Politician,
   PoliticianAttributes,
   Endorser,
+  HouseRules,
   PollingFirm,
   PollResult,
   Protest,
@@ -23,6 +24,7 @@ import type {
   SecessionistMovement,
   VoterBloc,
 } from './models/types';
+import { DEFAULT_HOUSE_RULES } from './models/types';
 import type { Difficulty } from './difficulty';
 import { getDifficultySettings } from './difficulty';
 import { advanceEconomy, applyImmediateEffect, queuePolicyEffect } from './systems/economy';
@@ -247,6 +249,8 @@ export interface NewGameOptions {
   pollingFirms?: PollingFirm[];
   /** Overrides the default starting economy indicators — used by historical scenario presets. */
   startingEconomy?: Partial<EconomyState>;
+  /** Optional gameplay toggles chosen at game creation — see HouseRules. Defaults to all-standard rules. */
+  houseRules?: Partial<HouseRules>;
   /** Overrides the auto-generated jittered attributes — used by career mode to carry forward what was actually earned. */
   playerAttributes?: PoliticianAttributes;
   /** Overrides the party-jittered starting ideology — same purpose as playerAttributes. */
@@ -344,6 +348,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     personalWealth: Object.fromEntries(politicians.map((p) => [p.id, BASE_PERSONAL_WEALTH])),
     activeSummit: null,
     milestones: [],
+    houseRules: { ...DEFAULT_HOUSE_RULES, ...options.houseRules },
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -403,6 +408,7 @@ const COALITION_COLLAPSE_ECONOMY_EFFECT: EconomyDelta = { budgetBalance: -0.5, g
  * again, but keeps their seat and party membership.
  */
 function applyTermLimitSuccession(state: GameState, leadingPartyId: string): GameState {
+  if (state.houseRules.disableTermLimits) return state;
   const currentLeaderId = state.partyLeaderId[leadingPartyId];
   if (!currentLeaderId || !isTermLimited(currentLeaderId, state.termsServed)) return state;
 
@@ -562,7 +568,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     }
   }
 
-  if (rng.next() < NPC_CORRUPTION_CHANCE) {
+  if (!state.houseRules.noCorruption && rng.next() < NPC_CORRUPTION_CHANCE) {
     const actorCandidates = nextPoliticians.filter((p) => !p.isPlayer);
     const actor = actorCandidates.length > 0 ? rng.pick(actorCandidates) : null;
     const tier = actor ? selectNpcCorruptionTier(actor, rng) : null;
@@ -795,7 +801,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runWealthScandalTurn(next, rng);
   next = runSummitTurn(next, rng);
 
-  const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
+  const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
   if (eventDef) {
     next = applyCrisisEvent(next, eventDef);
@@ -1539,6 +1545,9 @@ export function commitCorruption(
   tier: CorruptionTier,
   investigativePressure = 0
 ): { state: GameState; outcome: CorruptionAttemptOutcome } {
+  if (state.houseRules.noCorruption) {
+    return { state, outcome: { detected: false, favorGain: 0, budgetImpact: 0 } };
+  }
   const rng = SeededRng.fromState(state.rngState);
   const actor = state.politicians.find((p) => p.id === actorId);
   if (!actor) {

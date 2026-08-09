@@ -491,6 +491,26 @@ export interface SummitResolution {
   turnProposed: number;
 }
 
+/**
+ * HOUSE RULES — optional, real gameplay toggles chosen at game creation.
+ * Each one changes actual engine behavior (see engine/index.ts), not just
+ * a label. All default to false (standard rules).
+ */
+export interface HouseRules {
+  /** The head of government is never term-limited out of office. */
+  disableTermLimits: boolean;
+  /** Doubles the per-turn crisis event chance. */
+  doubleEventFrequency: boolean;
+  /** Corrupt acts are unavailable to the player and NPCs alike. */
+  noCorruption: boolean;
+}
+
+export const DEFAULT_HOUSE_RULES: HouseRules = {
+  disableTermLimits: false,
+  doubleEventFrequency: false,
+  noCorruption: false,
+};
+
 export type UnrestStatus = 'protesting' | 'riot' | 'quelled';
 
 /** A nationwide civil-unrest event — see engine/systems/unrest.ts. */
@@ -591,6 +611,7 @@ export interface GameState {
   activeSummit: SummitResolution | null;
   /** One-time milestone achievement ids recorded the moment they happen (can't be reconstructed from a state snapshot alone). See engine/systems/achievements.ts. */
   milestones: string[];
+  houseRules: HouseRules;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Difficulty } from '../engine';
+import type { Difficulty, HouseRules } from '../engine';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
 import { SCENARIO_PRESETS } from '../content/scenarios/presets';
 import { hasSavedCareer, hasSavedGame } from './persistence';
@@ -25,6 +25,7 @@ import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
+import { AccessibilityPanel } from './components/AccessibilityPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -51,6 +52,11 @@ export default function App() {
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
   const [pendingScenarioId, setPendingScenarioId] = useState(SCENARIO_PRESETS[0].id);
+  const [pendingHouseRules, setPendingHouseRules] = useState<HouseRules>({
+    disableTermLimits: false,
+    doubleEventFrequency: false,
+    noCorruption: false,
+  });
   const [careerNameDraft, setCareerNameDraft] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -83,6 +89,9 @@ export default function App() {
       <main className="app-shell">
         <header className="app-header">
           <h1>Statecraft</h1>
+          <div className="header-actions">
+            <AccessibilityPanel />
+          </div>
         </header>
         <section className="panel">
           <div className="panel-header">
@@ -126,12 +135,36 @@ export default function App() {
                     {SCENARIO_PRESETS.find((s) => s.id === pendingScenarioId)?.description}
                   </p>
                 )}
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={pendingHouseRules.disableTermLimits}
+                    onChange={(e) => setPendingHouseRules((r) => ({ ...r, disableTermLimits: e.target.checked }))}
+                  />
+                  House Rule: No Term Limits
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={pendingHouseRules.doubleEventFrequency}
+                    onChange={(e) => setPendingHouseRules((r) => ({ ...r, doubleEventFrequency: e.target.checked }))}
+                  />
+                  House Rule: Double Crisis Frequency
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={pendingHouseRules.noCorruption}
+                    onChange={(e) => setPendingHouseRules((r) => ({ ...r, noCorruption: e.target.checked }))}
+                  />
+                  House Rule: No Corruption
+                </label>
                 <button
                   onClick={() => {
                     if (pendingScenarioId === 'standard') {
-                      newGame(undefined, pendingDifficulty, pendingCountryId);
+                      newGame(undefined, pendingDifficulty, pendingCountryId, pendingHouseRules);
                     } else {
-                      newGameFromScenario(pendingScenarioId, pendingCountryId);
+                      newGameFromScenario(pendingScenarioId, pendingCountryId, undefined, pendingHouseRules);
                     }
                     setForceStartScreen(false);
                   }}
@@ -223,6 +256,7 @@ export default function App() {
           >
             Load Game
           </button>
+          <AccessibilityPanel />
         </div>
       </header>
 

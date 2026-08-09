@@ -81,6 +81,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     personalWealth: {},
     activeSummit: null,
     milestones: [],
+    houseRules: { disableTermLimits: false, doubleEventFrequency: false, noCorruption: false },
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,

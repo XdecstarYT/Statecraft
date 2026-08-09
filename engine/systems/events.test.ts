@@ -70,6 +70,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     personalWealth: {},
     activeSummit: null,
     milestones: [],
+    houseRules: { disableTermLimits: false, doubleEventFrequency: false, noCorruption: false },
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: { gdpGrowth: 2, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] },

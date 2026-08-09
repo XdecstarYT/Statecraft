@@ -105,6 +105,7 @@ import {
   type DebateResult,
   type DispersalOutcome,
   type EndorsementAttemptResult,
+  type HouseRules,
   type ImpeachmentOutcome,
   type PollResult,
   type PressTopic,
@@ -208,8 +209,13 @@ interface StatecraftStore {
   lastPollResult: PollResult | null;
   lastSummitOutcome: SummitOutcome | null;
 
-  newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
-  newGameFromScenario: (scenarioId: string, countryOptionId: string, seed?: number) => void;
+  newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
+  newGameFromScenario: (
+    scenarioId: string,
+    countryOptionId: string,
+    seed?: number,
+    houseRules?: Partial<HouseRules>
+  ) => void;
   newGameFromCustomNation: (
     input: CustomNationInput,
     playerPartyIndex: number,
@@ -324,10 +330,10 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastPollResult: null,
   lastSummitOutcome: null,
 
-  newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
+  newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
       STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
-    const game = createNewGame(seed, { difficulty, country: option.country, parties: option.parties });
+    const game = createNewGame(seed, { difficulty, country: option.country, parties: option.parties, houseRules });
     clearSavedCareer();
     set({
       game,
@@ -345,7 +351,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     });
   },
 
-  newGameFromScenario: (scenarioId, countryOptionId, seed = Math.floor(Math.random() * 1_000_000_000)) => {
+  newGameFromScenario: (scenarioId, countryOptionId, seed = Math.floor(Math.random() * 1_000_000_000), houseRules) => {
     const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
     const scenario = SCENARIO_PRESETS.find((s) => s.id === scenarioId) ?? SCENARIO_PRESETS[0];
     const game = createNewGame(seed, {
@@ -353,6 +359,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       country: option.country,
       parties: option.parties,
       startingEconomy: scenario.economyOverrides,
+      houseRules,
     });
     clearSavedCareer();
     set({
