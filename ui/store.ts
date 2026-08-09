@@ -2,14 +2,18 @@ import { create } from 'zustand';
 import {
   MAX_FAVORS,
   SeededRng,
+  WAR_DECLARATION_RELATION_PENALTY,
+  adjustRelation,
   advanceToCommittee,
   advanceToFloor,
   advanceTurn,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
   breakTreaty,
+  cancelTradeDeal,
   commitCorruption,
   createNewGame,
+  declareWar,
   enactPassedBill,
   generateEventCoverage,
   generateNationalVotes,
@@ -22,6 +26,7 @@ import {
   holdRally,
   imposeSanctions,
   proposeBill,
+  proposeTradeDeal,
   proposeTreaty,
   pushApprovalEvent,
   relationshipKey,
@@ -33,9 +38,12 @@ import {
   respondToScandal,
   runLegislativeElection,
   sendAid,
+  setTariff,
   setWhipStance,
+  signTradeDeal,
   signTreaty,
   type CampaignActionOutcome,
+  type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
   type CoverageEvent,
@@ -115,6 +123,11 @@ interface StatecraftStore {
   breakTreatyAction: (treatyId: string) => void;
   sendAidAction: (counterpartId: string) => void;
   imposeSanctionsAction: (counterpartId: string) => void;
+  declareWarAction: (counterpartId: string) => void;
+  proposeTradeDealAction: (counterpartId: string, commodity: CommodityType, volume: number, tariff: number) => void;
+  signTradeDealAction: (dealId: string) => void;
+  setTariffAction: (dealId: string, tariff: number) => void;
+  cancelTradeDealAction: (dealId: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -437,5 +450,51 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { economy, relations } = imposeSanctions(counterpartId, game.economy, game.foreignRelations);
     set({ game: { ...game, economy, foreignRelations: relations } });
+  },
+
+  declareWarAction: (counterpartId) => {
+    const game = get().game;
+    if (!game) return;
+    if (game.wars.some((w) => w.counterpartId === counterpartId && w.status === 'active')) return;
+    const war = declareWar(counterpartId, game.turn);
+    const foreignRelations = adjustRelation(game.foreignRelations, counterpartId, WAR_DECLARATION_RELATION_PENALTY);
+    set({ game: { ...game, wars: [...game.wars, war], foreignRelations } });
+  },
+
+  proposeTradeDealAction: (counterpartId, commodity, volume, tariff) => {
+    const game = get().game;
+    if (!game) return;
+    const deal = proposeTradeDeal(
+      `trade-${game.turn}-${game.tradeDeals.length + 1}`,
+      counterpartId,
+      commodity,
+      volume,
+      tariff
+    );
+    set({ game: { ...game, tradeDeals: [...game.tradeDeals, deal] } });
+  },
+
+  signTradeDealAction: (dealId) => {
+    const game = get().game;
+    if (!game) return;
+    const deal = game.tradeDeals.find((d) => d.id === dealId);
+    if (!deal) return;
+    const { deal: signed, economy } = signTradeDeal(deal, game.economy);
+    const tradeDeals = game.tradeDeals.map((d) => (d.id === dealId ? signed : d));
+    set({ game: { ...game, tradeDeals, economy } });
+  },
+
+  setTariffAction: (dealId, tariff) => {
+    const game = get().game;
+    if (!game) return;
+    const tradeDeals = game.tradeDeals.map((d) => (d.id === dealId ? setTariff(d, tariff) : d));
+    set({ game: { ...game, tradeDeals } });
+  },
+
+  cancelTradeDealAction: (dealId) => {
+    const game = get().game;
+    if (!game) return;
+    const tradeDeals = game.tradeDeals.map((d) => (d.id === dealId ? cancelTradeDeal(d) : d));
+    set({ game: { ...game, tradeDeals } });
   },
 }));

@@ -9,6 +9,7 @@ import type {
   GameState,
   IdeologyPosition,
   MediaOutlet,
+  MilitaryProfile,
   Party,
   Politician,
   ScandalResponse,
@@ -39,6 +40,8 @@ import {
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
+import { adjustRelation } from './systems/diplomacy';
+import { computeWarResolutionRelationDelta, resolveWarTurn } from './systems/military';
 import {
   applyNpcStances,
   computeAllPartyMomentum,
@@ -55,7 +58,7 @@ import { generateName } from '../content/names/pool';
 import { STARTER_VOTER_BLOCS } from '../content/opinion/blocs';
 import { STARTER_MEDIA_OUTLETS } from '../content/media/outlets';
 import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
-import { STARTER_FOREIGN_COUNTERPARTS } from '../content/diplomacy/counterparts';
+import { nationsExcluding, startingMilitaryProfile } from '../content/diplomacy/nations';
 import { CRISIS_TABLE } from '../content/events/crisisTable';
 import { BILL_TEMPLATES } from '../content/flavor/billTemplates';
 
@@ -75,6 +78,8 @@ export * from './systems/events';
 export * from './systems/legacy';
 export * from './systems/npc';
 export * from './systems/campaign';
+export * from './systems/military';
+export * from './systems/trade';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -125,6 +130,7 @@ export interface NewGameOptions {
   voterBlocs?: VoterBloc[];
   mediaOutlets?: MediaOutlet[];
   foreignCounterparts?: ForeignCounterpart[];
+  playerMilitary?: MilitaryProfile;
   playerPartyId?: string;
   playerName?: string;
   difficulty?: Difficulty;
@@ -162,9 +168,12 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     voterBlocs: options.voterBlocs ?? STARTER_VOTER_BLOCS,
     mediaOutlets: options.mediaOutlets ?? STARTER_MEDIA_OUTLETS,
     scandals: [],
-    foreignCounterparts: options.foreignCounterparts ?? STARTER_FOREIGN_COUNTERPARTS,
+    foreignCounterparts: options.foreignCounterparts ?? nationsExcluding(country.id),
     foreignRelations: {},
+    playerMilitary: options.playerMilitary ?? startingMilitaryProfile(country.id),
     treaties: [],
+    tradeDeals: [],
+    wars: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -320,6 +329,7 @@ export function advanceTurn(state: GameState): GameState {
   let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
 
   next = runNpcTurn(next, rng);
+  next = runWarTurns(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -328,6 +338,36 @@ export function advanceTurn(state: GameState): GameState {
   }
 
   return { ...next, rngState: rng.getState() };
+}
+
+/**
+ * Resolves one turn for every currently active war: compares the player's
+ * military against each counterpart's, applies the resulting economic
+ * effect, and — if a war concludes this turn — applies the relation
+ * penalty for how it ended. A no-op when no war is active, so most turns
+ * don't touch the rng for this at all.
+ */
+export function runWarTurns(state: GameState, rng: SeededRng): GameState {
+  if (!state.wars.some((w) => w.status === 'active')) return state;
+
+  let economy = state.economy;
+  let foreignRelations = state.foreignRelations;
+
+  const wars = state.wars.map((war) => {
+    if (war.status !== 'active') return war;
+    const counterpart = state.foreignCounterparts.find((c) => c.id === war.counterpartId);
+    if (!counterpart) return war;
+
+    const result = resolveWarTurn(war, state.playerMilitary, counterpart.military, state.turn, rng);
+    economy = applyImmediateEffect(economy, result.economyEffect);
+    if (result.war.status !== 'active') {
+      const delta = computeWarResolutionRelationDelta(result.war.status);
+      foreignRelations = adjustRelation(foreignRelations, war.counterpartId, delta);
+    }
+    return result.war;
+  });
+
+  return { ...state, wars, economy, foreignRelations };
 }
 
 /**

@@ -3,14 +3,20 @@ import {
   createNewGame,
   advanceTurn,
   runLegislativeElection,
+  runWarTurns,
   commitCorruption,
   respondToScandal,
   proposeTreaty,
   signTreaty,
   holdPressInterview,
   holdRally,
+  declareWar,
+  proposeTradeDeal,
+  signTradeDeal,
 } from './index';
+import { SeededRng } from './rng';
 import { VANTORRA_COUNTRY, VANTORRA_PARTIES } from '../content/countries/vantorra';
+import { ALL_NATIONS } from '../content/diplomacy/nations';
 
 describe('createNewGame', () => {
   it('produces one politician per starting seat, and exactly one player', () => {
@@ -42,6 +48,30 @@ describe('createNewGame', () => {
       expect(p.ideology.social).toBeGreaterThanOrEqual(-100);
       expect(p.ideology.social).toBeLessThanOrEqual(100);
     }
+  });
+
+  const usCountry = {
+    id: 'united-states',
+    name: 'United States',
+    regimeType: 'presidential' as const,
+    legislature: { name: 'House', electoralSystem: 'FPTP' as const, districts: [], totalSeats: 1, prThreshold: 0.05 },
+  };
+
+  it('populates the full world roster, excluding the player\'s own real country', () => {
+    const state = createNewGame(1, { country: usCountry });
+    expect(state.foreignCounterparts.some((c) => c.id === 'united-states')).toBe(false);
+    expect(state.foreignCounterparts.length).toBeGreaterThan(180);
+  });
+
+  it('leaves the full roster untouched for a fictional starter country', () => {
+    const state = createNewGame(1);
+    expect(state.foreignCounterparts.length).toBe(ALL_NATIONS.length);
+  });
+
+  it('gives the player a starting military profile matching the real nation when playing one', () => {
+    const usProfile = ALL_NATIONS.find((n) => n.id === 'united-states')!.military;
+    const state = createNewGame(1, { country: usCountry });
+    expect(state.playerMilitary).toEqual(usProfile);
   });
 });
 
@@ -231,6 +261,52 @@ describe('treaty flow via the engine barrel', () => {
     const { relations, economy } = signTreaty(treaty, state.economy, state.foreignRelations);
     expect(relations[counterpart.id]).toBe(10);
     expect(economy.pendingEffects).toHaveLength(1);
+  });
+});
+
+describe('trade deal flow via the engine barrel', () => {
+  it('signing a trade deal queues its economic effect', () => {
+    const state = createNewGame(4);
+    const counterpart = state.foreignCounterparts[0];
+    const deal = proposeTradeDeal('d1', counterpart.id, 'energy', 100, 0);
+    const { economy } = signTradeDeal(deal, state.economy);
+    expect(economy.pendingEffects).toHaveLength(1);
+  });
+});
+
+describe('runWarTurns', () => {
+  it('is a no-op when there is no active war', () => {
+    const state = createNewGame(4);
+    expect(runWarTurns(state, SeededRng.fromState(state.rngState))).toEqual(state);
+  });
+
+  it('resolves a heavily lopsided war in the stronger side\'s favor within a bounded number of turns', () => {
+    let state = createNewGame(4);
+    const counterpart = state.foreignCounterparts[0];
+    state = {
+      ...state,
+      playerMilitary: { strength: 95, personnel: 1000, techLevel: 90 },
+      foreignCounterparts: state.foreignCounterparts.map((c) =>
+        c.id === counterpart.id ? { ...c, military: { strength: 5, personnel: 10, techLevel: 10 } } : c
+      ),
+      wars: [declareWar(counterpart.id, state.turn)],
+    };
+
+    for (let i = 0; i < 30 && state.wars[0].status === 'active'; i++) {
+      state = advanceTurn(state);
+    }
+
+    expect(state.wars[0].status).toBe('won');
+    expect(state.foreignRelations[counterpart.id]).toBeLessThan(0);
+  });
+
+  it('always drains the budget while a war remains active', () => {
+    let state = createNewGame(4);
+    const counterpart = state.foreignCounterparts[0];
+    state = { ...state, wars: [declareWar(counterpart.id, state.turn)] };
+    const before = state.economy.budgetBalance;
+    const after = runWarTurns(state, SeededRng.fromState(state.rngState));
+    expect(after.economy.budgetBalance).toBeLessThan(before);
   });
 });
 

@@ -196,10 +196,62 @@ export interface Treaty {
   relationEffect: number;
 }
 
-/** A foreign government or bloc the country has a relationship with. See engine/systems/diplomacy.ts. */
+export type CommodityType = 'energy' | 'food' | 'minerals' | 'manufactured' | 'technology';
+
+/**
+ * A composite, gameplay-abstracted strength index — not a real-world
+ * military assessment. See engine/systems/military.ts.
+ */
+export interface MilitaryProfile {
+  /** 0..100 composite strength index. */
+  strength: number;
+  /** Active personnel, thousands. */
+  personnel: number;
+  /** 0..100; scales effective strength in conflict resolution. */
+  techLevel: number;
+}
+
+/** Units/turn, abstracted for gameplay. See engine/systems/trade.ts. */
+export interface TradeProfile {
+  production: Record<CommodityType, number>;
+  consumption: Record<CommodityType, number>;
+}
+
+/** A foreign government the country has a relationship with. See engine/systems/diplomacy.ts. */
 export interface ForeignCounterpart {
   id: string;
   name: string;
+  region: string;
+  ideology: IdeologyPosition;
+  military: MilitaryProfile;
+  trade: TradeProfile;
+  /** Approximate capital-city coordinates, for the world map. */
+  location: { lat: number; lng: number };
+}
+
+export type TradeDealStatus = 'proposed' | 'active' | 'cancelled';
+
+export interface TradeDeal {
+  id: string;
+  counterpartId: string;
+  commodity: CommodityType;
+  /** Units/turn imported from the counterpart. Negative means the player's country exports instead. */
+  volume: number;
+  /** 0..1 fraction of the deal's value lost to tariffs. */
+  tariff: number;
+  status: TradeDealStatus;
+}
+
+export type WarStatus = 'active' | 'won' | 'lost' | 'stalemate';
+
+export interface War {
+  id: string;
+  counterpartId: string;
+  startTurn: number;
+  status: WarStatus;
+  /** Accumulated running advantage; positive favors the player, negative favors the counterpart. */
+  advantage: number;
+  endTurn?: number;
 }
 
 export type CrisisCategory =
@@ -238,7 +290,11 @@ export interface GameState {
   foreignCounterparts: ForeignCounterpart[];
   /** counterpartId -> disposition -100..100. */
   foreignRelations: Record<string, number>;
+  /** The player's own country's military profile — compared against a counterpart's in war resolution. */
+  playerMilitary: MilitaryProfile;
   treaties: Treaty[];
+  tradeDeals: TradeDeal[];
+  wars: War[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
