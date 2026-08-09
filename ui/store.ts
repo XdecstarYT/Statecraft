@@ -18,6 +18,9 @@ import {
   attemptImpeachmentAction as engineAttemptImpeachment,
   concedeToProtestersAction as engineConcedeToProtesters,
   disperseProtestAction as engineDisperseProtest,
+  holdDebateAction as engineHoldDebate,
+  holdPressConference as engineHoldPressConference,
+  seekEndorsementAction as engineSeekEndorsement,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -94,8 +97,11 @@ import {
   type CampaignActionOutcome,
   type CareerState,
   type ClotureResult,
+  type DebateResult,
   type DispersalOutcome,
+  type EndorsementAttemptResult,
   type ImpeachmentOutcome,
+  type PressTopic,
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
@@ -181,7 +187,7 @@ interface StatecraftStore {
   lastCoverage: CoverageEvent[];
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
-  lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' }) | null;
+  lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' | 'press_conference' }) | null;
   lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
   lastLeadershipActionOutcome: (PartyActionOutcome & { action: 'rally' | 'denounce' }) | null;
   lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
@@ -189,6 +195,8 @@ interface StatecraftStore {
   lastBallotResult: (BallotResult & { initiativeId: string }) | null;
   lastImpeachmentOutcome: ImpeachmentOutcome | null;
   lastDispersalOutcome: (DispersalOutcome & { protestId: string }) | null;
+  lastDebateResult: DebateResult | null;
+  lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -230,6 +238,9 @@ interface StatecraftStore {
   attemptImpeachmentAction: (targetId: string) => void;
   concedeToProtestersAction: (protestId: string) => void;
   disperseProtestAction: (protestId: string) => void;
+  holdPressConferenceAction: (topic: PressTopic) => void;
+  holdDebateAction: (rivalId?: string) => void;
+  seekEndorsementAction: (endorserId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -292,6 +303,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastBallotResult: null,
   lastImpeachmentOutcome: null,
   lastDispersalOutcome: null,
+  lastDebateResult: null,
+  lastEndorsementOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -716,6 +729,29 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = holdRally(game);
     set({ game: state, lastCampaignOutcome: { ...outcome, action: 'rally' } });
+  },
+
+  holdPressConferenceAction: (topic) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineHoldPressConference(game, topic);
+    set({ game: state, lastCampaignOutcome: { ...outcome, action: 'press_conference' } });
+  },
+
+  holdDebateAction: (rivalId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineHoldDebate(game, rivalId);
+    if (!outcome) return;
+    set({ game: state, lastDebateResult: outcome });
+  },
+
+  seekEndorsementAction: (endorserId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineSeekEndorsement(game, endorserId);
+    if (!outcome) return;
+    set({ game: state, lastEndorsementOutcome: { ...outcome, endorserId } });
   },
 
   nextTurn: () => {

@@ -61,3 +61,40 @@ export function attemptPressInterview(politician: Politician, rng: SeededRng): C
 export function attemptRally(politician: Politician, rng: SeededRng): CampaignActionOutcome {
   return rollCampaignOutcome(computeRallySkill(politician), RALLY_CONFIG, rng);
 }
+
+/**
+ * PRESS CONFERENCES — a richer, higher-stakes version of the plain press
+ * interview: the player picks a topic, and each topic draws on a
+ * different pair of attributes, so the same politician can be a strong
+ * pick on one topic and a weak one on another instead of a single
+ * undifferentiated "media skill" number.
+ */
+export type PressTopic = 'economy' | 'scandal_defense' | 'foreign_policy' | 'social_policy';
+
+export const PRESS_TOPIC_LABELS: Record<PressTopic, string> = {
+  economy: 'The Economy',
+  scandal_defense: 'Answering for Scandal',
+  foreign_policy: 'Foreign Policy',
+  social_policy: 'Social Policy',
+};
+
+export function computeTopicSkill(politician: Politician, topic: PressTopic): number {
+  const { charisma, intellect, integrity, network, mediaSavvy } = politician.attributes;
+  switch (topic) {
+    case 'economy':
+      return (intellect + mediaSavvy) / 20;
+    case 'scandal_defense':
+      return (integrity + charisma) / 20;
+    case 'foreign_policy':
+      return (intellect + network) / 20;
+    case 'social_policy':
+      return (charisma + mediaSavvy) / 20;
+  }
+}
+
+/** Higher stakes than a plain interview — a strong showing earns more, a gaffe costs more. */
+const PRESS_CONFERENCE_CONFIG: CampaignActionConfig = { strongImpact: 15, solidImpact: 5, gaffeImpact: -14 };
+
+export function attemptPressConference(politician: Politician, topic: PressTopic, rng: SeededRng): CampaignActionOutcome {
+  return rollCampaignOutcome(computeTopicSkill(politician, topic), PRESS_CONFERENCE_CONFIG, rng);
+}

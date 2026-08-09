@@ -424,6 +424,25 @@ export interface Coalition {
   formedTurn: number;
 }
 
+export type EndorserType = 'celebrity' | 'union' | 'newspaper';
+
+/** A static endorser profile — a public figure, union, or newspaper whose backing swings approval. See engine/systems/endorsements.ts. */
+export interface Endorser {
+  id: string;
+  name: string;
+  type: EndorserType;
+  ideology: IdeologyPosition;
+  /** 0..100 — scales the approval impact of a won endorsement. */
+  prominence: number;
+}
+
+/** A record of a successful endorsement. */
+export interface EndorsementRecord {
+  endorserId: string;
+  politicianId: string;
+  turn: number;
+}
+
 export type UnrestStatus = 'protesting' | 'riot' | 'quelled';
 
 /** A nationwide civil-unrest event — see engine/systems/unrest.ts. */
@@ -514,6 +533,8 @@ export interface GameState {
   /** politicianId -> number of terms served as head of government (Prime Minister or majority-party leader). See engine/systems/succession.ts. */
   termsServed: Record<string, number>;
   protests: Protest[];
+  endorsers: Endorser[];
+  endorsements: EndorsementRecord[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

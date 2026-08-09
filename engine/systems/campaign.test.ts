@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import type { Politician } from '../models/types';
 import {
+  attemptPressConference,
   attemptPressInterview,
   attemptRally,
   computeMediaSkill,
   computeRallySkill,
+  computeTopicSkill,
 } from './campaign';
 
 function makePolitician(overrides: Partial<Politician> = {}): Politician {
@@ -89,5 +91,40 @@ describe('attemptPressInterview / attemptRally', () => {
       if (rally.outcome === 'gaffe') expect(rally.approvalImpact).toBeLessThan(0);
       if (rally.outcome === 'strong') expect(rally.approvalImpact).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('computeTopicSkill / attemptPressConference', () => {
+  it('rewards different attribute profiles on different topics', () => {
+    const intellectual = makePolitician({ attributes: { charisma: 1, intellect: 10, integrity: 5, network: 5, mediaSavvy: 10 } });
+    const charismatic = makePolitician({ attributes: { charisma: 10, intellect: 1, integrity: 5, network: 5, mediaSavvy: 10 } });
+    expect(computeTopicSkill(intellectual, 'economy')).toBeGreaterThan(computeTopicSkill(charismatic, 'economy'));
+    expect(computeTopicSkill(charismatic, 'social_policy')).toBeGreaterThan(computeTopicSkill(intellectual, 'social_policy'));
+  });
+
+  it('a high-integrity politician handles scandal defense better than a low-integrity one', () => {
+    const clean = makePolitician({ attributes: { charisma: 5, intellect: 5, integrity: 10, network: 5, mediaSavvy: 5 } });
+    const dirty = makePolitician({ attributes: { charisma: 5, intellect: 5, integrity: 1, network: 5, mediaSavvy: 5 } });
+    expect(computeTopicSkill(clean, 'scandal_defense')).toBeGreaterThan(computeTopicSkill(dirty, 'scandal_defense'));
+  });
+
+  it('is deterministic given the same rng state', () => {
+    const p = makePolitician();
+    const a = attemptPressConference(p, 'economy', new SeededRng(5));
+    const b = attemptPressConference(p, 'economy', new SeededRng(5));
+    expect(a).toEqual(b);
+  });
+
+  it('carries higher stakes than a plain press interview', () => {
+    const p = makePolitician({ attributes: { charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 } });
+    let sawBiggerGaffe = false;
+    for (let seed = 0; seed < 500 && !sawBiggerGaffe; seed++) {
+      const conf = attemptPressConference(p, 'economy', new SeededRng(seed));
+      if (conf.outcome === 'gaffe') {
+        expect(conf.approvalImpact).toBeLessThan(-10);
+        sawBiggerGaffe = true;
+      }
+    }
+    expect(sawBiggerGaffe).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ import type {
   Party,
   Politician,
   PoliticianAttributes,
+  Endorser,
   Protest,
   ScandalResponse,
   SecessionistMovement,
@@ -91,7 +92,16 @@ import {
   type DispersalResult,
 } from './systems/unrest';
 import { PROTEST_CAUSES } from '../content/flavor/protestCauses';
-import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
+import {
+  attemptPressConference,
+  attemptPressInterview,
+  attemptRally,
+  type CampaignActionOutcome,
+  type PressTopic,
+} from './systems/campaign';
+import { resolveDebate, DEBATE_WINNER_APPROVAL_BONUS, DEBATE_LOSER_APPROVAL_PENALTY, type DebateResult } from './systems/debate';
+import { attemptEndorsement, type EndorsementAttemptResult } from './systems/endorsements';
+import { ENDORSERS } from '../content/endorsements/endorsers';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
 import {
@@ -162,6 +172,8 @@ export * from './systems/secession';
 export * from './systems/referendum';
 export * from './systems/succession';
 export * from './systems/unrest';
+export * from './systems/debate';
+export * from './systems/endorsements';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -220,6 +232,7 @@ export interface NewGameOptions {
   playerName?: string;
   difficulty?: Difficulty;
   interestGroups?: InterestGroup[];
+  endorsers?: Endorser[];
   /** Overrides the auto-generated jittered attributes — used by career mode to carry forward what was actually earned. */
   playerAttributes?: PoliticianAttributes;
   /** Overrides the party-jittered starting ideology — same purpose as playerAttributes. */
@@ -310,6 +323,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     ballotInitiatives: [],
     termsServed: {},
     protests: [],
+    endorsers: options.endorsers ?? ENDORSERS,
+    endorsements: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -818,6 +833,88 @@ export function holdRally(state: GameState): { state: GameState; outcome: Campai
     p.id === player.id ? pushApprovalEvent(p, 'base', outcome.approvalImpact, 4) : p
   );
   return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * Holds a full press conference on a chosen topic — higher stakes than a
+ * plain interview, and which attributes matter depends on the topic (see
+ * campaign.ts's computeTopicSkill).
+ */
+export function holdPressConference(
+  state: GameState,
+  topic: PressTopic
+): { state: GameState; outcome: CampaignActionOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) {
+    return { state, outcome: { outcome: 'solid', approvalImpact: 0 } };
+  }
+  const outcome = attemptPressConference(player, topic, rng);
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', outcome.approvalImpact, 5) : p
+  );
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * Holds a debate between the player and a chosen rival. The winner gets a
+ * real public-approval bump; everyone else takes a smaller hit. Defaults
+ * to the player's highest-approval rival if no rivalId is given.
+ */
+export function holdDebateAction(
+  state: GameState,
+  rivalId?: string
+): { state: GameState; outcome: DebateResult | null } {
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) return { state, outcome: null };
+
+  const rival = rivalId
+    ? state.politicians.find((p) => p.id === rivalId && !p.isPlayer)
+    : state.politicians
+        .filter((p) => !p.isPlayer)
+        .reduce((best, p) => (!best || p.approval.public > best.approval.public ? p : best), undefined as Politician | undefined);
+  if (!rival) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveDebate([player, rival], rng);
+
+  const politicians = state.politicians.map((p) => {
+    if (p.id !== player.id && p.id !== rival.id) return p;
+    const impact = p.id === result.winnerId ? DEBATE_WINNER_APPROVAL_BONUS : DEBATE_LOSER_APPROVAL_PENALTY;
+    return pushApprovalEvent(p, 'public', impact, 6);
+  });
+
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome: result };
+}
+
+/**
+ * Seeks an endorsement from one of the country's celebrities, unions, or
+ * newspapers. Success depends on real ideological alignment and carries a
+ * prominence-scaled public-approval bump; a rejected pitch carries none —
+ * only one endorsement per endorser is ever recorded.
+ */
+export function seekEndorsementAction(
+  state: GameState,
+  endorserId: string
+): { state: GameState; outcome: EndorsementAttemptResult | null } {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const endorser = state.endorsers.find((e) => e.id === endorserId);
+  if (!player || !endorser) return { state, outcome: null };
+  if (state.endorsements.some((e) => e.endorserId === endorserId)) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const outcome = attemptEndorsement(endorser, player, rng);
+
+  if (!outcome.success) {
+    return { state: { ...state, rngState: rng.getState() }, outcome };
+  }
+
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', outcome.approvalImpact, 8) : p
+  );
+  const endorsements = [...state.endorsements, { endorserId, politicianId: player.id, turn: state.turn }];
+
+  return { state: { ...state, politicians, endorsements, rngState: rng.getState() }, outcome };
 }
 
 /**
