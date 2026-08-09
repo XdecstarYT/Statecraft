@@ -88,6 +88,7 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     completedEducationTracks: [],
     jobId: null,
     partyId: null,
+    foundedParty: null,
     partyStanding: 0,
     localSeatWon: false,
     localRaceHistory: [],
@@ -231,6 +232,18 @@ export function applyForJob(state: CareerState, jobId: string): CareerState {
 export function joinParty(state: CareerState, partyId: string): CareerState {
   if (state.partyId) return state;
   return withStage({ ...state, partyId, partyStanding: Math.max(state.partyStanding, 5) });
+}
+
+/**
+ * Rather than joining an existing party, found a brand-new one built
+ * around the player's own current ideology — no one to answer to means
+ * an immediate 100 standing (you're unquestionably its leader), but no
+ * existing machine or membership to inherit either.
+ */
+export function foundOwnParty(state: CareerState, partyId: string, name: string): CareerState {
+  if (state.partyId) return state;
+  const foundedParty: Party = { id: partyId, name, ideology: { ...state.ideology }, seats: 0, factions: [] };
+  return withStage({ ...state, partyId, foundedParty, partyStanding: 100 });
 }
 
 export type PartyWorkOutcomeTier = 'strong' | 'solid' | 'setback';
@@ -449,7 +462,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   const partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
 
   let ideology = state.ideology;
-  const party = state.partyId ? parties.find((p) => p.id === state.partyId) : undefined;
+  const party = state.foundedParty ?? (state.partyId ? parties.find((p) => p.id === state.partyId) : undefined);
   if (party) {
     ideology = {
       economic: ideology.economic + (party.ideology.economic - ideology.economic) * IDEOLOGY_DRIFT_RATE,
@@ -483,6 +496,8 @@ export interface CareerGraduationPayload {
   countryOptionId: string;
   /** 0..1, derived from final party standing — used to give the new MP a warmer starting reception than the random default. */
   standingBonus: number;
+  /** Set when playerPartyId refers to a self-founded party rather than one of the country's starter parties — the caller must add it to the roster before creating the game. */
+  founderPartyDefinition: Party | null;
 }
 
 /** Null unless the career has actually cleared a national nomination. */
@@ -501,5 +516,6 @@ export function buildGraduationPayload(state: CareerState): CareerGraduationPayl
     playerPartyId: state.partyId,
     countryOptionId: state.countryOptionId,
     standingBonus: clamp(state.partyStanding / 100, 0, 1),
+    founderPartyDefinition: state.foundedParty,
   };
 }

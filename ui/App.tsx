@@ -13,6 +13,7 @@ import { ElectoralLabPanel } from './components/ElectoralLabPanel';
 import { CorruptionPanel } from './components/CorruptionPanel';
 import { LobbyingPanel } from './components/LobbyingPanel';
 import { LeadershipPanel } from './components/LeadershipPanel';
+import { PartyFoundingPanel } from './components/PartyFoundingPanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
@@ -212,10 +213,13 @@ export default function App() {
       </nav>
 
       {activeTab === 'legislature' && (
-        <div className="panel-columns">
-          <BillPanel />
-          <ElectionPanel />
-        </div>
+        <>
+          <div className="panel-columns">
+            <BillPanel />
+            <ElectionPanel />
+          </div>
+          <PartyFoundingPanel />
+        </>
       )}
 
       {activeTab === 'opinion' && (

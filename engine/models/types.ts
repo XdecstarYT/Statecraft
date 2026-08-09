@@ -519,6 +519,8 @@ export interface CareerState {
   completedEducationTracks: EducationTrack[];
   jobId: string | null;
   partyId: string | null;
+  /** Set only when partyId refers to a brand-new party the player founded rather than an existing roster entry — see foundOwnParty in career.ts. */
+  foundedParty: Party | null;
   /** 0..100 standing within the chosen party — the main gate on both the local race and the national nomination. */
   partyStanding: number;
   localSeatWon: boolean;

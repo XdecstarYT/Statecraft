@@ -15,6 +15,8 @@ import {
   buildGraduationPayload,
   createCareer,
   doPartyWork,
+  foundNewPartyAction as engineFoundNewParty,
+  foundOwnParty as foundCareerParty,
   graduateFromCareer,
   isGraduated,
   joinParty as joinCareerParty,
@@ -86,7 +88,9 @@ import {
   type EducationTrack,
   type ElectionOutcome,
   type FloorVoteResult,
+  type FoundPartyResult,
   type GameState,
+  type IdeologyPosition,
   type IntelligenceInvestmentTier,
   type LocalRaceOutcome,
   type MilitaryInvestmentTier,
@@ -145,6 +149,7 @@ interface StatecraftStore {
   lastCareerPartyWorkOutcome: PartyWorkOutcome | null;
   lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
   lastCareerNominationOutcome: NominationOutcome | null;
+  lastFoundPartyResult: FoundPartyResult | null;
   economyHistory: EconomySnapshot[];
   lastElection: ElectionOutcome | null;
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
@@ -165,6 +170,7 @@ interface StatecraftStore {
   careerStartEducationAction: (track: EducationTrack) => void;
   careerApplyForJobAction: (jobId: string) => void;
   careerJoinPartyAction: (partyId: string) => void;
+  careerFoundOwnPartyAction: (partyId: string, name: string) => void;
   careerDoPartyWorkAction: () => void;
   careerAttemptLocalRaceAction: () => void;
   careerAttemptNominationAction: (seed?: number, difficulty?: Difficulty) => void;
@@ -207,6 +213,7 @@ interface StatecraftStore {
   dismissLeadershipChallengeAction: () => void;
   attemptCovertOperationAction: (counterpartId: string, type: CovertOperationType) => void;
   investInIntelligenceAction: (tier: IntelligenceInvestmentTier) => void;
+  foundNewPartyAction: (partyId: string, name: string, ideology: IdeologyPosition) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -215,6 +222,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCareerPartyWorkOutcome: null,
   lastCareerLocalRaceOutcome: null,
   lastCareerNominationOutcome: null,
+  lastFoundPartyResult: null,
   economyHistory: [],
   lastElection: null,
   lastFloorResult: null,
@@ -329,6 +337,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const career = get().career;
     if (!career) return;
     set({ career: joinCareerParty(career, partyId) });
+  },
+
+  careerFoundOwnPartyAction: (partyId, name) => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: foundCareerParty(career, partyId, name.trim() || 'New Party') });
   },
 
   careerDoPartyWorkAction: () => {
@@ -846,5 +860,13 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { capability, economyEffect } = investInIntelligence(game.intelligenceCapability, tier);
     const economy = applyImmediateEffect(game.economy, economyEffect);
     set({ game: { ...game, intelligenceCapability: capability, economy } });
+  },
+
+  foundNewPartyAction: (partyId, name, ideology) => {
+    const game = get().game;
+    if (!game) return;
+    const outcome = engineFoundNewParty(game, partyId, name.trim() || 'New Party', ideology);
+    if (!outcome) return;
+    set({ game: outcome.state, lastFoundPartyResult: outcome.result });
   },
 }));

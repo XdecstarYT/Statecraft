@@ -60,6 +60,7 @@ import {
 } from './systems/leadership';
 import { formGovernment, hasOutrightMajority } from './systems/coalition';
 import type { CareerGraduationPayload } from './systems/career';
+import { foundParty, type FoundPartyResult } from './systems/partyManagement';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -124,6 +125,7 @@ export * from './systems/leadership';
 export * from './systems/espionage';
 export * from './systems/coalition';
 export * from './systems/career';
+export * from './systems/partyManagement';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -194,7 +196,7 @@ export interface NewGameOptions {
 export function createNewGame(seed: number, options: NewGameOptions = {}): GameState {
   const rng = new SeededRng(seed);
   const country = options.country ?? STARTER_COUNTRY;
-  const parties = (options.parties ?? STARTER_PARTIES).map((p) => ({
+  let parties = (options.parties ?? STARTER_PARTIES).map((p) => ({
     ...p,
     factions: p.factions.map((f) => ({ ...f })),
   }));
@@ -202,7 +204,22 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   const politicians = generatePoliticians(parties, rng);
 
   const playerPartyId = options.playerPartyId ?? parties[parties.length - 1].id;
-  const player = politicians.find((p) => p.partyId === playerPartyId) ?? politicians[0];
+  let player = politicians.find((p) => p.partyId === playerPartyId);
+  if (!player) {
+    // The chosen party has no generated seats yet (e.g. a freshly founded party) — the player becomes its first member.
+    player = {
+      id: `${playerPartyId}-founder`,
+      name: '',
+      isPlayer: false,
+      ideology: parties.find((p) => p.id === playerPartyId)?.ideology ?? { economic: 0, social: 0 },
+      attributes: { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 },
+      partyId: playerPartyId,
+      approval: { public: 50, base: 55, partyElite: 55 },
+      approvalEvents: [],
+    };
+    politicians.push(player);
+    parties = parties.map((p) => (p.id === playerPartyId ? { ...p, seats: p.seats + 1 } : p));
+  }
   player.isPlayer = true;
   player.name = options.playerName ?? 'Alex Varga';
   if (options.playerAttributes) player.attributes = { ...options.playerAttributes };
@@ -275,9 +292,12 @@ export function graduateFromCareer(
   parties: Party[],
   difficulty: Difficulty = 'standard'
 ): GameState {
+  const fullParties = payload.founderPartyDefinition
+    ? [...parties, payload.founderPartyDefinition]
+    : parties;
   return createNewGame(seed, {
     country,
-    parties,
+    parties: fullParties,
     difficulty,
     playerPartyId: payload.playerPartyId,
     playerName: payload.playerName,
@@ -741,6 +761,55 @@ export function denounceChallengerAction(state: GameState): { state: GameState; 
 export function dismissLeadershipChallenge(state: GameState): GameState {
   if (!state.leadershipChallenge || state.leadershipChallenge.status !== 'resolved') return state;
   return { ...state, leadershipChallenge: null };
+}
+
+/**
+ * The player breaks away from their current party and founds a new one
+ * around their own ideology — every other member of the old party then
+ * makes an independent, seeded call on whether to follow (see foundParty
+ * in partyManagement.ts). The player is always recorded as the new
+ * party's leader; the old party keeps its previous leader unless that
+ * leader was the player themselves, in which case whoever's left behind
+ * inherits it.
+ */
+export function foundNewPartyAction(
+  state: GameState,
+  newPartyId: string,
+  newPartyName: string,
+  newPartyIdeology: IdeologyPosition
+): { state: GameState; result: FoundPartyResult } | null {
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) return null;
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = foundParty(
+    player,
+    state.politicians,
+    state.parties,
+    newPartyId,
+    newPartyName,
+    newPartyIdeology,
+    state.relationships,
+    rng
+  );
+
+  let partyLeaderId = { ...state.partyLeaderId, [newPartyId]: player.id };
+  const oldPartyId = player.partyId;
+  if (partyLeaderId[oldPartyId] === player.id) {
+    const remaining = result.updatedPoliticians.filter((p) => p.partyId === oldPartyId);
+    partyLeaderId = { ...partyLeaderId, [oldPartyId]: remaining[0]?.id ?? player.id };
+  }
+
+  return {
+    state: {
+      ...state,
+      politicians: result.updatedPoliticians,
+      parties: result.updatedParties,
+      partyLeaderId,
+      rngState: rng.getState(),
+    },
+    result,
+  };
 }
 
 /**

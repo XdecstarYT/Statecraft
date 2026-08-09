@@ -40,6 +40,7 @@ export function CareerScreen() {
   const careerStartEducationAction = useStatecraftStore((s) => s.careerStartEducationAction);
   const careerApplyForJobAction = useStatecraftStore((s) => s.careerApplyForJobAction);
   const careerJoinPartyAction = useStatecraftStore((s) => s.careerJoinPartyAction);
+  const careerFoundOwnPartyAction = useStatecraftStore((s) => s.careerFoundOwnPartyAction);
   const careerDoPartyWorkAction = useStatecraftStore((s) => s.careerDoPartyWorkAction);
   const careerAttemptLocalRaceAction = useStatecraftStore((s) => s.careerAttemptLocalRaceAction);
   const careerAttemptNominationAction = useStatecraftStore((s) => s.careerAttemptNominationAction);
@@ -133,6 +134,7 @@ export function CareerScreen() {
           career={career}
           parties={option.parties}
           onJoin={careerJoinPartyAction}
+          onFound={careerFoundOwnPartyAction}
           onDoPartyWork={careerDoPartyWorkAction}
           lastPartyWork={lastPartyWork}
         />
@@ -222,16 +224,26 @@ function PartySection({
   career,
   parties,
   onJoin,
+  onFound,
   onDoPartyWork,
   lastPartyWork,
 }: {
   career: CareerState;
   parties: Party[];
   onJoin: (partyId: string) => void;
+  onFound: (partyId: string, name: string) => void;
   onDoPartyWork: () => void;
   lastPartyWork: PartyWorkOutcome | null;
 }) {
-  const party = parties.find((p) => p.id === career.partyId);
+  const party = career.foundedParty ?? parties.find((p) => p.id === career.partyId);
+  const [newPartyName, setNewPartyName] = useState('');
+
+  const handleFound = () => {
+    const trimmed = newPartyName.trim();
+    if (!trimmed) return;
+    const id = `career-party-${trimmed.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+    onFound(id, trimmed);
+  };
 
   return (
     <section className="panel">
@@ -241,7 +253,7 @@ function PartySection({
 
       {!party && (
         <>
-          <p className="muted">Get involved with a party to start building standing.</p>
+          <p className="muted">Get involved with a party to start building standing — or found your own.</p>
           <div className="bill-actions">
             {parties.map((p) => (
               <button key={p.id} onClick={() => onJoin(p.id)}>
@@ -249,13 +261,30 @@ function PartySection({
               </button>
             ))}
           </div>
+          <div className="custom-bill-form">
+            <label>
+              Found Your Own Party
+              <input
+                type="text"
+                value={newPartyName}
+                onChange={(e) => setNewPartyName(e.target.value)}
+                placeholder="The New Way"
+              />
+            </label>
+            <div className="row-actions">
+              <button onClick={handleFound} disabled={!newPartyName.trim()}>
+                Found Party
+              </button>
+            </div>
+          </div>
         </>
       )}
 
       {party && (
         <>
           <p className="muted">
-            Volunteering with <strong>{party.name}</strong>.
+            {career.foundedParty ? 'Leading' : 'Volunteering with'} <strong>{party.name}</strong>
+            {career.foundedParty && ' — your own party.'}
           </p>
           <div className="score-bar">
             <div className="score-bar-label">

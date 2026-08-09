@@ -18,6 +18,7 @@ import {
   computePersonalAppeal,
   createCareer,
   doPartyWork,
+  foundOwnParty,
   isGraduated,
   joinParty,
   startEducation,
@@ -136,6 +137,24 @@ describe('joinParty', () => {
   it('does not switch parties once already joined', () => {
     const state = joinParty(joinParty(makeCareer(), 'party-a'), 'party-b');
     expect(state.partyId).toBe('party-a');
+  });
+});
+
+describe('foundOwnParty', () => {
+  it('sets partyId, records the founded party, and grants full standing', () => {
+    const state = foundOwnParty(makeCareer({ ideology: { economic: 30, social: -20 } }), 'my-party', 'My Party');
+    expect(state.partyId).toBe('my-party');
+    expect(state.foundedParty).not.toBeNull();
+    expect(state.foundedParty!.ideology).toEqual({ economic: 30, social: -20 });
+    expect(state.partyStanding).toBe(100);
+    expect(computeCareerStage(state)).toBe('party_volunteer');
+  });
+
+  it('does nothing if already committed to a party', () => {
+    const joined = joinParty(makeCareer(), 'party-a');
+    const state = foundOwnParty(joined, 'my-party', 'My Party');
+    expect(state.partyId).toBe('party-a');
+    expect(state.foundedParty).toBeNull();
   });
 });
 
@@ -344,5 +363,14 @@ describe('buildGraduationPayload', () => {
     expect(payload!.playerPartyId).toBe('party-a');
     expect(payload!.countryOptionId).toBe('kastoria');
     expect(payload!.standingBonus).toBeCloseTo(0.8, 5);
+    expect(payload!.founderPartyDefinition).toBeNull();
+  });
+
+  it('carries the founded party definition when the career founded its own party', () => {
+    let state = foundOwnParty(makeCareer(), 'my-party', 'My Party');
+    state = { ...state, nominationHistory: [{ turn: 5, selected: true, probability: 0.9 }] };
+    const payload = buildGraduationPayload(state);
+    expect(payload!.founderPartyDefinition).not.toBeNull();
+    expect(payload!.founderPartyDefinition!.id).toBe('my-party');
   });
 });
