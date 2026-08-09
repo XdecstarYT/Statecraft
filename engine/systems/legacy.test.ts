@@ -73,6 +73,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     secessionistMovements: [],
     ballotInitiatives: [],
     termsServed: {},
+    protests: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,

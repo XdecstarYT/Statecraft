@@ -424,6 +424,18 @@ export interface Coalition {
   formedTurn: number;
 }
 
+export type UnrestStatus = 'protesting' | 'riot' | 'quelled';
+
+/** A nationwide civil-unrest event — see engine/systems/unrest.ts. */
+export interface Protest {
+  id: string;
+  cause: string;
+  /** 0..100. */
+  intensity: number;
+  status: UnrestStatus;
+  turnStarted: number;
+}
+
 export type SecessionStatus = 'agitating' | 'suppressed' | 'independent';
 
 /**
@@ -501,6 +513,7 @@ export interface GameState {
   ballotInitiatives: BallotInitiative[];
   /** politicianId -> number of terms served as head of government (Prime Minister or majority-party leader). See engine/systems/succession.ts. */
   termsServed: Record<string, number>;
+  protests: Protest[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

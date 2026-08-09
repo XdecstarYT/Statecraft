@@ -17,6 +17,7 @@ import { LeadershipPanel } from './components/LeadershipPanel';
 import { PartyFoundingPanel } from './components/PartyFoundingPanel';
 import { SecessionPanel } from './components/SecessionPanel';
 import { BallotInitiativePanel } from './components/BallotInitiativePanel';
+import { UnrestPanel } from './components/UnrestPanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
@@ -242,6 +243,7 @@ export default function App() {
           </div>
           <LeadershipPanel />
           <SecessionPanel />
+          <UnrestPanel />
           <BallotInitiativePanel />
         </>
       )}

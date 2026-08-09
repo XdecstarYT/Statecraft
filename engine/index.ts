@@ -15,6 +15,7 @@ import type {
   Party,
   Politician,
   PoliticianAttributes,
+  Protest,
   ScandalResponse,
   SecessionistMovement,
   VoterBloc,
@@ -79,6 +80,17 @@ import {
   secedeProvince,
 } from './systems/secession';
 import { proposeBallotInitiative, resolveBallotInitiative, type BallotResult } from './systems/referendum';
+import {
+  RIOT_ECONOMY_EFFECT,
+  advanceProtestIntensity,
+  checkRiotEscalation,
+  computeUnrestPressure,
+  concedeToProtesters,
+  disperseProtest,
+  rollForProtest,
+  type DispersalResult,
+} from './systems/unrest';
+import { PROTEST_CAUSES } from '../content/flavor/protestCauses';
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
@@ -149,6 +161,7 @@ export * from './systems/nationBuilder';
 export * from './systems/secession';
 export * from './systems/referendum';
 export * from './systems/succession';
+export * from './systems/unrest';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -296,6 +309,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     secessionistMovements: [],
     ballotInitiatives: [],
     termsServed: {},
+    protests: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -652,6 +666,38 @@ export function runSecessionTurn(state: GameState, rng: SeededRng): GameState {
   };
 }
 
+/**
+ * Runs one turn of nationwide civil unrest: any active protest's intensity
+ * drifts toward what current unrest pressure (unemployment, inflation, low
+ * public approval) implies and — left unresolved — can escalate into a
+ * riot on its own, applying a real one-time economic hit exactly once at
+ * the moment of escalation. If nothing is active, a new protest may
+ * spontaneously break out. Resolving a protest (concession, dispersal) is
+ * always a player action.
+ */
+export function runUnrestTurn(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const pressure = computeUnrestPressure(state.economy, player?.approval.public ?? 50);
+
+  let economy = state.economy;
+  const protests = state.protests.map((protest) => {
+    const advanced = advanceProtestIntensity(protest, pressure);
+    const afterEscalation = checkRiotEscalation(advanced);
+    if (afterEscalation.status === 'riot' && advanced.status !== 'riot') {
+      economy = applyImmediateEffect(economy, RIOT_ECONOMY_EFFECT);
+    }
+    return afterEscalation;
+  });
+
+  const newProtest = rollForProtest(protests, pressure, PROTEST_CAUSES, state.turn, rng);
+
+  return {
+    ...state,
+    economy,
+    protests: newProtest ? [...protests, newProtest] : protests,
+  };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -669,6 +715,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runWarTurns(next, rng);
   next = runLeadershipChallengeTurn(next, rng);
   next = runSecessionTurn(next, rng);
+  next = runUnrestTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1092,6 +1139,55 @@ export function attemptImpeachmentAction(
   return {
     state: { ...state, partyLeaderId, coalition, politicians, rngState: rng.getState() },
     outcome: { result, removed: true, newHeadOfGovernmentId: successor?.id ?? null },
+  };
+}
+
+function replaceProtest(state: GameState, protestId: string, updated: Protest): GameState {
+  return { ...state, protests: state.protests.map((p) => (p.id === protestId ? updated : p)) };
+}
+
+/** A real policy concession to an active protest — cools it by a fixed amount, at the cost of a small budget hit (the concession itself). */
+export function concedeToProtestersAction(state: GameState, protestId: string): GameState {
+  const protest = state.protests.find((p) => p.id === protestId);
+  if (!protest || protest.status !== 'protesting') return state;
+  const conceded = concedeToProtesters(protest);
+  const economy = applyImmediateEffect(state.economy, { budgetBalance: -0.15 });
+  return replaceProtest({ ...state, economy }, protestId, conceded);
+}
+
+export interface DispersalOutcome {
+  success: boolean;
+}
+
+/**
+ * Sends in the police/military to break up an active protest, using the
+ * player's own military strength (scaled down — this is domestic policing,
+ * not a war) as the policing force. Failure escalates the protest straight
+ * into a riot, with the same real economic cost as organic escalation.
+ * Costs the player's own public approval regardless of outcome — force
+ * is never free, win or lose.
+ */
+export function disperseProtestAction(
+  state: GameState,
+  protestId: string
+): { state: GameState; outcome: DispersalOutcome | null } {
+  const protest = state.protests.find((p) => p.id === protestId);
+  if (!protest || protest.status !== 'protesting') return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const policingStrength = state.playerMilitary.strength * 0.4;
+  const result: DispersalResult = disperseProtest(protest, policingStrength, rng);
+
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', -8, 5) : p))
+    : state.politicians;
+
+  const economy = !result.success ? applyImmediateEffect(state.economy, RIOT_ECONOMY_EFFECT) : state.economy;
+
+  return {
+    state: replaceProtest({ ...state, economy, politicians, rngState: rng.getState() }, protestId, result.protest),
+    outcome: { success: result.success },
   };
 }
 

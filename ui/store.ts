@@ -16,6 +16,8 @@ import {
   proposeBallotInitiativeAction as engineProposeBallotInitiative,
   resolveBallotInitiativeAction as engineResolveBallotInitiative,
   attemptImpeachmentAction as engineAttemptImpeachment,
+  concedeToProtestersAction as engineConcedeToProtesters,
+  disperseProtestAction as engineDisperseProtest,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -92,6 +94,7 @@ import {
   type CampaignActionOutcome,
   type CareerState,
   type ClotureResult,
+  type DispersalOutcome,
   type ImpeachmentOutcome,
   type CommodityType,
   type CorruptionAttemptOutcome,
@@ -185,6 +188,7 @@ interface StatecraftStore {
   lastClotureResult: (ClotureResult & { billId: string }) | null;
   lastBallotResult: (BallotResult & { initiativeId: string }) | null;
   lastImpeachmentOutcome: ImpeachmentOutcome | null;
+  lastDispersalOutcome: (DispersalOutcome & { protestId: string }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -224,6 +228,8 @@ interface StatecraftStore {
   ) => void;
   resolveBallotInitiativeAction: (initiativeId: string) => void;
   attemptImpeachmentAction: (targetId: string) => void;
+  concedeToProtestersAction: (protestId: string) => void;
+  disperseProtestAction: (protestId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -285,6 +291,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastClotureResult: null,
   lastBallotResult: null,
   lastImpeachmentOutcome: null,
+  lastDispersalOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -651,6 +658,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineAttemptImpeachment(game, targetId);
     if (!outcome) return;
     set({ game: state, lastImpeachmentOutcome: outcome });
+  },
+
+  concedeToProtestersAction: (protestId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineConcedeToProtesters(game, protestId) });
+  },
+
+  disperseProtestAction: (protestId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineDisperseProtest(game, protestId);
+    if (!outcome) return;
+    set({ game: state, lastDispersalOutcome: { ...outcome, protestId } });
   },
 
   nudgeRelationship: (politicianId, delta) => {
