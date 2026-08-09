@@ -6,6 +6,9 @@ import { ElectionPanel } from './components/ElectionPanel';
 import { OpinionPanel } from './components/OpinionPanel';
 import { MediaPanel } from './components/MediaPanel';
 import { ElectoralLabPanel } from './components/ElectoralLabPanel';
+import { CorruptionPanel } from './components/CorruptionPanel';
+import { DiplomacyPanel } from './components/DiplomacyPanel';
+import { EventLogPanel } from './components/EventLogPanel';
 
 export default function App() {
   const game = useStatecraftStore((s) => s.game);
@@ -40,6 +43,11 @@ export default function App() {
         <OpinionPanel />
         <MediaPanel />
       </div>
+      <div className="panel-columns">
+        <CorruptionPanel />
+        <DiplomacyPanel />
+      </div>
+      <EventLogPanel />
       <ElectoralLabPanel />
     </main>
   );

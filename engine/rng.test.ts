@@ -52,4 +52,58 @@ describe('SeededRng', () => {
     const rng = new SeededRng(1);
     expect(() => rng.pick([])).toThrow();
   });
+
+  describe('pickWeighted', () => {
+    it('always picks the only entry when there is just one', () => {
+      const rng = new SeededRng(1);
+      expect(rng.pickWeighted([{ item: 'only', weight: 5 }])).toBe('only');
+    });
+
+    it('never picks a zero-weight entry when a positive-weight one exists', () => {
+      const rng = new SeededRng(3);
+      for (let i = 0; i < 200; i++) {
+        const picked = rng.pickWeighted([
+          { item: 'never', weight: 0 },
+          { item: 'always', weight: 1 },
+        ]);
+        expect(picked).toBe('always');
+      }
+    });
+
+    it('roughly matches configured proportions over many draws', () => {
+      const rng = new SeededRng(2024);
+      const counts = { heavy: 0, light: 0 };
+      const trials = 5000;
+      for (let i = 0; i < trials; i++) {
+        const picked = rng.pickWeighted([
+          { item: 'heavy' as const, weight: 9 },
+          { item: 'light' as const, weight: 1 },
+        ]);
+        counts[picked]++;
+      }
+      expect(counts.heavy / trials).toBeGreaterThan(0.8);
+      expect(counts.heavy / trials).toBeLessThan(0.98);
+    });
+
+    it('throws on an empty list', () => {
+      const rng = new SeededRng(1);
+      expect(() => rng.pickWeighted([])).toThrow();
+    });
+
+    it('throws when every weight is zero', () => {
+      const rng = new SeededRng(1);
+      expect(() => rng.pickWeighted([{ item: 'a', weight: 0 }])).toThrow();
+    });
+
+    it('is deterministic for a given rng state', () => {
+      const entries = [
+        { item: 'a', weight: 3 },
+        { item: 'b', weight: 5 },
+        { item: 'c', weight: 2 },
+      ];
+      const a = new SeededRng(77).pickWeighted(entries);
+      const b = new SeededRng(77).pickWeighted(entries);
+      expect(a).toBe(b);
+    });
+  });
 });

@@ -7,6 +7,8 @@ import {
   advanceTurn,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
+  breakTreaty,
+  commitCorruption,
   createNewGame,
   generateEventCoverage,
   generateNationalVotes,
@@ -15,7 +17,9 @@ import {
   generateRankedBallots,
   getMajorityWinner,
   getRunoffPair,
+  imposeSanctions,
   proposeBill,
+  proposeTreaty,
   pushApprovalEvent,
   relationshipKey,
   resolveFloorVote,
@@ -23,17 +27,24 @@ import {
   resolvePrimary,
   resolveRunoffRound,
   resolveSTV,
+  respondToScandal,
   runLegislativeElection,
+  sendAid,
   setWhipStance,
+  signTreaty,
+  type CorruptionAttemptOutcome,
+  type CorruptionTier,
   type CoverageEvent,
   type ElectionOutcome,
   type FloorVoteResult,
   type GameState,
   type MmpResult,
   type PartyVoteShare,
+  type ScandalResponse,
   type WhipStance,
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
+import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
 
 export interface EconomySnapshot {
   turn: number;
@@ -71,6 +82,7 @@ interface StatecraftStore {
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
   lastCoverage: CoverageEvent[];
   labResult: LabResult | null;
+  lastCorruptionOutcome: CorruptionAttemptOutcome | null;
 
   newGame: (seed?: number) => void;
   proposeNewBill: () => void;
@@ -84,6 +96,12 @@ interface StatecraftStore {
   nextTurn: () => void;
   runElection: () => void;
   runElectoralLab: (system: LabResult['system']) => void;
+  attemptCorruption: (targetId: string, tier: CorruptionTier) => void;
+  respondToScandalAction: (scandalId: string, response: ScandalResponse) => void;
+  signTreatyAction: (counterpartId: string, templateIndex: number) => void;
+  breakTreatyAction: (treatyId: string) => void;
+  sendAidAction: (counterpartId: string) => void;
+  imposeSanctionsAction: (counterpartId: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -93,6 +111,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastFloorResult: null,
   lastCoverage: [],
   labResult: null,
+  lastCorruptionOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000)) => {
     const game = createNewGame(seed);
@@ -103,6 +122,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
+      lastCorruptionOutcome: null,
     });
   },
 
@@ -278,5 +298,65 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     }
 
     set({ game: { ...game, rngState: rng.getState() }, labResult });
+  },
+
+  attemptCorruption: (targetId, tier) => {
+    const game = get().game;
+    if (!game) return;
+    const player = game.politicians.find((p) => p.isPlayer);
+    if (!player) return;
+    const { state, outcome } = commitCorruption(game, player.id, targetId, tier, 0);
+    set({ game: state, lastCorruptionOutcome: outcome });
+  },
+
+  respondToScandalAction: (scandalId, response) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: respondToScandal(game, scandalId, response) });
+  },
+
+  signTreatyAction: (counterpartId, templateIndex) => {
+    const game = get().game;
+    if (!game) return;
+    const template = TREATY_TEMPLATES[templateIndex];
+    const counterpart = game.foreignCounterparts.find((c) => c.id === counterpartId);
+    if (!template || !counterpart) return;
+
+    const treaty = proposeTreaty({
+      id: `treaty-${game.turn}-${game.treaties.length + 1}`,
+      counterpartId,
+      type: template.type,
+      title: `${template.title} — ${counterpart.name}`,
+      economyEffect: template.economyEffect,
+      relationEffect: template.relationEffect,
+    });
+    const { treaty: signed, economy, relations } = signTreaty(treaty, game.economy, game.foreignRelations);
+    set({
+      game: { ...game, treaties: [...game.treaties, signed], economy, foreignRelations: relations },
+    });
+  },
+
+  breakTreatyAction: (treatyId) => {
+    const game = get().game;
+    if (!game) return;
+    const treaty = game.treaties.find((t) => t.id === treatyId);
+    if (!treaty) return;
+    const { treaty: broken, relations } = breakTreaty(treaty, game.foreignRelations);
+    const treaties = game.treaties.map((t) => (t.id === treatyId ? broken : t));
+    set({ game: { ...game, treaties, foreignRelations: relations } });
+  },
+
+  sendAidAction: (counterpartId) => {
+    const game = get().game;
+    if (!game) return;
+    const { economy, relations } = sendAid(counterpartId, game.economy, game.foreignRelations);
+    set({ game: { ...game, economy, foreignRelations: relations } });
+  },
+
+  imposeSanctionsAction: (counterpartId) => {
+    const game = get().game;
+    if (!game) return;
+    const { economy, relations } = imposeSanctions(counterpartId, game.economy, game.foreignRelations);
+    set({ game: { ...game, economy, foreignRelations: relations } });
   },
 }));

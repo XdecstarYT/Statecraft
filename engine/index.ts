@@ -1,16 +1,19 @@
 import { SeededRng } from './rng';
 import type {
+  CorruptionTier,
   Country,
   EconomyState,
   ElectoralSystem,
+  ForeignCounterpart,
   GameState,
   IdeologyPosition,
   MediaOutlet,
   Party,
   Politician,
+  ScandalResponse,
   VoterBloc,
 } from './models/types';
-import { advanceEconomy } from './systems/economy';
+import { advanceEconomy, applyImmediateEffect } from './systems/economy';
 import {
   allocateSeatsDHondt,
   generateDistrictVotes,
@@ -21,12 +24,17 @@ import {
 } from './systems/elections';
 import { advanceApproval, pushApprovalEvent } from './systems/opinion';
 import { generateCoverage, type CoverageEvent, type EventKind } from './systems/media';
+import { MAX_FAVORS } from './systems/legislative';
+import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
+import { rollForEvent, applyCrisisEvent } from './systems/events';
 import { clampAxis } from './ideology';
 import { STARTER_COUNTRY, STARTER_PARTIES } from '../content/countries/starter';
 import { generateName } from '../content/names/pool';
 import { STARTER_VOTER_BLOCS } from '../content/opinion/blocs';
 import { STARTER_MEDIA_OUTLETS } from '../content/media/outlets';
 import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
+import { STARTER_FOREIGN_COUNTERPARTS } from '../content/diplomacy/counterparts';
+import { CRISIS_TABLE } from '../content/events/crisisTable';
 
 export * from './rng';
 export * from './ideology';
@@ -37,6 +45,9 @@ export * from './systems/elections';
 export * from './systems/economy';
 export * from './systems/opinion';
 export * from './systems/media';
+export * from './systems/corruption';
+export * from './systems/diplomacy';
+export * from './systems/events';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -86,6 +97,7 @@ export interface NewGameOptions {
   parties?: Party[];
   voterBlocs?: VoterBloc[];
   mediaOutlets?: MediaOutlet[];
+  foreignCounterparts?: ForeignCounterpart[];
   playerPartyId?: string;
   playerName?: string;
 }
@@ -119,18 +131,31 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     favorBank: {},
     voterBlocs: options.voterBlocs ?? STARTER_VOTER_BLOCS,
     mediaOutlets: options.mediaOutlets ?? STARTER_MEDIA_OUTLETS,
+    scandals: [],
+    foreignCounterparts: options.foreignCounterparts ?? STARTER_FOREIGN_COUNTERPARTS,
+    foreignRelations: {},
+    treaties: [],
+    eventLog: [],
   };
 }
 
 /**
  * Advances the economy and every politician's multi-audience approval by
- * one turn. Does not touch bills — call legislative actions separately.
+ * one turn, then rolls the weighted crisis-event table against the new
+ * state. Does not touch bills — call legislative actions separately.
  */
 export function advanceTurn(state: GameState): GameState {
   const rng = SeededRng.fromState(state.rngState);
   const economy = advanceEconomy(state.economy, rng);
   const politicians = state.politicians.map((p) => advanceApproval(p, state.voterBlocs));
-  return { ...state, economy, politicians, turn: state.turn + 1, rngState: rng.getState() };
+  let next: GameState = { ...state, economy, politicians, turn: state.turn + 1 };
+
+  const eventDef = rollForEvent(CRISIS_TABLE, next, rng);
+  if (eventDef) {
+    next = applyCrisisEvent(next, eventDef);
+  }
+
+  return { ...next, rngState: rng.getState() };
 }
 
 /**
@@ -171,6 +196,81 @@ export function applyBillOutcomeToApproval(
     p.id === sponsorId ? pushApprovalEvent(p, 'public', passed ? 15 : -15, 6) : p
   );
   return { ...state, politicians };
+}
+
+export interface CorruptionAttemptOutcome {
+  detected: boolean;
+  favorGain: number;
+  budgetImpact: number;
+  scandalId?: string;
+}
+
+/**
+ * Attempts a corrupt act on the actor's behalf, banking favor with the
+ * target and skimming the budget. Rolls detection against the actor's
+ * integrity and any active scrutiny; a detected act opens an unresolved
+ * Scandal but does not hit approval yet — that happens once the player
+ * responds, via respondToScandal.
+ */
+export function commitCorruption(
+  state: GameState,
+  actorId: string,
+  targetId: string,
+  tier: CorruptionTier,
+  investigativePressure = 0
+): { state: GameState; outcome: CorruptionAttemptOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const actor = state.politicians.find((p) => p.id === actorId);
+  if (!actor) {
+    return { state, outcome: { detected: false, favorGain: 0, budgetImpact: 0 } };
+  }
+
+  const result = attemptCorruptionAction(tier, actor.attributes.integrity, investigativePressure, rng);
+
+  const favorBank = {
+    ...state.favorBank,
+    [targetId]: Math.min(MAX_FAVORS, (state.favorBank[targetId] ?? 0) + result.favorGain),
+  };
+  const economy = applyImmediateEffect(state.economy, { budgetBalance: result.budgetImpact });
+
+  let scandals = state.scandals;
+  let scandalId: string | undefined;
+  if (result.detected) {
+    scandalId = `scandal-${state.turn}-${state.scandals.length + 1}`;
+    scandals = [
+      ...scandals,
+      { id: scandalId, politicianId: actorId, tier, turn: state.turn, status: 'unresolved' },
+    ];
+  }
+
+  return {
+    state: { ...state, favorBank, economy, scandals, rngState: rng.getState() },
+    outcome: { detected: result.detected, favorGain: result.favorGain, budgetImpact: result.budgetImpact, scandalId },
+  };
+}
+
+/**
+ * Resolves an unresolved scandal with the player's chosen response —
+ * admitting fault draws a smaller hit than denying and later being proven
+ * wrong. Applies the approval hit as a decaying event, not an instant drop.
+ */
+export function respondToScandal(
+  state: GameState,
+  scandalId: string,
+  response: ScandalResponse
+): GameState {
+  const scandal = state.scandals.find((s) => s.id === scandalId);
+  if (!scandal || scandal.status !== 'unresolved') return state;
+
+  const severity = computeScandalSeverity(scandal.tier, response);
+  const politicians = state.politicians.map((p) =>
+    p.id === scandal.politicianId ? pushApprovalEvent(p, 'public', severity, 6) : p
+  );
+  const scandals = state.scandals.map((s) =>
+    s.id === scandalId ? { ...s, status: 'resolved' as const, response } : s
+  );
+
+  return { ...state, politicians, scandals };
 }
 
 export interface ElectionOutcome {

@@ -162,6 +162,60 @@ export interface MediaOutlet {
   reach: number;
 }
 
+/**
+ * A real spectrum of rising risk and reward, not a binary switch. See
+ * engine/systems/corruption.ts.
+ */
+export type CorruptionTier = 'soft' | 'medium' | 'hard';
+
+export type ScandalResponse = 'deny' | 'admit' | 'scapegoat';
+
+export interface Scandal {
+  id: string;
+  politicianId: string;
+  tier: CorruptionTier;
+  turn: number;
+  status: 'unresolved' | 'resolved';
+  response?: ScandalResponse;
+}
+
+export type TreatyType = 'trade' | 'defense' | 'nonaggression' | 'aid';
+
+export type TreatyStatus = 'proposed' | 'active' | 'broken';
+
+export interface Treaty {
+  id: string;
+  counterpartId: string;
+  type: TreatyType;
+  title: string;
+  status: TreatyStatus;
+  economyEffect: EconomyDelta;
+  /** Immediate relation-score bump on signing; a further penalty applies on breaking. */
+  relationEffect: number;
+}
+
+/** A foreign government or bloc the country has a relationship with. See engine/systems/diplomacy.ts. */
+export interface ForeignCounterpart {
+  id: string;
+  name: string;
+}
+
+export type CrisisCategory =
+  | 'scandal'
+  | 'natural_disaster'
+  | 'economic_shock'
+  | 'international_incident'
+  | 'civil_unrest'
+  | 'public_health'
+  | 'security_incident';
+
+export interface EventLogEntry {
+  turn: number;
+  category: CrisisCategory;
+  title: string;
+  description: string;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -178,4 +232,10 @@ export interface GameState {
   favorBank: Record<string, number>;
   voterBlocs: VoterBloc[];
   mediaOutlets: MediaOutlet[];
+  scandals: Scandal[];
+  foreignCounterparts: ForeignCounterpart[];
+  /** counterpartId -> disposition -100..100. */
+  foreignRelations: Record<string, number>;
+  treaties: Treaty[];
+  eventLog: EventLogEntry[];
 }

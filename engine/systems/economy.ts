@@ -43,6 +43,11 @@ function noise(rng: SeededRng): EconomyDelta {
   };
 }
 
+/** Applies a one-off economic effect immediately — for exogenous shocks and direct actions, not delayed policy. */
+export function applyImmediateEffect(economy: EconomyState, delta: EconomyDelta): EconomyState {
+  return clampEconomy(addDelta(economy, delta));
+}
+
 export const MIN_POLICY_DELAY_TURNS = 2;
 export const MAX_POLICY_DELAY_TURNS = 6;
 

@@ -45,6 +45,20 @@ export class SeededRng {
     return items[this.nextInt(0, items.length - 1)];
   }
 
+  /** Picks from a non-empty list of {item, weight} entries, proportional to weight. */
+  pickWeighted<T>(entries: readonly { item: T; weight: number }[]): T {
+    const totalWeight = entries.reduce((sum, e) => sum + Math.max(0, e.weight), 0);
+    if (entries.length === 0 || totalWeight <= 0) {
+      throw new Error('Cannot pick from an empty or zero-weight list');
+    }
+    let roll = this.next() * totalWeight;
+    for (const entry of entries) {
+      roll -= Math.max(0, entry.weight);
+      if (roll <= 0) return entry.item;
+    }
+    return entries[entries.length - 1].item;
+  }
+
   getState(): RngState {
     return this.state;
   }
