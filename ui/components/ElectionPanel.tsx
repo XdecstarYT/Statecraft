@@ -216,6 +216,8 @@ export function ElectionPanel() {
 
 function GovernmentStatus() {
   const game = useStatecraftStore((s) => s.game);
+  const attemptImpeachmentAction = useStatecraftStore((s) => s.attemptImpeachmentAction);
+  const lastImpeachmentOutcome = useStatecraftStore((s) => s.lastImpeachmentOutcome);
   if (!game) return null;
 
   const { coalition } = game;
@@ -223,10 +225,25 @@ function GovernmentStatus() {
 
   if (!coalition) {
     const majorityParty = game.parties.find((p) => p.seats > game.parties.reduce((sum, x) => sum + x.seats, 0) / 2);
+    const headId = majorityParty ? game.partyLeaderId[majorityParty.id] : undefined;
+    const head = headId ? game.politicians.find((p) => p.id === headId) : undefined;
+    const terms = headId ? game.termsServed[headId] ?? 0 : 0;
     return (
-      <p className="muted">
-        {majorityParty ? `${majorityParty.name} governs alone with an outright majority.` : 'No election has been held yet.'}
-      </p>
+      <div>
+        <p className="muted">
+          {majorityParty ? `${majorityParty.name} governs alone with an outright majority.` : 'No election has been held yet.'}
+        </p>
+        {head && (
+          <ImpeachmentControls
+            headId={head.id}
+            headName={head.name}
+            isPlayer={head.isPlayer}
+            terms={terms}
+            onImpeach={attemptImpeachmentAction}
+            outcome={lastImpeachmentOutcome}
+          />
+        )}
+      </div>
     );
   }
 
@@ -236,6 +253,7 @@ function GovernmentStatus() {
     .join(', ');
   const playerInCoalition = player ? coalition.memberPartyIds.includes(player.partyId) : false;
   const playerIsPm = player ? player.id === coalition.primeMinisterId : false;
+  const terms = game.termsServed[coalition.primeMinisterId] ?? 0;
 
   return (
     <div className="billboard-slide">
@@ -255,6 +273,52 @@ function GovernmentStatus() {
         Confidence vote: {coalition.confidenceVotesFor} for / {coalition.confidenceVotesAgainst} against
         {coalition.status === 'collapsed' && ' — a snap election is now due.'}
       </p>
+      {pm && (
+        <ImpeachmentControls
+          headId={pm.id}
+          headName={pm.name}
+          isPlayer={pm.isPlayer}
+          terms={terms}
+          onImpeach={attemptImpeachmentAction}
+          outcome={lastImpeachmentOutcome}
+        />
+      )}
+    </div>
+  );
+}
+
+function ImpeachmentControls({
+  headId,
+  headName,
+  isPlayer,
+  terms,
+  onImpeach,
+  outcome,
+}: {
+  headId: string;
+  headName: string;
+  isPlayer: boolean;
+  terms: number;
+  onImpeach: (id: string) => void;
+  outcome: { removed: boolean; result: { votesFor: number; requiredCount: number; totalCount: number } } | null;
+}) {
+  return (
+    <div className="row-actions">
+      <span className="muted">
+        {headName} has served {terms} term{terms === 1 ? '' : 's'} (limit 2)
+      </span>
+      {!isPlayer && (
+        <button className="danger-button" onClick={() => onImpeach(headId)}>
+          Move to Impeach
+        </button>
+      )}
+      {outcome && (
+        <span className={outcome.removed ? 'result-pass' : 'result-fail'}>
+          {outcome.removed
+            ? `Removed from office (${outcome.result.votesFor}/${outcome.result.totalCount}, needed ${outcome.result.requiredCount})`
+            : `Impeachment failed (${outcome.result.votesFor}/${outcome.result.totalCount}, needed ${outcome.result.requiredCount})`}
+        </span>
+      )}
     </div>
   );
 }

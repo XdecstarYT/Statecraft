@@ -15,6 +15,7 @@ import {
   invokeFilibuster,
   proposeBallotInitiativeAction as engineProposeBallotInitiative,
   resolveBallotInitiativeAction as engineResolveBallotInitiative,
+  attemptImpeachmentAction as engineAttemptImpeachment,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -91,6 +92,7 @@ import {
   type CampaignActionOutcome,
   type CareerState,
   type ClotureResult,
+  type ImpeachmentOutcome,
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
@@ -182,6 +184,7 @@ interface StatecraftStore {
   lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
   lastClotureResult: (ClotureResult & { billId: string }) | null;
   lastBallotResult: (BallotResult & { initiativeId: string }) | null;
+  lastImpeachmentOutcome: ImpeachmentOutcome | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -220,6 +223,7 @@ interface StatecraftStore {
     budgetImpact: number
   ) => void;
   resolveBallotInitiativeAction: (initiativeId: string) => void;
+  attemptImpeachmentAction: (targetId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -280,6 +284,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCovertOperationOutcome: null,
   lastClotureResult: null,
   lastBallotResult: null,
+  lastImpeachmentOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -638,6 +643,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineResolveBallotInitiative(game, initiativeId);
     if (!outcome) return;
     set({ game: state, lastBallotResult: { ...outcome, initiativeId } });
+  },
+
+  attemptImpeachmentAction: (targetId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineAttemptImpeachment(game, targetId);
+    if (!outcome) return;
+    set({ game: state, lastImpeachmentOutcome: outcome });
   },
 
   nudgeRelationship: (politicianId, delta) => {

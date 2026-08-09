@@ -59,7 +59,14 @@ import {
   rollForLeadershipChallenge,
   type PartyActionOutcome,
 } from './systems/leadership';
-import { formGovernment, hasOutrightMajority } from './systems/coalition';
+import { formCoalition, formGovernment, hasOutrightMajority } from './systems/coalition';
+import {
+  isTermLimited,
+  recordTermServed,
+  resolveImpeachmentVote,
+  selectSuccessor,
+  type ImpeachmentResult,
+} from './systems/succession';
 import type { CareerGraduationPayload } from './systems/career';
 import { foundParty, type FoundPartyResult } from './systems/partyManagement';
 import {
@@ -141,6 +148,7 @@ export * from './systems/partyManagement';
 export * from './systems/nationBuilder';
 export * from './systems/secession';
 export * from './systems/referendum';
+export * from './systems/succession';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -287,6 +295,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     coalition: null,
     secessionistMovements: [],
     ballotInitiatives: [],
+    termsServed: {},
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -337,31 +346,61 @@ const COALITION_COLLAPSE_ECONOMY_EFFECT: EconomyDelta = { budgetBalance: -0.5, g
  * election (nextElectionTurn reset to right now) rather than waiting out
  * the rest of the term.
  */
+/**
+ * Applies term limits before a new government is formed: if the party
+ * about to lead (the sole majority party, or the coalition formateur) is
+ * still led by someone who's already served MAX_HEAD_OF_GOVERNMENT_TERMS,
+ * that party succeeds its own leadership to its strongest remaining member
+ * first — the term-limited politician never becomes head of government
+ * again, but keeps their seat and party membership.
+ */
+function applyTermLimitSuccession(state: GameState, leadingPartyId: string): GameState {
+  const currentLeaderId = state.partyLeaderId[leadingPartyId];
+  if (!currentLeaderId || !isTermLimited(currentLeaderId, state.termsServed)) return state;
+
+  const party = state.parties.find((p) => p.id === leadingPartyId);
+  if (!party) return state;
+  const successor = selectSuccessor(party, currentLeaderId, state.politicians, state.relationships);
+  if (!successor) return state;
+
+  return { ...state, partyLeaderId: { ...state.partyLeaderId, [leadingPartyId]: successor.id } };
+}
+
 function resolveGovernment(state: GameState, rng: SeededRng): GameState {
   if (hasOutrightMajority(state.parties)) {
-    return { ...state, coalition: null, rngState: rng.getState() };
+    const majorityParty = state.parties.find((p) => p.seats > state.parties.reduce((s, x) => s + x.seats, 0) / 2)!;
+    const succeeded = applyTermLimitSuccession(state, majorityParty.id);
+    const headId = succeeded.partyLeaderId[majorityParty.id];
+    const termsServed = headId ? recordTermServed(succeeded.termsServed, headId) : succeeded.termsServed;
+    return { ...succeeded, coalition: null, termsServed, rngState: rng.getState() };
   }
 
+  const { formateurPartyId } = formCoalition(state.parties);
+  const succeeded = applyTermLimitSuccession(state, formateurPartyId);
+
   const coalition = formGovernment(
-    state.parties,
-    state.politicians,
-    state.partyLeaderId,
-    state.relationships,
-    state.turn,
+    succeeded.parties,
+    succeeded.politicians,
+    succeeded.partyLeaderId,
+    succeeded.relationships,
+    succeeded.turn,
     rng
   );
 
+  const termsServed = recordTermServed(succeeded.termsServed, coalition.primeMinisterId);
+
   if (coalition.status === 'collapsed') {
     return {
-      ...state,
+      ...succeeded,
       coalition,
-      economy: applyImmediateEffect(state.economy, COALITION_COLLAPSE_ECONOMY_EFFECT),
-      nextElectionTurn: state.turn,
+      termsServed,
+      economy: applyImmediateEffect(succeeded.economy, COALITION_COLLAPSE_ECONOMY_EFFECT),
+      nextElectionTurn: succeeded.turn,
       rngState: rng.getState(),
     };
   }
 
-  return { ...state, coalition, rngState: rng.getState() };
+  return { ...succeeded, coalition, termsServed, rngState: rng.getState() };
 }
 
 const NPC_BILL_SPONSOR_CHANCE = 0.3;
@@ -994,6 +1033,66 @@ export function resolveBallotInitiativeAction(
   }
 
   return { state: { ...state, ballotInitiatives, economy, rngState: rng.getState() }, outcome: result };
+}
+
+/** The current head of government: a coalition's PM, or (in a single-party-majority government) that party's recorded leader. Null if no party holds a majority and no coalition has formed yet. */
+export function getHeadOfGovernmentId(state: GameState): string | null {
+  if (state.coalition) return state.coalition.primeMinisterId;
+  const totalSeats = state.parties.reduce((sum, p) => sum + p.seats, 0);
+  const majorityParty = state.parties.find((p) => p.seats > totalSeats / 2);
+  return majorityParty ? state.partyLeaderId[majorityParty.id] ?? null : null;
+}
+
+export interface ImpeachmentOutcome {
+  result: ImpeachmentResult;
+  removed: boolean;
+  newHeadOfGovernmentId: string | null;
+}
+
+/**
+ * Puts the sitting head of government to a supermajority removal vote.
+ * Only the actual head of government can be targeted — this isn't a
+ * generic "remove any politician" tool. A passed vote hands the party's
+ * leadership (and the coalition's PM slot, if applicable) to whoever
+ * selectSuccessor ranks highest; the removed politician keeps their seat
+ * but takes a real, lasting hit with their own party elites.
+ */
+export function attemptImpeachmentAction(
+  state: GameState,
+  targetId: string
+): { state: GameState; outcome: ImpeachmentOutcome | null } {
+  const target = state.politicians.find((p) => p.id === targetId);
+  const headId = getHeadOfGovernmentId(state);
+  if (!target || headId !== targetId) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveImpeachmentVote(target, state.politicians, state.relationships, state.scandals, rng);
+
+  if (!result.passed) {
+    return {
+      state: { ...state, rngState: rng.getState() },
+      outcome: { result, removed: false, newHeadOfGovernmentId: headId },
+    };
+  }
+
+  const party = state.parties.find((p) => p.id === target.partyId);
+  const successor = party ? selectSuccessor(party, target.id, state.politicians, state.relationships) : null;
+  let partyLeaderId = state.partyLeaderId;
+  let coalition = state.coalition;
+
+  if (successor && party) {
+    partyLeaderId = { ...partyLeaderId, [party.id]: successor.id };
+    if (coalition && coalition.primeMinisterId === target.id) {
+      coalition = { ...coalition, primeMinisterId: successor.id };
+    }
+  }
+
+  const politicians = state.politicians.map((p) => (p.id === target.id ? pushApprovalEvent(p, 'partyElite', -25, 8) : p));
+
+  return {
+    state: { ...state, partyLeaderId, coalition, politicians, rngState: rng.getState() },
+    outcome: { result, removed: true, newHeadOfGovernmentId: successor?.id ?? null },
+  };
 }
 
 /**

@@ -499,6 +499,8 @@ export interface GameState {
   coalition: Coalition | null;
   secessionistMovements: SecessionistMovement[];
   ballotInitiatives: BallotInitiative[];
+  /** politicianId -> number of terms served as head of government (Prime Minister or majority-party leader). See engine/systems/succession.ts. */
+  termsServed: Record<string, number>;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
