@@ -12,12 +12,30 @@ import type { Country, EconomyState, MilitaryProfile, Party, Province, Secession
 
 const GRIEVANCE_UNEMPLOYMENT_WEIGHT = 0.6;
 const GRIEVANCE_APPROVAL_WEIGHT = 0.5;
+const GRIEVANCE_COHESION_WEIGHT = 0.5;
+const DEFAULT_CULTURAL_COHESION = 70;
 
-/** How aggrieved the nation is right now, 0..1 — high unemployment and low public approval both feed separatist sentiment. */
-export function computeNationalGrievance(economy: EconomyState, publicApproval: number): number {
+/**
+ * How aggrieved the nation is right now, 0..1 — high unemployment, low
+ * public approval, and weak national cultural cohesion all feed
+ * separatist sentiment. A fractured, low-cohesion nation runs a higher
+ * baseline secession risk even with a healthy economy and approval.
+ */
+export function computeNationalGrievance(
+  economy: EconomyState,
+  publicApproval: number,
+  culturalCohesion: number = DEFAULT_CULTURAL_COHESION
+): number {
   const unemploymentTerm = clamp(economy.unemployment / 15, 0, 1);
   const approvalTerm = clamp((60 - publicApproval) / 60, 0, 1);
-  return clamp(unemploymentTerm * GRIEVANCE_UNEMPLOYMENT_WEIGHT + approvalTerm * GRIEVANCE_APPROVAL_WEIGHT, 0, 1);
+  const cohesionTerm = clamp((70 - culturalCohesion) / 70, 0, 1);
+  return clamp(
+    unemploymentTerm * GRIEVANCE_UNEMPLOYMENT_WEIGHT +
+      approvalTerm * GRIEVANCE_APPROVAL_WEIGHT +
+      cohesionTerm * GRIEVANCE_COHESION_WEIGHT,
+    0,
+    1
+  );
 }
 
 const SENTIMENT_SPAWN_BASE_CHANCE = 0.04;

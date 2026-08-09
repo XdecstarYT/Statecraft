@@ -191,6 +191,8 @@ export interface Country {
   name: string;
   regimeType: 'parliamentary' | 'presidential' | 'semi-presidential';
   legislature: Legislature;
+  /** 0..100 — national social/cultural cohesion; lower values feed higher secessionist risk. Defaults to 70 when omitted. See engine/systems/secession.ts. */
+  culturalCohesion?: number;
 }
 
 /** A static bias profile for a press outlet. See engine/systems/media.ts. */
@@ -466,6 +468,29 @@ export interface PollResult {
   trueValue: number;
 }
 
+export type ResolutionType = 'trade_pact' | 'human_rights' | 'climate_accord' | 'sanctions_regime';
+
+/** A pre-authored summit resolution template. See engine/systems/summit.ts. */
+export interface SummitResolutionTemplate {
+  type: ResolutionType;
+  title: string;
+  description: string;
+  stance: IdeologyPosition;
+  economyEffect: EconomyDelta;
+}
+
+/** A convened international summit resolution, active until the player casts a vote. See engine/systems/summit.ts. */
+export interface SummitResolution {
+  id: string;
+  type: ResolutionType;
+  title: string;
+  description: string;
+  stance: IdeologyPosition;
+  economyEffect: EconomyDelta;
+  attendeeIds: string[];
+  turnProposed: number;
+}
+
 export type UnrestStatus = 'protesting' | 'riot' | 'quelled';
 
 /** A nationwide civil-unrest event — see engine/systems/unrest.ts. */
@@ -562,6 +587,8 @@ export interface GameState {
   polls: PollResult[];
   /** politicianId -> abstracted personal wealth accrued from corrupt acts. See engine/systems/wealth.ts. */
   personalWealth: Record<string, number>;
+  /** At most one convened international summit resolution at a time, awaiting the player's vote. Null between summits. */
+  activeSummit: SummitResolution | null;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

@@ -37,6 +37,18 @@ describe('computeNationalGrievance', () => {
     expect(computeNationalGrievance({ ...BASE_ECONOMY, unemployment: 100 }, 0)).toBeLessThanOrEqual(1);
     expect(computeNationalGrievance({ ...BASE_ECONOMY, unemployment: 0 }, 100)).toBeGreaterThanOrEqual(0);
   });
+
+  it('rises as national cultural cohesion falls, all else equal', () => {
+    const cohesive = computeNationalGrievance(BASE_ECONOMY, 60, 90);
+    const fractured = computeNationalGrievance(BASE_ECONOMY, 60, 20);
+    expect(fractured).toBeGreaterThan(cohesive);
+  });
+
+  it('defaults to a moderate baseline cohesion when omitted', () => {
+    const withDefault = computeNationalGrievance(BASE_ECONOMY, 60);
+    const withExplicitDefault = computeNationalGrievance(BASE_ECONOMY, 60, 70);
+    expect(withDefault).toBe(withExplicitDefault);
+  });
 });
 
 describe('rollForNewMovement', () => {

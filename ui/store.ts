@@ -25,6 +25,7 @@ import {
   commissionPartyPollAction as engineCommissionPartyPoll,
   mergePartiesAction as engineMergeParties,
   rebrandPartyAction as engineRebrandParty,
+  castSummitVoteAction as engineCastSummitVote,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -107,6 +108,7 @@ import {
   type ImpeachmentOutcome,
   type PollResult,
   type PressTopic,
+  type SummitOutcome,
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
@@ -203,6 +205,7 @@ interface StatecraftStore {
   lastDebateResult: DebateResult | null;
   lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
   lastPollResult: PollResult | null;
+  lastSummitOutcome: SummitOutcome | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   newGameFromCustomNation: (
@@ -251,6 +254,7 @@ interface StatecraftStore {
   commissionPartyPollAction: (firmId: string, partyId: string) => void;
   mergePartiesAction: (absorbedPartyId: string, survivingPartyId: string) => void;
   rebrandPartyAction: (partyId: string, newName: string, newIdeology?: { economic: number; social: number }) => void;
+  castSummitVoteAction: (vote: 'yes' | 'no') => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -316,6 +320,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastDebateResult: null,
   lastEndorsementOutcome: null,
   lastPollResult: null,
+  lastSummitOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -793,6 +798,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const trimmed = newName.trim();
     if (!trimmed) return;
     set({ game: engineRebrandParty(game, partyId, trimmed, newIdeology) });
+  },
+
+  castSummitVoteAction: (vote) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineCastSummitVote(game, vote);
+    if (!outcome) return;
+    set({ game: state, lastSummitOutcome: outcome });
   },
 
   nextTurn: () => {

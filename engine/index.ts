@@ -107,6 +107,8 @@ import { ENDORSERS } from '../content/endorsements/endorsers';
 import { commissionApprovalPoll, commissionPartyPoll } from './systems/polling';
 import { POLLING_FIRMS } from '../content/polling/firms';
 import { BASE_PERSONAL_WEALTH, WEALTH_TIER_GAIN, rollForWealthScandal } from './systems/wealth';
+import { rollForSummit, resolveSummit, type SummitOutcome } from './systems/summit';
+import { SUMMIT_RESOLUTION_TEMPLATES } from '../content/summit/resolutions';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
 import {
@@ -181,6 +183,7 @@ export * from './systems/debate';
 export * from './systems/endorsements';
 export * from './systems/polling';
 export * from './systems/wealth';
+export * from './systems/summit';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -336,6 +339,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     pollingFirms: options.pollingFirms ?? POLLING_FIRMS,
     polls: [],
     personalWealth: Object.fromEntries(politicians.map((p) => [p.id, BASE_PERSONAL_WEALTH])),
+    activeSummit: null,
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -679,7 +683,7 @@ export function runLeadershipChallengeTurn(state: GameState, rng: SeededRng): Ga
  */
 export function runSecessionTurn(state: GameState, rng: SeededRng): GameState {
   const player = state.politicians.find((p) => p.isPlayer);
-  const grievance = computeNationalGrievance(state.economy, player?.approval.public ?? 50);
+  const grievance = computeNationalGrievance(state.economy, player?.approval.public ?? 50, state.country.culturalCohesion);
 
   const secessionistMovements = state.secessionistMovements.map((m) => advanceMovementSentiment(m, grievance));
 
@@ -747,6 +751,13 @@ export function runWealthScandalTurn(state: GameState, rng: SeededRng): GameStat
   return { ...state, scandals };
 }
 
+/** Rolls, once per turn, whether a new international summit convenes — only when none is already awaiting the player's vote. */
+export function runSummitTurn(state: GameState, rng: SeededRng): GameState {
+  if (state.activeSummit) return state;
+  const summit = rollForSummit(state.turn, SUMMIT_RESOLUTION_TEMPLATES, state.foreignCounterparts, rng);
+  return summit ? { ...state, activeSummit: summit } : state;
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -766,6 +777,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runSecessionTurn(next, rng);
   next = runUnrestTurn(next, rng);
   next = runWealthScandalTurn(next, rng);
+  next = runSummitTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier;
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1394,6 +1406,39 @@ export function disperseProtestAction(
   return {
     state: replaceProtest({ ...state, economy, politicians, rngState: rng.getState() }, protestId, result.protest),
     outcome: { success: result.success },
+  };
+}
+
+/**
+ * Casts the player's vote on the active summit resolution and resolves
+ * it immediately: every attendee votes yes with a probability equal to
+ * their real ideological alignment with the resolution's stance. A
+ * passed resolution applies its real economy effect. Every attendee who
+ * voted the same way as the player warms toward them; everyone who voted
+ * the opposite way cools — real, felt diplomatic consequences either way,
+ * not just a pass/fail flag.
+ */
+export function castSummitVoteAction(
+  state: GameState,
+  vote: 'yes' | 'no'
+): { state: GameState; outcome: SummitOutcome | null } {
+  const summit = state.activeSummit;
+  if (!summit) return { state, outcome: null };
+
+  const attendees = state.foreignCounterparts.filter((c) => summit.attendeeIds.includes(c.id));
+  const rng = SeededRng.fromState(state.rngState);
+  const outcome = resolveSummit(summit, vote, attendees, rng);
+
+  let foreignRelations = state.foreignRelations;
+  for (const v of outcome.votes) {
+    foreignRelations = adjustRelation(foreignRelations, v.counterpartId, v.vote === vote ? 5 : -3);
+  }
+
+  const economy = outcome.passed ? applyImmediateEffect(state.economy, summit.economyEffect) : state.economy;
+
+  return {
+    state: { ...state, activeSummit: null, foreignRelations, economy, rngState: rng.getState() },
+    outcome,
   };
 }
 
