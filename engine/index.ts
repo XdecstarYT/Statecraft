@@ -16,7 +16,7 @@ import type {
 } from './models/types';
 import type { Difficulty } from './difficulty';
 import { getDifficultySettings } from './difficulty';
-import { advanceEconomy, applyImmediateEffect } from './systems/economy';
+import { advanceEconomy, applyImmediateEffect, queuePolicyEffect } from './systems/economy';
 import {
   allocateSeatsDHondt,
   generateDistrictVotes,
@@ -32,6 +32,7 @@ import {
   advanceToCommittee,
   advanceToFloor,
   applyFloorVoteResult,
+  computeBillEconomyEffect,
   proposeBill,
   resolveFloorVote,
 } from './systems/legislative';
@@ -200,13 +201,18 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   });
 
   let relationships = state.relationships;
+  let economy = state.economy;
   bills = bills.map((bill) => {
     if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
     const result = resolveFloorVote(bill, politicians, relationships, state.favorBank, rng);
     if (player) {
       relationships = updateRelationshipsAfterVote(relationships, player.id, result.finalWhipCount);
     }
-    return applyFloorVoteResult(bill, result);
+    const resolvedBill = applyFloorVoteResult(bill, result);
+    if (resolvedBill.status === 'passed') {
+      economy = enactPassedBill({ ...state, economy }, resolvedBill).economy;
+    }
+    return resolvedBill;
   });
 
   const npcBillInFlight = bills.some(
@@ -228,7 +234,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     }
   }
 
-  return { ...state, bills, relationships };
+  return { ...state, bills, relationships, economy };
 }
 
 /**
@@ -330,6 +336,20 @@ export function applyBillOutcomeToApproval(
     p.id === sponsorId ? pushApprovalEvent(p, 'public', passed ? 15 : -15, 6) : p
   );
   return { ...state, politicians };
+}
+
+const BILL_ENACTMENT_DELAY_TURNS = 3;
+
+/**
+ * A passed bill is a law, and a law has real consequences: queues the
+ * bill's net fiscal direction as a delayed economy effect (same lag
+ * mechanism as any other policy) rather than leaving it as a cosmetic
+ * number. A no-op for anything that isn't 'passed'.
+ */
+export function enactPassedBill(state: GameState, bill: Bill): GameState {
+  if (bill.status !== 'passed') return state;
+  const effect = computeBillEconomyEffect(bill);
+  return { ...state, economy: queuePolicyEffect(state.economy, effect, BILL_ENACTMENT_DELAY_TURNS) };
 }
 
 export interface CorruptionAttemptOutcome {

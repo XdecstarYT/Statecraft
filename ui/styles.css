@@ -457,6 +457,119 @@ button:disabled {
   margin-bottom: 0.45rem;
 }
 
+/* ---------- Ghost buttons + form controls ---------- */
+
+.ghost-button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+}
+
+.ghost-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.custom-bill-form {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.custom-bill-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.custom-bill-form input[type='text'],
+.custom-bill-form input[type='number'] {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.custom-bill-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.provision-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.provision-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.provision-row input[type='text'] {
+  flex: 3;
+}
+
+.provision-row input[type='number'] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- Statute book / laws ---------- */
+
+.statute-book-header {
+  margin-top: 0.9rem;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 0.75rem;
+}
+
+.statute-book-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.law-row {
+  background: var(--success-soft);
+}
+
+.law-row .bill-summary {
+  background: transparent;
+  cursor: default;
+}
+
+.law-row .provision-list {
+  padding: 0 0.75rem 0.65rem;
+}
+
+.law-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--success-text);
+  border: 1px solid var(--success-text);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
 /* ---------- Tables ---------- */
 
 .whip-table-wrap {

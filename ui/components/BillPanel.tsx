@@ -7,14 +7,18 @@ export function BillPanel() {
   const proposeNewBill = useStatecraftStore((s) => s.proposeNewBill);
   const lastFloorResult = useStatecraftStore((s) => s.lastFloorResult);
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null);
+  const [showLaws, setShowLaws] = useState(false);
 
   if (!game) return null;
+
+  const pendingBills = game.bills.filter((b) => b.status !== 'passed');
+  const laws = game.bills.filter((b) => b.status === 'passed');
 
   return (
     <section className="panel">
       <div className="panel-header">
         <h2>Legislation</h2>
-        <button onClick={proposeNewBill}>Draft New Bill</button>
+        <button onClick={proposeNewBill}>Draft From Template</button>
       </div>
 
       {lastFloorResult && (
@@ -23,10 +27,12 @@ export function BillPanel() {
         </p>
       )}
 
-      {game.bills.length === 0 && <p className="muted">No bills yet. Draft one to get started.</p>}
+      <CustomBillForm />
+
+      {pendingBills.length === 0 && <p className="muted">No bills yet. Draft one to get started.</p>}
 
       <ul className="bill-list">
-        {game.bills.map((bill) => (
+        {pendingBills.map((bill) => (
           <BillRow
             key={bill.id}
             bill={bill}
@@ -35,7 +41,132 @@ export function BillPanel() {
           />
         ))}
       </ul>
+
+      <div className="panel-header statute-book-header">
+        <h3>Statute Book {laws.length > 0 && <span className="muted">({laws.length})</span>}</h3>
+        {laws.length > 0 && (
+          <button onClick={() => setShowLaws((v) => !v)}>{showLaws ? 'Hide' : 'Show'}</button>
+        )}
+      </div>
+      {laws.length === 0 && <p className="muted">No laws enacted yet.</p>}
+      {showLaws && laws.length > 0 && (
+        <ul className="bill-list law-list">
+          {laws.map((law) => {
+            const sponsor = game.politicians.find((p) => p.id === law.sponsorId);
+            return (
+              <li key={law.id} className="bill-row law-row">
+                <div className="bill-summary">
+                  <span className="bill-title">
+                    <span className="law-badge">LAW</span> {law.title}
+                    <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>
+                  </span>
+                </div>
+                <ul className="provision-list">
+                  {law.provisions.map((p) => (
+                    <li key={p.id}>
+                      {p.description} <span className="muted">({p.budgetImpact >= 0 ? '+' : ''}{p.budgetImpact})</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </section>
+  );
+}
+
+function CustomBillForm() {
+  const proposeCustomBill = useStatecraftStore((s) => s.proposeCustomBill);
+  const [open, setOpen] = useState(false);
+  const [title, setTitle] = useState('');
+  const [provisions, setProvisions] = useState([{ description: '', budgetImpact: 0 }]);
+
+  function reset() {
+    setTitle('');
+    setProvisions([{ description: '', budgetImpact: 0 }]);
+    setOpen(false);
+  }
+
+  function updateProvision(index: number, field: 'description' | 'budgetImpact', value: string) {
+    setProvisions((prev) =>
+      prev.map((p, i) =>
+        i === index
+          ? { ...p, [field]: field === 'budgetImpact' ? Number(value) || 0 : value }
+          : p
+      )
+    );
+  }
+
+  function removeProvision(index: number) {
+    setProvisions((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function submit() {
+    const valid = title.trim().length > 0 && provisions.some((p) => p.description.trim().length > 0);
+    if (!valid) return;
+    proposeCustomBill(title, provisions);
+    reset();
+  }
+
+  if (!open) {
+    return (
+      <button className="ghost-button" onClick={() => setOpen(true)}>
+        + Draft Custom Bill
+      </button>
+    );
+  }
+
+  return (
+    <div className="custom-bill-form">
+      <label>
+        Bill Title
+        <input
+          type="text"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. National Broadband Act"
+        />
+      </label>
+
+      <div className="provision-rows">
+        {provisions.map((p, i) => (
+          <div className="provision-row" key={i}>
+            <input
+              type="text"
+              value={p.description}
+              onChange={(e) => updateProvision(i, 'description', e.target.value)}
+              placeholder="Provision description"
+            />
+            <input
+              type="number"
+              value={p.budgetImpact}
+              onChange={(e) => updateProvision(i, 'budgetImpact', e.target.value)}
+              placeholder="Budget impact"
+            />
+            {provisions.length > 1 && (
+              <button className="ghost-button" onClick={() => removeProvision(i)}>
+                Remove
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="row-actions">
+        <button
+          className="ghost-button"
+          onClick={() => setProvisions((prev) => [...prev, { description: '', budgetImpact: 0 }])}
+        >
+          + Add Provision
+        </button>
+        <button onClick={submit}>Propose Bill</button>
+        <button className="ghost-button" onClick={reset}>
+          Cancel
+        </button>
+      </div>
+    </div>
   );
 }
 

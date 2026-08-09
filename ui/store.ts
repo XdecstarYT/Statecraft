@@ -10,6 +10,7 @@ import {
   breakTreaty,
   commitCorruption,
   createNewGame,
+  enactPassedBill,
   generateEventCoverage,
   generateNationalVotes,
   generateDistrictVotes,
@@ -95,6 +96,7 @@ interface StatecraftStore {
   saveGame: () => void;
   loadGame: () => boolean;
   proposeNewBill: () => void;
+  proposeCustomBill: (title: string, provisions: { description: string; budgetImpact: number }[]) => void;
   sendToCommittee: (billId: string) => void;
   sendToFloor: (billId: string) => void;
   setStance: (billId: string, politicianId: string, stance: WhipStance) => void;
@@ -181,6 +183,31 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ game: { ...game, bills: [...game.bills, bill], rngState: rng.getState() } });
   },
 
+  proposeCustomBill: (title, provisions) => {
+    const game = get().game;
+    if (!game) return;
+    const trimmedTitle = title.trim();
+    const cleanedProvisions = provisions
+      .map((p) => ({ description: p.description.trim(), budgetImpact: p.budgetImpact }))
+      .filter((p) => p.description.length > 0);
+    if (!trimmedTitle || cleanedProvisions.length === 0) return;
+    const sponsor = game.politicians.find((p) => p.isPlayer);
+    if (!sponsor) return;
+
+    const bill = proposeBill({
+      id: `bill-${game.turn}-${game.bills.length + 1}`,
+      title: trimmedTitle,
+      provisions: cleanedProvisions.map((p, i) => ({
+        id: `custom-${game.turn}-${game.bills.length + 1}-${i}`,
+        description: p.description,
+        budgetImpact: p.budgetImpact,
+      })),
+      sponsorId: sponsor.id,
+    });
+
+    set({ game: { ...game, bills: [...game.bills, bill] } });
+  },
+
   sendToCommittee: (billId) => {
     const game = get().game;
     if (!game) return;
@@ -219,6 +246,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
 
     let nextState: GameState = { ...game, bills, rngState: rng.getState() };
     nextState = applyBillOutcomeToApproval(nextState, sponsor.id, result.passed);
+    nextState = enactPassedBill(nextState, updatedBill);
     const { state: coveredState, coverage } = generateEventCoverage(
       nextState,
       result.passed ? 'bill_passed' : 'bill_failed',

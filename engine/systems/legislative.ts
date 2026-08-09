@@ -1,6 +1,6 @@
 import { SeededRng } from '../rng';
 import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance } from '../ideology';
-import type { Bill, Politician, WhipStance } from '../models/types';
+import type { Bill, EconomyDelta, Politician, WhipStance } from '../models/types';
 
 export function relationshipKey(idA: string, idB: string): string {
   return idA < idB ? `${idA}:${idB}` : `${idB}:${idA}`;
@@ -214,4 +214,21 @@ export function applyFloorVoteResult(bill: Bill, result: FloorVoteResult): Bill 
     status: result.passed ? 'passed' : 'failed',
     whipCount: result.finalWhipCount,
   };
+}
+
+/**
+ * Provisions carry a flavor-scale budgetImpact (thousands of currency
+ * units, roughly). This converts a bill's net fiscal direction into a real
+ * EconomyState-scale delta so passing a law actually moves the economy
+ * instead of just displaying numbers. Deficit spending gives a small
+ * short-term growth boost; net savings/austerity gives a small drag —
+ * no free lunches, per CLAUDE.md's economy spec.
+ */
+const BUDGET_IMPACT_SCALE = 10_000;
+
+export function computeBillEconomyEffect(bill: Bill): EconomyDelta {
+  const netImpact = bill.provisions.reduce((sum, p) => sum + p.budgetImpact, 0);
+  const budgetBalance = netImpact / BUDGET_IMPACT_SCALE;
+  const gdpGrowth = -netImpact / (BUDGET_IMPACT_SCALE * 4);
+  return { budgetBalance, gdpGrowth };
 }

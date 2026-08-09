@@ -5,6 +5,7 @@ import {
   advanceToCommittee,
   advanceToFloor,
   applyFloorVoteResult,
+  computeBillEconomyEffect,
   computeSupportProbability,
   proposeBill,
   relationshipKey,
@@ -221,5 +222,62 @@ describe('applyFloorVoteResult', () => {
     const result = { yes: 1, no: 3, passed: false, finalWhipCount: {} };
     const updated = applyFloorVoteResult(bill, result);
     expect(updated.status).toBe('failed');
+  });
+});
+
+describe('computeBillEconomyEffect', () => {
+  it('a net-spending bill worsens the budget balance and boosts growth a little', () => {
+    const bill = proposeBill({
+      id: 'b1',
+      title: 'Spending Bill',
+      sponsorId: 'sponsor',
+      provisions: [
+        { id: 'p1', description: 'Fund a program', budgetImpact: -4000 },
+        { id: 'p2', description: 'Fund another program', budgetImpact: -1000 },
+      ],
+    });
+    const effect = computeBillEconomyEffect(bill);
+    expect(effect.budgetBalance).toBeLessThan(0);
+    expect(effect.gdpGrowth).toBeGreaterThan(0);
+  });
+
+  it('a net-savings bill improves the budget balance and drags growth a little', () => {
+    const bill = proposeBill({
+      id: 'b2',
+      title: 'Austerity Bill',
+      sponsorId: 'sponsor',
+      provisions: [
+        { id: 'p1', description: 'Freeze spending', budgetImpact: 2000 },
+        { id: 'p2', description: 'Close a loophole', budgetImpact: 500 },
+      ],
+    });
+    const effect = computeBillEconomyEffect(bill);
+    expect(effect.budgetBalance).toBeGreaterThan(0);
+    expect(effect.gdpGrowth).toBeLessThan(0);
+  });
+
+  it('a net-zero bill has no economic effect', () => {
+    const bill = proposeBill({
+      id: 'b3',
+      title: 'Neutral Bill',
+      sponsorId: 'sponsor',
+      provisions: [
+        { id: 'p1', description: 'Spend', budgetImpact: -1000 },
+        { id: 'p2', description: 'Save', budgetImpact: 1000 },
+      ],
+    });
+    const effect = computeBillEconomyEffect(bill);
+    expect(effect.budgetBalance).toBeCloseTo(0, 10);
+    expect(effect.gdpGrowth).toBeCloseTo(0, 10);
+  });
+
+  it('scales proportionally with the magnitude of the net impact', () => {
+    const small = computeBillEconomyEffect(
+      proposeBill({ id: 'b4', title: 'Small', sponsorId: 's', provisions: [{ id: 'p1', description: 'x', budgetImpact: -1000 }] })
+    );
+    const large = computeBillEconomyEffect(
+      proposeBill({ id: 'b5', title: 'Large', sponsorId: 's', provisions: [{ id: 'p1', description: 'x', budgetImpact: -5000 }] })
+    );
+    expect(Math.abs(large.budgetBalance!)).toBeGreaterThan(Math.abs(small.budgetBalance!));
   });
 });

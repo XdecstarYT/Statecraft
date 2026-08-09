@@ -10,7 +10,7 @@ export interface BillTemplate {
   provisions: BillProvision[];
 }
 
-export const BILL_TEMPLATES: BillTemplate[] = [
+export const CURATED_TEMPLATES: BillTemplate[] = [
   {
     title: 'Public Infrastructure Investment Act',
     provisions: [
@@ -138,6 +138,111 @@ export const BILL_TEMPLATES: BillTemplate[] = [
     ],
   },
 ];
+
+/**
+ * Combinatorial generation of a large, varied bill pool from small
+ * pre-authored phrase pools — static content assembled once at module load
+ * via a fixed formula (no SeededRng, no runtime randomness, no live text
+ * generation), per CLAUDE.md's "pre-authored content assembled by code"
+ * guidance. 25 domains x 20 title suffixes = 500 generated templates.
+ */
+const DOMAINS = [
+  'Infrastructure',
+  'Healthcare',
+  'Education',
+  'Defense',
+  'Agriculture',
+  'Technology',
+  'Housing',
+  'Environment',
+  'Justice',
+  'Immigration',
+  'Labor',
+  'Trade',
+  'Energy',
+  'Public Safety',
+  'Transportation',
+  'Arts & Culture',
+  'Veterans Affairs',
+  'Consumer Protection',
+  'Telecommunications',
+  'Water Resources',
+  'Urban Development',
+  'Rural Development',
+  'Social Security',
+  'Banking & Finance',
+  'Space & Aerospace',
+];
+
+const TITLE_SUFFIXES = [
+  'Modernization Act',
+  'Investment Act',
+  'Reform Act',
+  'Improvement Act',
+  'Advancement Act',
+  'Protection Act',
+  'Access Act',
+  'Expansion Act',
+  'Resilience Act',
+  'Accountability Act',
+  'Innovation Act',
+  'Security Act',
+  'Fairness Act',
+  'Sustainability Act',
+  'Empowerment Act',
+  'Efficiency Act',
+  'Transparency Act',
+  'Revitalization Act',
+  'Opportunity Act',
+  'Stewardship Act',
+];
+
+const SPEND_PROVISIONS = [
+  'Fund a major expansion of {domain} programs',
+  'Provide new grants to strengthen {domain}',
+  'Hire additional staff to support {domain}',
+  'Launch a national initiative to modernize {domain}',
+  'Subsidize local projects tied to {domain}',
+];
+
+const SAVE_PROVISIONS = [
+  'Streamline {domain} administrative overhead',
+  'Close a loophole affecting {domain} spending',
+  'Consolidate overlapping {domain} agencies',
+  'Tighten eligibility rules for {domain} programs',
+  'Cut redundant {domain} contracts',
+];
+
+function generateDomainTemplates(): BillTemplate[] {
+  const templates: BillTemplate[] = [];
+  DOMAINS.forEach((domain, domainIndex) => {
+    const domainLower = domain.toLowerCase();
+    TITLE_SUFFIXES.forEach((suffix, suffixIndex) => {
+      const spendPhrase = SPEND_PROVISIONS[(domainIndex + suffixIndex) % SPEND_PROVISIONS.length];
+      const savePhrase = SAVE_PROVISIONS[(domainIndex + suffixIndex * 2) % SAVE_PROVISIONS.length];
+      const spendImpact = -(800 + ((suffixIndex * 137 + domainIndex * 53) % 4000));
+      const saveImpact = 100 + ((suffixIndex * 97 + domainIndex * 31) % 900);
+      templates.push({
+        title: `${domain} ${suffix}`,
+        provisions: [
+          {
+            id: `gen-${domainIndex}-${suffixIndex}-p1`,
+            description: spendPhrase.replace('{domain}', domainLower),
+            budgetImpact: spendImpact,
+          },
+          {
+            id: `gen-${domainIndex}-${suffixIndex}-p2`,
+            description: savePhrase.replace('{domain}', domainLower),
+            budgetImpact: saveImpact,
+          },
+        ],
+      });
+    });
+  });
+  return templates;
+}
+
+export const BILL_TEMPLATES: BillTemplate[] = [...CURATED_TEMPLATES, ...generateDomainTemplates()];
 
 export function pickBillTemplate(rng: SeededRng): BillTemplate {
   return rng.pick(BILL_TEMPLATES);
