@@ -4,6 +4,7 @@ import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
 import { hasSavedCareer, hasSavedGame } from './persistence';
 import { useStatecraftStore } from './store';
 import { CareerScreen } from './components/CareerScreen';
+import { NationBuilderPanel } from './components/NationBuilderPanel';
 import { Dashboard } from './components/Dashboard';
 import { BillPanel } from './components/BillPanel';
 import { ElectionPanel } from './components/ElectionPanel';
@@ -164,6 +165,8 @@ export default function App() {
             </div>
           )}
           {statusMessage && <p className="status-flash">{statusMessage}</p>}
+
+          <NationBuilderPanel onCreated={() => setForceStartScreen(false)} />
         </section>
       </main>
     );

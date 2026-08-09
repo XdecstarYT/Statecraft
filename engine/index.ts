@@ -126,6 +126,7 @@ export * from './systems/espionage';
 export * from './systems/coalition';
 export * from './systems/career';
 export * from './systems/partyManagement';
+export * from './systems/nationBuilder';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;

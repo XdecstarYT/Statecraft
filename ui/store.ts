@@ -12,9 +12,11 @@ import {
   applyForJob as applyForCareerJob,
   attemptLocalRace,
   attemptNationalNomination,
+  buildCustomNation,
   buildGraduationPayload,
   createCareer,
   doPartyWork,
+  validateCustomNation,
   foundNewPartyAction as engineFoundNewParty,
   foundOwnParty as foundCareerParty,
   graduateFromCareer,
@@ -84,6 +86,7 @@ import {
   type CoverageEvent,
   type CovertOperationOutcome,
   type CovertOperationType,
+  type CustomNationInput,
   type Difficulty,
   type EducationTrack,
   type ElectionOutcome,
@@ -95,6 +98,7 @@ import {
   type LocalRaceOutcome,
   type MilitaryInvestmentTier,
   type MmpResult,
+  type NationBuilderError,
   type NominationOutcome,
   type PartyActionOutcome,
   type PartyVoteShare,
@@ -162,6 +166,12 @@ interface StatecraftStore {
   lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
+  newGameFromCustomNation: (
+    input: CustomNationInput,
+    playerPartyIndex: number,
+    difficulty?: Difficulty,
+    seed?: number
+  ) => NationBuilderError[];
   saveGame: () => void;
   loadGame: () => boolean;
   startCareer: (name: string, countryOptionId: string, seed?: number) => void;
@@ -253,6 +263,31 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastLeadershipActionOutcome: null,
       lastCovertOperationOutcome: null,
     });
+  },
+
+  newGameFromCustomNation: (input, playerPartyIndex, difficulty = 'standard', seed = Math.floor(Math.random() * 1_000_000_000)) => {
+    const errors = validateCustomNation(input);
+    if (errors.length > 0) return errors;
+
+    const { country, parties } = buildCustomNation(input);
+    const index = Math.min(Math.max(playerPartyIndex, 0), parties.length - 1);
+    const game = createNewGame(seed, { difficulty, country, parties, playerPartyId: parties[index].id });
+    clearSavedCareer();
+    set({
+      game,
+      career: null,
+      economyHistory: [snapshotEconomy(game)],
+      lastElection: null,
+      lastFloorResult: null,
+      lastCoverage: [],
+      labResult: null,
+      lastCorruptionOutcome: null,
+      lastCampaignOutcome: null,
+      lastLobbyingOutcome: null,
+      lastLeadershipActionOutcome: null,
+      lastCovertOperationOutcome: null,
+    });
+    return [];
   },
 
   saveGame: () => {
