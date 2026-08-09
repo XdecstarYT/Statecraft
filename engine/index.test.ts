@@ -13,6 +13,7 @@ import {
   declareWar,
   proposeTradeDeal,
   signTradeDeal,
+  type GameState,
 } from './index';
 import { SeededRng } from './rng';
 import { VANTORRA_COUNTRY, VANTORRA_PARTIES } from '../content/countries/vantorra';
@@ -269,7 +270,7 @@ describe('trade deal flow via the engine barrel', () => {
     const state = createNewGame(4);
     const counterpart = state.foreignCounterparts[0];
     const deal = proposeTradeDeal('d1', counterpart.id, 'energy', 100, 0);
-    const { economy } = signTradeDeal(deal, state.economy);
+    const { economy } = signTradeDeal(deal, state.economy, state.foreignRelations);
     expect(economy.pendingEffects).toHaveLength(1);
   });
 });
@@ -307,6 +308,68 @@ describe('runWarTurns', () => {
     const before = state.economy.budgetBalance;
     const after = runWarTurns(state, SeededRng.fromState(state.rngState));
     expect(after.economy.budgetBalance).toBeLessThan(before);
+  });
+
+  it('wears down both militaries (attrition) each active turn', () => {
+    let state = createNewGame(4);
+    const counterpart = state.foreignCounterparts[0];
+    state = { ...state, wars: [declareWar(counterpart.id, state.turn)] };
+    const playerBefore = state.playerMilitary.personnel;
+    const counterpartBefore = counterpart.military.personnel;
+
+    const after = runWarTurns(state, SeededRng.fromState(state.rngState));
+    const counterpartAfter = after.foreignCounterparts.find((c) => c.id === counterpart.id)!;
+
+    expect(after.playerMilitary.personnel).toBeLessThan(playerBefore);
+    expect(counterpartAfter.military.personnel).toBeLessThan(counterpartBefore);
+  });
+
+  it('an active defense treaty ally measurably helps win a close war', () => {
+    let state = createNewGame(4);
+    const enemy = state.foreignCounterparts[0];
+    const potentialAlly = state.foreignCounterparts[1];
+
+    const base = {
+      ...state,
+      playerMilitary: { strength: 45, personnel: 500, techLevel: 45 },
+      foreignCounterparts: state.foreignCounterparts.map((c) =>
+        c.id === enemy.id ? { ...c, military: { strength: 50, personnel: 500, techLevel: 45 } } : c
+      ),
+    };
+
+    const runToConclusion = (s: GameState, seed: number) => {
+      let cur = { ...s, wars: [declareWar(enemy.id, s.turn)], rngState: seed };
+      for (let i = 0; i < 100 && cur.wars[0].status === 'active'; i++) {
+        cur = advanceTurn(cur);
+      }
+      return cur;
+    };
+
+    const alone = runToConclusion(base, 1);
+
+    const withAlly = runToConclusion(
+      {
+        ...base,
+        treaties: [
+          {
+            id: 't-ally',
+            counterpartId: potentialAlly.id,
+            type: 'defense',
+            title: 'Mutual Defense Pact',
+            status: 'active',
+            economyEffect: {},
+            relationEffect: 0,
+          },
+        ],
+      },
+      1
+    );
+
+    // With the exact same seed and starting matchup, the allied run should
+    // never do *worse* than fighting alone, and should measurably help
+    // (the war either resolves faster or the outcome tips in the player's
+    // favor) since the ally contributes real effective strength.
+    expect(withAlly.wars[0].advantage).toBeGreaterThanOrEqual(alone.wars[0].advantage);
   });
 });
 

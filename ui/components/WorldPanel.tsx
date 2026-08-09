@@ -22,6 +22,8 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
   const signTradeDealAction = useStatecraftStore((s) => s.signTradeDealAction);
   const setTariffAction = useStatecraftStore((s) => s.setTariffAction);
   const cancelTradeDealAction = useStatecraftStore((s) => s.cancelTradeDealAction);
+  const imposeEmbargoAction = useStatecraftStore((s) => s.imposeEmbargoAction);
+  const investInMilitaryAction = useStatecraftStore((s) => s.investInMilitaryAction);
 
   const [search, setSearch] = useState('');
   const [dealCommodity, setDealCommodity] = useState<CommodityType>('energy');
@@ -57,6 +59,26 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
+      </div>
+
+      <h4 className="subheading">Your Military</h4>
+      <div className="indicator-grid">
+        <div className="indicator">
+          <div className="indicator-label">Strength</div>
+          <div className="indicator-value">{game.playerMilitary.strength.toFixed(0)}</div>
+        </div>
+        <div className="indicator">
+          <div className="indicator-label">Personnel (k)</div>
+          <div className="indicator-value">{game.playerMilitary.personnel}</div>
+        </div>
+        <div className="indicator">
+          <div className="indicator-label">Tech Level</div>
+          <div className="indicator-value">{game.playerMilitary.techLevel.toFixed(0)}</div>
+        </div>
+      </div>
+      <div className="bill-actions">
+        <button onClick={() => investInMilitaryAction('modest')}>Invest (Modest)</button>
+        <button onClick={() => investInMilitaryAction('major')}>Invest (Major)</button>
       </div>
 
       <div className="nation-picker-wrap">
@@ -102,6 +124,9 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
           <div className="bill-actions">
             <button onClick={() => sendAidAction(selected.id)}>Send Aid</button>
             <button onClick={() => imposeSanctionsAction(selected.id)}>Sanction</button>
+            <button className="danger-button" onClick={() => imposeEmbargoAction(selected.id)}>
+              Embargo
+            </button>
             {TREATY_TEMPLATES.map((template, i) => (
               <button key={template.type} onClick={() => signTreatyAction(selected.id, i)}>
                 Sign {template.title}

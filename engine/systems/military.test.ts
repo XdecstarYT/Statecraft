@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import type { MilitaryProfile } from '../models/types';
 import {
+  applyWarAttrition,
   computeDeterrenceRatio,
   computeEffectiveStrength,
   computeWarResolutionRelationDelta,
   declareWar,
+  investInMilitary,
   resolveWarTurn,
 } from './military';
 
@@ -114,5 +116,104 @@ describe('computeWarResolutionRelationDelta', () => {
 
   it('is 0 for a still-active war', () => {
     expect(computeWarResolutionRelationDelta('active')).toBe(0);
+  });
+});
+
+describe('applyWarAttrition', () => {
+  it('reduces both personnel and strength', () => {
+    const before = profile(50, 50, 200);
+    const after = applyWarAttrition(before);
+    expect(after.personnel).toBeLessThan(before.personnel);
+    expect(after.strength).toBeLessThan(before.strength);
+  });
+
+  it('never decays personnel or strength below 1', () => {
+    const after = applyWarAttrition(profile(1, 50, 1));
+    expect(after.personnel).toBeGreaterThanOrEqual(1);
+    expect(after.strength).toBeGreaterThanOrEqual(1);
+  });
+
+  it('leaves tech level untouched', () => {
+    const after = applyWarAttrition(profile(50, 77, 200));
+    expect(after.techLevel).toBe(77);
+  });
+});
+
+describe('investInMilitary', () => {
+  it('grows strength, tech level, and personnel', () => {
+    const before = profile(40, 40, 100);
+    const { military } = investInMilitary(before, 'modest');
+    expect(military.strength).toBeGreaterThan(before.strength);
+    expect(military.techLevel).toBeGreaterThan(before.techLevel);
+    expect(military.personnel).toBeGreaterThan(before.personnel);
+  });
+
+  it('costs the budget immediately', () => {
+    const { economyEffect } = investInMilitary(profile(40, 40, 100), 'modest');
+    expect(economyEffect.budgetBalance).toBeLessThan(0);
+  });
+
+  it('a major investment costs more and gives more than a modest one', () => {
+    const before = profile(40, 40, 100);
+    const modest = investInMilitary(before, 'modest');
+    const major = investInMilitary(before, 'major');
+    expect(Math.abs(major.economyEffect.budgetBalance!)).toBeGreaterThan(Math.abs(modest.economyEffect.budgetBalance!));
+    expect(major.military.strength).toBeGreaterThan(modest.military.strength);
+  });
+
+  it('clamps strength and tech level to 100', () => {
+    const { military } = investInMilitary(profile(99, 99, 100), 'major');
+    expect(military.strength).toBeLessThanOrEqual(100);
+    expect(military.techLevel).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('resolveWarTurn with an ally bonus', () => {
+  it('a positive ally bonus improves the player\'s outcome over many turns', () => {
+    const seed = 55;
+    const player = profile(40, 40);
+    const counterpart = profile(45, 45);
+
+    let warAlone = declareWar('rival', 1);
+    const rngAlone = new SeededRng(seed);
+    let turn = 1;
+    while (warAlone.status === 'active' && turn < 300) {
+      turn++;
+      warAlone = resolveWarTurn(warAlone, player, counterpart, turn, rngAlone).war;
+    }
+
+    let warWithAlly = declareWar('rival', 1);
+    const rngAllied = new SeededRng(seed);
+    turn = 1;
+    while (warWithAlly.status === 'active' && turn < 300) {
+      turn++;
+      warWithAlly = resolveWarTurn(warWithAlly, player, counterpart, turn, rngAllied, 40).war;
+    }
+
+    expect(warWithAlly.advantage).toBeGreaterThan(warAlone.advantage);
+  });
+});
+
+describe('resolveWarTurn spoils scaling', () => {
+  it('winning against a much stronger counterpart yields a bigger economic swing than beating a weak one', () => {
+    const war = declareWar('rival', 1);
+    // Force a decisive win on turn 2 for both cases via extreme mismatches and a fixed seed.
+    const beatWeak = resolveWarTurn(
+      { ...war, advantage: 99 },
+      profile(90, 90),
+      profile(5, 5),
+      2,
+      new SeededRng(1)
+    );
+    const beatStrong = resolveWarTurn(
+      { ...war, advantage: 99 },
+      profile(90, 90),
+      profile(85, 85),
+      2,
+      new SeededRng(1)
+    );
+    expect(beatWeak.war.status).toBe('won');
+    expect(beatStrong.war.status).toBe('won');
+    expect(beatStrong.economyEffect.gdpGrowth!).toBeGreaterThan(beatWeak.economyEffect.gdpGrowth!);
   });
 });

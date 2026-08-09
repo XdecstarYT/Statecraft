@@ -9,6 +9,7 @@ import {
   advanceTurn,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
+  applyImmediateEffect,
   breakTreaty,
   cancelTradeDeal,
   commitCorruption,
@@ -24,7 +25,9 @@ import {
   getRunoffPair,
   holdPressInterview,
   holdRally,
+  imposeEmbargo,
   imposeSanctions,
+  investInMilitary,
   proposeBill,
   proposeTradeDeal,
   proposeTreaty,
@@ -51,6 +54,7 @@ import {
   type ElectionOutcome,
   type FloorVoteResult,
   type GameState,
+  type MilitaryInvestmentTier,
   type MmpResult,
   type PartyVoteShare,
   type ScandalResponse,
@@ -128,6 +132,8 @@ interface StatecraftStore {
   signTradeDealAction: (dealId: string) => void;
   setTariffAction: (dealId: string, tariff: number) => void;
   cancelTradeDealAction: (dealId: string) => void;
+  imposeEmbargoAction: (counterpartId: string) => void;
+  investInMilitaryAction: (tier: MilitaryInvestmentTier) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -479,9 +485,9 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const deal = game.tradeDeals.find((d) => d.id === dealId);
     if (!deal) return;
-    const { deal: signed, economy } = signTradeDeal(deal, game.economy);
+    const { deal: signed, economy, relations } = signTradeDeal(deal, game.economy, game.foreignRelations);
     const tradeDeals = game.tradeDeals.map((d) => (d.id === dealId ? signed : d));
-    set({ game: { ...game, tradeDeals, economy } });
+    set({ game: { ...game, tradeDeals, economy, foreignRelations: relations } });
   },
 
   setTariffAction: (dealId, tariff) => {
@@ -496,5 +502,25 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const tradeDeals = game.tradeDeals.map((d) => (d.id === dealId ? cancelTradeDeal(d) : d));
     set({ game: { ...game, tradeDeals } });
+  },
+
+  imposeEmbargoAction: (counterpartId) => {
+    const game = get().game;
+    if (!game) return;
+    const { tradeDeals, economy, relations } = imposeEmbargo(
+      counterpartId,
+      game.tradeDeals,
+      game.economy,
+      game.foreignRelations
+    );
+    set({ game: { ...game, tradeDeals, economy, foreignRelations: relations } });
+  },
+
+  investInMilitaryAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { military, economyEffect } = investInMilitary(game.playerMilitary, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, playerMilitary: military, economy } });
   },
 }));

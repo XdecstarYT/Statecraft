@@ -41,7 +41,12 @@ import { attemptCorruptionAction, computeScandalSeverity } from './systems/corru
 import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import { adjustRelation } from './systems/diplomacy';
-import { computeWarResolutionRelationDelta, resolveWarTurn } from './systems/military';
+import {
+  applyWarAttrition,
+  computeEffectiveStrength,
+  computeWarResolutionRelationDelta,
+  resolveWarTurn,
+} from './systems/military';
 import {
   applyNpcStances,
   computeAllPartyMomentum,
@@ -340,10 +345,31 @@ export function advanceTurn(state: GameState): GameState {
   return { ...next, rngState: rng.getState() };
 }
 
+const ALLY_STRENGTH_CONTRIBUTION = 0.35;
+
+/**
+ * Active defense-treaty partners chip in a fraction of their own effective
+ * military strength — a real, mechanical payoff for having allies, not
+ * just flavor. A partner who happens to be the war's own counterpart
+ * (shouldn't normally happen, but the state doesn't forbid it) contributes
+ * nothing.
+ */
+function computeAllyStrengthBonus(state: GameState, warCounterpartId: string): number {
+  let bonus = 0;
+  for (const treaty of state.treaties) {
+    if (treaty.type !== 'defense' || treaty.status !== 'active' || treaty.counterpartId === warCounterpartId) continue;
+    const ally = state.foreignCounterparts.find((c) => c.id === treaty.counterpartId);
+    if (ally) bonus += computeEffectiveStrength(ally.military) * ALLY_STRENGTH_CONTRIBUTION;
+  }
+  return bonus;
+}
+
 /**
  * Resolves one turn for every currently active war: compares the player's
- * military against each counterpart's, applies the resulting economic
- * effect, and — if a war concludes this turn — applies the relation
+ * military (plus any allied defense-treaty contribution) against each
+ * counterpart's, applies the resulting economic effect, wears both
+ * militaries down a little (attrition — a war leaves everyone weaker, win
+ * or lose), and — if a war concludes this turn — applies the relation
  * penalty for how it ended. A no-op when no war is active, so most turns
  * don't touch the rng for this at all.
  */
@@ -352,14 +378,21 @@ export function runWarTurns(state: GameState, rng: SeededRng): GameState {
 
   let economy = state.economy;
   let foreignRelations = state.foreignRelations;
+  let playerMilitary = state.playerMilitary;
+  let foreignCounterparts = state.foreignCounterparts;
 
   const wars = state.wars.map((war) => {
     if (war.status !== 'active') return war;
-    const counterpart = state.foreignCounterparts.find((c) => c.id === war.counterpartId);
+    const counterpart = foreignCounterparts.find((c) => c.id === war.counterpartId);
     if (!counterpart) return war;
 
-    const result = resolveWarTurn(war, state.playerMilitary, counterpart.military, state.turn, rng);
+    const allyBonus = computeAllyStrengthBonus(state, war.counterpartId);
+    const result = resolveWarTurn(war, playerMilitary, counterpart.military, state.turn, rng, allyBonus);
     economy = applyImmediateEffect(economy, result.economyEffect);
+    playerMilitary = applyWarAttrition(playerMilitary);
+    foreignCounterparts = foreignCounterparts.map((c) =>
+      c.id === counterpart.id ? { ...c, military: applyWarAttrition(c.military) } : c
+    );
     if (result.war.status !== 'active') {
       const delta = computeWarResolutionRelationDelta(result.war.status);
       foreignRelations = adjustRelation(foreignRelations, war.counterpartId, delta);
@@ -367,7 +400,7 @@ export function runWarTurns(state: GameState, rng: SeededRng): GameState {
     return result.war;
   });
 
-  return { ...state, wars, economy, foreignRelations };
+  return { ...state, wars, economy, foreignRelations, playerMilitary, foreignCounterparts };
 }
 
 /**

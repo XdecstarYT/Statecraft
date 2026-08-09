@@ -4,6 +4,8 @@ import {
   cancelTradeDeal,
   computeNationalTradeBalance,
   computeTradeDealEconomyEffect,
+  computeTradeDealRelationBonus,
+  imposeEmbargo,
   proposeTradeDeal,
   setTariff,
   signTradeDeal,
@@ -63,15 +65,56 @@ describe('computeTradeDealEconomyEffect', () => {
 describe('signTradeDeal', () => {
   it('moves the deal to "active" and queues its economic effect with a delay', () => {
     const deal = proposeTradeDeal('d1', 'rival', 'energy', 100, 0);
-    const { deal: signed, economy } = signTradeDeal(deal, BASE_ECONOMY);
+    const { deal: signed, economy } = signTradeDeal(deal, BASE_ECONOMY, {});
     expect(signed.status).toBe('active');
     expect(economy.pendingEffects).toHaveLength(1);
     expect(economy.budgetBalance).toBe(BASE_ECONOMY.budgetBalance);
   });
 
+  it('bumps relations with the counterpart immediately on signing', () => {
+    const deal = proposeTradeDeal('d1', 'rival', 'energy', 100, 0);
+    const { relations } = signTradeDeal(deal, BASE_ECONOMY, {});
+    expect(relations['rival']).toBeGreaterThan(0);
+  });
+
   it('throws if the deal is not in "proposed" status', () => {
     const deal = { ...proposeTradeDeal('d1', 'rival', 'energy', 100, 0), status: 'active' as const };
-    expect(() => signTradeDeal(deal, BASE_ECONOMY)).toThrow();
+    expect(() => signTradeDeal(deal, BASE_ECONOMY, {})).toThrow();
+  });
+});
+
+describe('computeTradeDealRelationBonus', () => {
+  it('is bigger for a larger-volume deal', () => {
+    const small = computeTradeDealRelationBonus(proposeTradeDeal('d1', 'rival', 'energy', 10, 0));
+    const large = computeTradeDealRelationBonus(proposeTradeDeal('d2', 'rival', 'energy', 1000, 0));
+    expect(large).toBeGreaterThan(small);
+  });
+
+  it('is capped so no single deal dominates the relationship', () => {
+    const huge = computeTradeDealRelationBonus(proposeTradeDeal('d1', 'rival', 'energy', 1_000_000, 0));
+    expect(huge).toBeLessThanOrEqual(8);
+  });
+
+  it('treats exports and imports of the same magnitude the same', () => {
+    const importBonus = computeTradeDealRelationBonus(proposeTradeDeal('d1', 'rival', 'energy', 200, 0));
+    const exportBonus = computeTradeDealRelationBonus(proposeTradeDeal('d2', 'rival', 'energy', -200, 0));
+    expect(importBonus).toBe(exportBonus);
+  });
+});
+
+describe('imposeEmbargo', () => {
+  it('cancels every deal with the target, active or proposed, and leaves others untouched', () => {
+    const targetDeal = proposeTradeDeal('d1', 'target', 'energy', 100, 0);
+    const otherDeal = { ...proposeTradeDeal('d2', 'other', 'food', 50, 0), status: 'active' as const };
+    const { tradeDeals } = imposeEmbargo('target', [targetDeal, otherDeal], BASE_ECONOMY, {});
+    expect(tradeDeals.find((d) => d.id === 'd1')!.status).toBe('cancelled');
+    expect(tradeDeals.find((d) => d.id === 'd2')!.status).toBe('active');
+  });
+
+  it('costs both relations and the economy immediately', () => {
+    const { relations, economy } = imposeEmbargo('target', [], BASE_ECONOMY, {});
+    expect(relations['target']).toBeLessThan(0);
+    expect(economy.budgetBalance).toBeLessThan(BASE_ECONOMY.budgetBalance);
   });
 });
 

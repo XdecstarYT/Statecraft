@@ -1,3 +1,4 @@
+import { clamp } from '../ideology';
 import type { SeededRng } from '../rng';
 import type { EconomyDelta, MilitaryProfile, War, WarStatus } from '../models/types';
 
@@ -8,6 +9,59 @@ import type { EconomyDelta, MilitaryProfile, War, WarStatus } from '../models/ty
  */
 export function computeEffectiveStrength(profile: MilitaryProfile): number {
   return profile.strength * (0.5 + profile.techLevel / 200);
+}
+
+const ATTRITION_PERSONNEL_RATE = 0.02;
+const ATTRITION_STRENGTH_RATE = 0.01;
+
+/**
+ * A real, lasting cost of staying at war: every active turn wears a
+ * military down a little — personnel and headline strength both decay —
+ * so a long war leaves both sides weaker even for the winner, not just
+ * poorer. Never decays below a token minimum.
+ */
+export function applyWarAttrition(military: MilitaryProfile): MilitaryProfile {
+  return {
+    ...military,
+    personnel: Math.max(1, Math.round(military.personnel * (1 - ATTRITION_PERSONNEL_RATE))),
+    strength: Math.max(1, military.strength * (1 - ATTRITION_STRENGTH_RATE)),
+  };
+}
+
+export type MilitaryInvestmentTier = 'modest' | 'major';
+
+export interface MilitaryInvestmentConfig {
+  budgetCost: number;
+  strengthGain: number;
+  techGain: number;
+  personnelGain: number;
+}
+
+/**
+ * A bigger commitment buys more, at a proportionally bigger budget cost —
+ * no tier is simply "better," they trade differently against the budget.
+ */
+export const MILITARY_INVESTMENT_TIERS: Record<MilitaryInvestmentTier, MilitaryInvestmentConfig> = {
+  modest: { budgetCost: -0.3, strengthGain: 2, techGain: 1, personnelGain: 15 },
+  major: { budgetCost: -0.9, strengthGain: 6, techGain: 3, personnelGain: 40 },
+};
+
+export interface MilitaryInvestmentResult {
+  military: MilitaryProfile;
+  economyEffect: EconomyDelta;
+}
+
+/** Grows the player's own military at a real, immediate budget cost — the only way strength or tech level rises. */
+export function investInMilitary(military: MilitaryProfile, tier: MilitaryInvestmentTier): MilitaryInvestmentResult {
+  const config = MILITARY_INVESTMENT_TIERS[tier];
+  return {
+    military: {
+      strength: clamp(military.strength + config.strengthGain, 0, 100),
+      techLevel: clamp(military.techLevel + config.techGain, 0, 100),
+      personnel: military.personnel + config.personnelGain,
+    },
+    economyEffect: { budgetBalance: config.budgetCost },
+  };
 }
 
 /** Player-strength / counterpart-strength — >1 favors the player, <1 favors the counterpart. */
@@ -32,23 +86,28 @@ export interface WarTurnResult {
 }
 
 /**
- * Resolves one turn of an active war: compares effective strength with
- * seeded noise and accumulates a running advantage. The war concludes
- * (won/lost) once one side's edge becomes decisive, or is called a
- * stalemate if it drags on too long without a decisive edge either way.
- * Every active turn costs the budget regardless of how the war is going —
- * wars are never free, win or lose.
+ * Resolves one turn of an active war: compares effective strength (plus
+ * any allyStrengthBonus contributed by active defense-treaty partners)
+ * with seeded noise, and accumulates a running advantage. The war
+ * concludes (won/lost) once one side's edge becomes decisive, or is
+ * called a stalemate if it drags on too long without a decisive edge
+ * either way. Every active turn costs the budget regardless of how the
+ * war is going — wars are never free, win or lose — and a conclusive
+ * outcome's economic swing scales with how lopsided the matchup was:
+ * beating a much stronger foe pays off bigger, losing despite being the
+ * stronger side costs more.
  */
 export function resolveWarTurn(
   war: War,
   playerMilitary: MilitaryProfile,
   counterpartMilitary: MilitaryProfile,
   currentTurn: number,
-  rng: SeededRng
+  rng: SeededRng,
+  allyStrengthBonus = 0
 ): WarTurnResult {
   if (war.status !== 'active') return { war, economyEffect: {} };
 
-  const playerEdge = computeEffectiveStrength(playerMilitary);
+  const playerEdge = computeEffectiveStrength(playerMilitary) + allyStrengthBonus;
   const counterpartEdge = computeEffectiveStrength(counterpartMilitary);
   const noise = (rng.next() - 0.5) * NOISE_RANGE;
   const turnAdvantage = (playerEdge - counterpartEdge) / 10 + noise;
@@ -72,9 +131,15 @@ export function resolveWarTurn(
   const nextWar: War = { ...war, advantage, status, ...(endTurn !== undefined ? { endTurn } : {}) };
 
   let economyEffect: EconomyDelta = { budgetBalance: -WAR_UPKEEP_COST };
-  if (status === 'won') economyEffect = { budgetBalance: -WAR_UPKEEP_COST + 0.4, gdpGrowth: 0.1 };
-  else if (status === 'lost') economyEffect = { budgetBalance: -WAR_UPKEEP_COST - 0.8, gdpGrowth: -0.5 };
-  else if (status === 'stalemate') economyEffect = { budgetBalance: -WAR_UPKEEP_COST - 0.3 };
+  if (status === 'won') {
+    const spoilsFactor = clamp(counterpartEdge / Math.max(1, playerEdge), 0.4, 2.5);
+    economyEffect = { budgetBalance: -WAR_UPKEEP_COST + 0.4 * spoilsFactor, gdpGrowth: 0.1 * spoilsFactor };
+  } else if (status === 'lost') {
+    const humiliationFactor = clamp(playerEdge / Math.max(1, counterpartEdge), 0.4, 2.5);
+    economyEffect = { budgetBalance: -WAR_UPKEEP_COST - 0.8 * humiliationFactor, gdpGrowth: -0.5 * humiliationFactor };
+  } else if (status === 'stalemate') {
+    economyEffect = { budgetBalance: -WAR_UPKEEP_COST - 0.3 };
+  }
 
   return { war: nextWar, economyEffect };
 }

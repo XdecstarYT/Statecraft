@@ -1,5 +1,6 @@
 import { clamp } from '../ideology';
-import { queuePolicyEffect } from './economy';
+import { applyImmediateEffect, queuePolicyEffect } from './economy';
+import { adjustRelation } from './diplomacy';
 import type { CommodityType, EconomyDelta, EconomyState, TradeDeal, TradeProfile } from '../models/types';
 
 export const TRADE_DEAL_SIGNING_DELAY_TURNS = 2;
@@ -55,16 +56,31 @@ function assertStatus(deal: TradeDeal, expected: TradeDeal['status']) {
   }
 }
 
-/** Signing queues the deal's economic effect with a short delay — a trade deal doesn't move GDP the week it's inked. */
+const RELATION_BONUS_PER_UNIT_VOLUME = 0.05;
+const MAX_SIGNING_RELATION_BONUS = 8;
+
+/** Bigger deals build more goodwill on signing, capped so no single deal dominates the relationship. */
+export function computeTradeDealRelationBonus(deal: TradeDeal): number {
+  return clamp(Math.abs(deal.volume) * RELATION_BONUS_PER_UNIT_VOLUME, 0, MAX_SIGNING_RELATION_BONUS);
+}
+
+/**
+ * Signing queues the deal's economic effect with a short delay — a trade
+ * deal doesn't move GDP the week it's inked — and gives relations an
+ * immediate, deal-size-scaled bump: a real economic partnership is itself
+ * a form of goodwill, not just an economic lever.
+ */
 export function signTradeDeal(
   deal: TradeDeal,
-  economy: EconomyState
-): { deal: TradeDeal; economy: EconomyState } {
+  economy: EconomyState,
+  relations: Record<string, number>
+): { deal: TradeDeal; economy: EconomyState; relations: Record<string, number> } {
   assertStatus(deal, 'proposed');
   const effect = computeTradeDealEconomyEffect(deal);
   return {
     deal: { ...deal, status: 'active' },
     economy: queuePolicyEffect(economy, effect, TRADE_DEAL_SIGNING_DELAY_TURNS),
+    relations: adjustRelation(relations, deal.counterpartId, computeTradeDealRelationBonus(deal)),
   };
 }
 
@@ -76,6 +92,27 @@ export function setTariff(deal: TradeDeal, tariff: number): TradeDeal {
 export function cancelTradeDeal(deal: TradeDeal): TradeDeal {
   if (deal.status === 'cancelled') return deal;
   return { ...deal, status: 'cancelled' };
+}
+
+export const EMBARGO_RELATION_PENALTY = -35;
+export const EMBARGO_ECONOMY_EFFECT: EconomyDelta = { budgetBalance: -0.2, gdpGrowth: -0.1 };
+
+/**
+ * A sharper break than a plain sanction: cancels every deal (proposed or
+ * active) with the target and costs both relations and the economy
+ * immediately — severing real trade ties, not just posturing.
+ */
+export function imposeEmbargo(
+  counterpartId: string,
+  tradeDeals: TradeDeal[],
+  economy: EconomyState,
+  relations: Record<string, number>
+): { tradeDeals: TradeDeal[]; economy: EconomyState; relations: Record<string, number> } {
+  return {
+    tradeDeals: tradeDeals.map((d) => (d.counterpartId === counterpartId ? cancelTradeDeal(d) : d)),
+    economy: applyImmediateEffect(economy, EMBARGO_ECONOMY_EFFECT),
+    relations: adjustRelation(relations, counterpartId, EMBARGO_RELATION_PENALTY),
+  };
 }
 
 /** production - consumption per commodity: positive means the country has a surplus to export, negative a deficit to import. */
