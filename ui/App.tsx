@@ -15,15 +15,16 @@ import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
 
-const NAV_SECTIONS = [
-  { id: 'section-dashboard', label: 'Dashboard' },
-  { id: 'section-legislature', label: 'Legislature' },
-  { id: 'section-opinion', label: 'Opinion & Media' },
-  { id: 'section-power', label: 'Power & Diplomacy' },
-  { id: 'section-events', label: 'Events' },
-  { id: 'section-lab', label: 'Electoral Lab' },
-  { id: 'section-legacy', label: 'Legacy' },
-];
+const TABS = [
+  { id: 'legislature', label: 'Legislature' },
+  { id: 'opinion', label: 'Opinion & Campaign' },
+  { id: 'power', label: 'Power & Diplomacy' },
+  { id: 'events', label: 'Events' },
+  { id: 'lab', label: 'Electoral Lab' },
+  { id: 'legacy', label: 'Legacy' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
 
 export default function App() {
   const game = useStatecraftStore((s) => s.game);
@@ -31,6 +32,7 @@ export default function App() {
   const saveGame = useStatecraftStore((s) => s.saveGame);
   const loadGame = useStatecraftStore((s) => s.loadGame);
 
+  const [activeTab, setActiveTab] = useState<TabId>('legislature');
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
   const [statusMessage, setStatusMessage] = useState('');
@@ -93,44 +95,44 @@ export default function App() {
 
       <OnboardingBanner />
 
-      <nav className="app-nav">
-        {NAV_SECTIONS.map((section) => (
-          <a key={section.id} href={`#${section.id}`}>
-            {section.label}
-          </a>
+      <Dashboard />
+
+      <nav className="app-tabs">
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            className={activeTab === tab.id ? 'active' : ''}
+            onClick={() => setActiveTab(tab.id)}
+          >
+            {tab.label}
+          </button>
         ))}
       </nav>
 
-      <div id="section-dashboard">
-        <Dashboard />
-      </div>
+      {activeTab === 'legislature' && (
+        <div className="panel-columns">
+          <BillPanel />
+          <ElectionPanel />
+        </div>
+      )}
 
-      <div id="section-legislature" className="panel-columns">
-        <BillPanel />
-        <ElectionPanel />
-      </div>
+      {activeTab === 'opinion' && (
+        <div className="panel-columns">
+          <OpinionPanel />
+          <MediaPanel />
+        </div>
+      )}
 
-      <div id="section-opinion" className="panel-columns">
-        <OpinionPanel />
-        <MediaPanel />
-      </div>
+      {activeTab === 'power' && (
+        <div className="panel-columns">
+          <CorruptionPanel />
+          <DiplomacyPanel />
+        </div>
+      )}
 
-      <div id="section-power" className="panel-columns">
-        <CorruptionPanel />
-        <DiplomacyPanel />
-      </div>
-
-      <div id="section-events">
-        <EventLogPanel />
-      </div>
-
-      <div id="section-lab">
-        <ElectoralLabPanel />
-      </div>
-
-      <div id="section-legacy">
-        <LegacyPanel />
-      </div>
+      {activeTab === 'events' && <EventLogPanel />}
+      {activeTab === 'lab' && <ElectoralLabPanel />}
+      {activeTab === 'legacy' && <LegacyPanel />}
     </main>
   );
 }

@@ -7,6 +7,8 @@ import {
   respondToScandal,
   proposeTreaty,
   signTreaty,
+  holdPressInterview,
+  holdRally,
 } from './index';
 import { VANTORRA_COUNTRY, VANTORRA_PARTIES } from '../content/countries/vantorra';
 
@@ -60,6 +62,32 @@ describe('advanceTurn', () => {
       return state;
     };
     expect(runOnce(42)).toEqual(runOnce(42));
+  });
+});
+
+describe('holdPressInterview / holdRally', () => {
+  it('pushes a decaying approval event onto the player rather than an instant change', () => {
+    const state = createNewGame(8);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: next, outcome } = holdPressInterview(state);
+    const playerAfter = next.politicians.find((p) => p.id === player.id)!;
+    expect(playerAfter.approvalEvents.length).toBeGreaterThan(0);
+    expect(playerAfter.approval.public).toBe(player.approval.public); // not applied until advanceTurn
+    expect(['strong', 'solid', 'gaffe']).toContain(outcome.outcome);
+  });
+
+  it('holdRally affects base approval, not public', () => {
+    const state = createNewGame(8);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: next } = holdRally(state);
+    const playerAfter = next.politicians.find((p) => p.id === player.id)!;
+    expect(playerAfter.approvalEvents.some((e) => e.audience === 'base')).toBe(true);
+    expect(playerAfter.approvalEvents.some((e) => e.audience === 'public')).toBe(false);
+  });
+
+  it('is deterministic for the same starting state', () => {
+    const state = createNewGame(8);
+    expect(holdPressInterview(state).outcome).toEqual(holdPressInterview(state).outcome);
   });
 });
 

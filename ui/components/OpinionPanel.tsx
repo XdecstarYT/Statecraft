@@ -1,8 +1,17 @@
 import { useStatecraftStore } from '../store';
 
+const OUTCOME_LABEL: Record<string, string> = {
+  strong: 'Strong reception',
+  solid: 'Solid reception',
+  gaffe: 'Gaffe!',
+};
+
 export function OpinionPanel() {
   const game = useStatecraftStore((s) => s.game);
   const giveSpeech = useStatecraftStore((s) => s.giveSpeech);
+  const holdPressInterviewAction = useStatecraftStore((s) => s.holdPressInterviewAction);
+  const holdRallyAction = useStatecraftStore((s) => s.holdRallyAction);
+  const lastCampaignOutcome = useStatecraftStore((s) => s.lastCampaignOutcome);
 
   if (!game) return null;
 
@@ -11,8 +20,7 @@ export function OpinionPanel() {
   return (
     <section className="panel">
       <div className="panel-header">
-        <h2>Public Opinion</h2>
-        <button onClick={giveSpeech}>Give a Rousing Speech</button>
+        <h2>Public Opinion &amp; Campaign</h2>
       </div>
 
       {player && (
@@ -23,6 +31,22 @@ export function OpinionPanel() {
         </div>
       )}
 
+      <p className="subheading">Campaign Actions</p>
+      <div className="bill-actions">
+        <button onClick={giveSpeech}>Give a Rousing Speech</button>
+        <button onClick={holdPressInterviewAction}>Hold a Press Interview</button>
+        <button onClick={holdRallyAction}>Hold a Rally</button>
+      </div>
+
+      {lastCampaignOutcome && (
+        <p className={lastCampaignOutcome.outcome === 'gaffe' ? 'result-fail' : 'result-pass'}>
+          {lastCampaignOutcome.action === 'interview' ? 'Press interview' : 'Rally'} —{' '}
+          {OUTCOME_LABEL[lastCampaignOutcome.outcome]} ({lastCampaignOutcome.approvalImpact >= 0 ? '+' : ''}
+          {lastCampaignOutcome.approvalImpact} approval, phasing in)
+        </p>
+      )}
+
+      <p className="subheading">Voter Blocs</p>
       <div className="whip-table-wrap">
         <table className="whip-table">
           <thead>

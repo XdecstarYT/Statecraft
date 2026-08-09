@@ -17,6 +17,8 @@ import {
   generateRankedBallots,
   getMajorityWinner,
   getRunoffPair,
+  holdPressInterview,
+  holdRally,
   imposeSanctions,
   proposeBill,
   proposeTreaty,
@@ -32,6 +34,7 @@ import {
   sendAid,
   setWhipStance,
   signTreaty,
+  type CampaignActionOutcome,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
   type CoverageEvent,
@@ -86,6 +89,7 @@ interface StatecraftStore {
   lastCoverage: CoverageEvent[];
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
+  lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
@@ -98,6 +102,8 @@ interface StatecraftStore {
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
+  holdPressInterviewAction: () => void;
+  holdRallyAction: () => void;
   nextTurn: () => void;
   runElection: () => void;
   runElectoralLab: (system: LabResult['system']) => void;
@@ -117,6 +123,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCoverage: [],
   labResult: null,
   lastCorruptionOutcome: null,
+  lastCampaignOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
     const option =
@@ -130,6 +137,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCoverage: [],
       labResult: null,
       lastCorruptionOutcome: null,
+      lastCampaignOutcome: null,
     });
   },
 
@@ -150,6 +158,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCoverage: [],
       labResult: null,
       lastCorruptionOutcome: null,
+      lastCampaignOutcome: null,
     });
     return true;
   },
@@ -252,6 +261,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       p.id === player.id ? pushApprovalEvent(p, 'public', 20, 5) : p
     );
     set({ game: { ...game, politicians } });
+  },
+
+  holdPressInterviewAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = holdPressInterview(game);
+    set({ game: state, lastCampaignOutcome: { ...outcome, action: 'interview' } });
+  },
+
+  holdRallyAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = holdRally(game);
+    set({ game: state, lastCampaignOutcome: { ...outcome, action: 'rally' } });
   },
 
   nextTurn: () => {

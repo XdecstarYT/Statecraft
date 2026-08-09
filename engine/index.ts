@@ -36,6 +36,7 @@ import {
   resolveFloorVote,
 } from './systems/legislative';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
+import { attemptPressInterview, attemptRally, type CampaignActionOutcome } from './systems/campaign';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
 import {
   applyNpcStances,
@@ -69,6 +70,7 @@ export * from './systems/diplomacy';
 export * from './systems/events';
 export * from './systems/legacy';
 export * from './systems/npc';
+export * from './systems/campaign';
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -253,6 +255,41 @@ export function advanceTurn(state: GameState): GameState {
   }
 
   return { ...next, rngState: rng.getState() };
+}
+
+/**
+ * Holds a press interview for the player: charisma + media savvy driven,
+ * with a real chance of a gaffe. Pushes a decaying public-approval event
+ * rather than an instant jump.
+ */
+export function holdPressInterview(state: GameState): { state: GameState; outcome: CampaignActionOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) {
+    return { state, outcome: { outcome: 'solid', approvalImpact: 0 } };
+  }
+  const outcome = attemptPressInterview(player, rng);
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', outcome.approvalImpact, 4) : p
+  );
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * Holds a campaign rally for the player: charisma + network driven, moving
+ * the party base's approval rather than the general public's.
+ */
+export function holdRally(state: GameState): { state: GameState; outcome: CampaignActionOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) {
+    return { state, outcome: { outcome: 'solid', approvalImpact: 0 } };
+  }
+  const outcome = attemptRally(player, rng);
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'base', outcome.approvalImpact, 4) : p
+  );
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
 }
 
 /**

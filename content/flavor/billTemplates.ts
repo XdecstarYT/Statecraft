@@ -95,6 +95,48 @@ export const BILL_TEMPLATES: BillTemplate[] = [
       { id: 'p2', description: 'Digitize court filing statewide', budgetImpact: -500 },
     ],
   },
+  {
+    title: 'Minimum Wage Adjustment Act',
+    provisions: [
+      { id: 'p1', description: 'Raise the national minimum wage', budgetImpact: -300 },
+      { id: 'p2', description: 'Phase in the increase over three years', budgetImpact: 0 },
+    ],
+  },
+  {
+    title: 'National Defense Readiness Act',
+    provisions: [
+      { id: 'p1', description: 'Modernize aging military equipment', budgetImpact: -4700 },
+      { id: 'p2', description: 'Increase reservist training funding', budgetImpact: -800 },
+    ],
+  },
+  {
+    title: 'Consumer Protection Reform Act',
+    provisions: [
+      { id: 'p1', description: 'Ban hidden fees in consumer contracts', budgetImpact: -150 },
+      { id: 'p2', description: 'Fund a new consumer complaints bureau', budgetImpact: -500 },
+    ],
+  },
+  {
+    title: 'Immigration Modernization Act',
+    provisions: [
+      { id: 'p1', description: 'Clear the visa-processing backlog', budgetImpact: -1600 },
+      { id: 'p2', description: 'Expand skilled-worker visa quotas', budgetImpact: 200 },
+    ],
+  },
+  {
+    title: 'Technology Sector Growth Act',
+    provisions: [
+      { id: 'p1', description: 'Offer tax credits for startup R&D', budgetImpact: -2100 },
+      { id: 'p2', description: 'Fund public broadband expansion', budgetImpact: -1900 },
+    ],
+  },
+  {
+    title: 'Clean Water Infrastructure Act',
+    provisions: [
+      { id: 'p1', description: 'Replace aging lead pipe networks', budgetImpact: -3600 },
+      { id: 'p2', description: 'Tighten industrial discharge standards', budgetImpact: -200 },
+    ],
+  },
 ];
 
 export function pickBillTemplate(rng: SeededRng): BillTemplate {
