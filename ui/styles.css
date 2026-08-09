@@ -473,6 +473,111 @@ button:disabled {
   border-color: var(--accent);
 }
 
+.danger-button {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  border: 1px solid var(--danger);
+}
+
+.danger-button:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---------- World panel ---------- */
+
+.panel-header input[type='text'] {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  min-width: 0;
+  flex: 1;
+  max-width: 260px;
+}
+
+.nation-picker-wrap {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.85rem;
+}
+
+.nation-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.nation-picker button {
+  width: 100%;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.nation-picker button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nation-picker button.active {
+  background: var(--accent-soft, var(--bg-hover));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nation-detail {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.nation-detail h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1rem;
+}
+
+/* ---------- Globe ---------- */
+
+.globe-panel .panel-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.globe-panel .panel-header span.muted {
+  font-size: 0.72rem;
+}
+
+.globe-container {
+  width: 100%;
+  height: 420px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: grab;
+}
+
+.globe-container:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 900px) {
+  .globe-container {
+    height: 300px;
+  }
+}
+
 .custom-bill-form {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
@@ -675,12 +780,19 @@ button:disabled {
 }
 
 .scandal-item.status-resolved,
-.scandal-item.status-active {
+.scandal-item.status-active,
+.scandal-item.status-won {
   border-left-color: var(--success);
 }
 
-.scandal-item.status-broken {
+.scandal-item.status-broken,
+.scandal-item.status-lost,
+.scandal-item.status-cancelled {
   border-left-color: var(--danger);
+}
+
+.scandal-item.status-stalemate {
+  border-left-color: var(--text-muted);
 }
 
 /* ---------- Press coverage / event log ---------- */

@@ -10,7 +10,7 @@ import { OpinionPanel } from './components/OpinionPanel';
 import { MediaPanel } from './components/MediaPanel';
 import { ElectoralLabPanel } from './components/ElectoralLabPanel';
 import { CorruptionPanel } from './components/CorruptionPanel';
-import { DiplomacyPanel } from './components/DiplomacyPanel';
+import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
@@ -18,7 +18,8 @@ import { OnboardingBanner } from './components/OnboardingBanner';
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
   { id: 'opinion', label: 'Opinion & Campaign' },
-  { id: 'power', label: 'Power & Diplomacy' },
+  { id: 'power', label: 'Power' },
+  { id: 'world', label: 'World' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
   { id: 'legacy', label: 'Legacy' },
@@ -123,12 +124,8 @@ export default function App() {
         </div>
       )}
 
-      {activeTab === 'power' && (
-        <div className="panel-columns">
-          <CorruptionPanel />
-          <DiplomacyPanel />
-        </div>
-      )}
+      {activeTab === 'power' && <CorruptionPanel />}
+      {activeTab === 'world' && <WorldTab />}
 
       {activeTab === 'events' && <EventLogPanel />}
       {activeTab === 'lab' && <ElectoralLabPanel />}
