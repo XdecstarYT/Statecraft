@@ -8,6 +8,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { formatCalendarDate, turnToCalendarDate } from '../../engine';
 import { useStatecraftStore } from '../store';
 
 export function Dashboard() {
@@ -18,12 +19,13 @@ export function Dashboard() {
   if (!game) return null;
 
   const { economy } = game;
+  const date = turnToCalendarDate(game.turn);
 
   return (
     <section className="panel">
       <div className="panel-header">
-        <h2>{game.country.name} — Turn {game.turn}</h2>
-        <button onClick={nextTurn}>Advance Turn</button>
+        <h2>{game.country.name} — {formatCalendarDate(date)}</h2>
+        <button onClick={nextTurn}>Advance Week</button>
       </div>
 
       <div className="indicator-grid">
@@ -39,9 +41,9 @@ export function Dashboard() {
         <ResponsiveContainer>
           <LineChart data={economyHistory}>
             <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="turn" label={{ value: 'Turn', position: 'insideBottom', offset: -4 }} />
+            <XAxis dataKey="turn" label={{ value: 'Week', position: 'insideBottom', offset: -4 }} />
             <YAxis />
-            <Tooltip />
+            <Tooltip labelFormatter={(turn: number) => formatCalendarDate(turnToCalendarDate(turn))} />
             <Legend />
             <Line type="monotone" dataKey="gdpGrowth" name="GDP Growth" stroke="#2563eb" dot={false} />
             <Line type="monotone" dataKey="inflation" name="Inflation" stroke="#dc2626" dot={false} />

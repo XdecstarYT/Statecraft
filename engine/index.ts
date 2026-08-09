@@ -30,6 +30,7 @@ import { HEADLINE_TEMPLATES } from '../content/flavor/headlines';
 
 export * from './rng';
 export * from './ideology';
+export * from './calendar';
 export * from './models/types';
 export * from './systems/legislative';
 export * from './systems/elections';
