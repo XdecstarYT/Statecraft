@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Difficulty } from '../engine';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
+import { SCENARIO_PRESETS } from '../content/scenarios/presets';
 import { hasSavedCareer, hasSavedGame } from './persistence';
 import { useStatecraftStore } from './store';
 import { CareerScreen } from './components/CareerScreen';
@@ -41,6 +42,7 @@ export default function App() {
   const game = useStatecraftStore((s) => s.game);
   const career = useStatecraftStore((s) => s.career);
   const newGame = useStatecraftStore((s) => s.newGame);
+  const newGameFromScenario = useStatecraftStore((s) => s.newGameFromScenario);
   const startCareer = useStatecraftStore((s) => s.startCareer);
   const saveGame = useStatecraftStore((s) => s.saveGame);
   const loadGame = useStatecraftStore((s) => s.loadGame);
@@ -48,6 +50,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('legislature');
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
+  const [pendingScenarioId, setPendingScenarioId] = useState(SCENARIO_PRESETS[0].id);
   const [careerNameDraft, setCareerNameDraft] = useState('');
   const [statusMessage, setStatusMessage] = useState('');
   const [bootstrapped, setBootstrapped] = useState(false);
@@ -108,9 +111,28 @@ export default function App() {
                     <option value="hard">Hard</option>
                   </select>
                 </label>
+                <label>
+                  Historical Scenario
+                  <select value={pendingScenarioId} onChange={(e) => setPendingScenarioId(e.target.value)}>
+                    {SCENARIO_PRESETS.map((scenario) => (
+                      <option key={scenario.id} value={scenario.id}>
+                        {scenario.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {pendingScenarioId !== 'standard' && (
+                  <p className="muted">
+                    {SCENARIO_PRESETS.find((s) => s.id === pendingScenarioId)?.description}
+                  </p>
+                )}
                 <button
                   onClick={() => {
-                    newGame(undefined, pendingDifficulty, pendingCountryId);
+                    if (pendingScenarioId === 'standard') {
+                      newGame(undefined, pendingDifficulty, pendingCountryId);
+                    } else {
+                      newGameFromScenario(pendingScenarioId, pendingCountryId);
+                    }
                     setForceStartScreen(false);
                   }}
                 >

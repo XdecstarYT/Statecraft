@@ -139,6 +139,7 @@ import {
   type WhipStance,
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
+import { SCENARIO_PRESETS } from '../content/scenarios/presets';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
 import { generateName } from '../content/names/pool';
@@ -208,6 +209,7 @@ interface StatecraftStore {
   lastSummitOutcome: SummitOutcome | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
+  newGameFromScenario: (scenarioId: string, countryOptionId: string, seed?: number) => void;
   newGameFromCustomNation: (
     input: CustomNationInput,
     playerPartyIndex: number,
@@ -326,6 +328,32 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const option =
       STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
     const game = createNewGame(seed, { difficulty, country: option.country, parties: option.parties });
+    clearSavedCareer();
+    set({
+      game,
+      career: null,
+      economyHistory: [snapshotEconomy(game)],
+      lastElection: null,
+      lastFloorResult: null,
+      lastCoverage: [],
+      labResult: null,
+      lastCorruptionOutcome: null,
+      lastCampaignOutcome: null,
+      lastLobbyingOutcome: null,
+      lastLeadershipActionOutcome: null,
+      lastCovertOperationOutcome: null,
+    });
+  },
+
+  newGameFromScenario: (scenarioId, countryOptionId, seed = Math.floor(Math.random() * 1_000_000_000)) => {
+    const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
+    const scenario = SCENARIO_PRESETS.find((s) => s.id === scenarioId) ?? SCENARIO_PRESETS[0];
+    const game = createNewGame(seed, {
+      difficulty: scenario.difficulty,
+      country: option.country,
+      parties: option.parties,
+      startingEconomy: scenario.economyOverrides,
+    });
     clearSavedCareer();
     set({
       game,

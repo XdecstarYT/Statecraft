@@ -589,6 +589,8 @@ export interface GameState {
   personalWealth: Record<string, number>;
   /** At most one convened international summit resolution at a time, awaiting the player's vote. Null between summits. */
   activeSummit: SummitResolution | null;
+  /** One-time milestone achievement ids recorded the moment they happen (can't be reconstructed from a state snapshot alone). See engine/systems/achievements.ts. */
+  milestones: string[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

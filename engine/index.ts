@@ -184,6 +184,7 @@ export * from './systems/endorsements';
 export * from './systems/polling';
 export * from './systems/wealth';
 export * from './systems/summit';
+export * from './systems/achievements';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -244,6 +245,8 @@ export interface NewGameOptions {
   interestGroups?: InterestGroup[];
   endorsers?: Endorser[];
   pollingFirms?: PollingFirm[];
+  /** Overrides the default starting economy indicators — used by historical scenario presets. */
+  startingEconomy?: Partial<EconomyState>;
   /** Overrides the auto-generated jittered attributes — used by career mode to carry forward what was actually earned. */
   playerAttributes?: PoliticianAttributes;
   /** Overrides the party-jittered starting ideology — same purpose as playerAttributes. */
@@ -293,7 +296,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     };
   }
 
-  const startingEconomy: EconomyState = { ...STARTING_ECONOMY, pendingEffects: [] };
+  const startingEconomy: EconomyState = { ...STARTING_ECONOMY, ...options.startingEconomy, pendingEffects: [] };
 
   const partyLeaderId: Record<string, string> = {};
   for (const party of parties) {
@@ -340,6 +343,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     polls: [],
     personalWealth: Object.fromEntries(politicians.map((p) => [p.id, BASE_PERSONAL_WEALTH])),
     activeSummit: null,
+    milestones: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -410,13 +414,21 @@ function applyTermLimitSuccession(state: GameState, leadingPartyId: string): Gam
   return { ...state, partyLeaderId: { ...state.partyLeaderId, [leadingPartyId]: successor.id } };
 }
 
+function addMilestone(state: GameState, id: string): GameState {
+  return state.milestones.includes(id) ? state : { ...state, milestones: [...state.milestones, id] };
+}
+
 function resolveGovernment(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+
   if (hasOutrightMajority(state.parties)) {
     const majorityParty = state.parties.find((p) => p.seats > state.parties.reduce((s, x) => s + x.seats, 0) / 2)!;
     const succeeded = applyTermLimitSuccession(state, majorityParty.id);
     const headId = succeeded.partyLeaderId[majorityParty.id];
     const termsServed = headId ? recordTermServed(succeeded.termsServed, headId) : succeeded.termsServed;
-    return { ...succeeded, coalition: null, termsServed, rngState: rng.getState() };
+    let next: GameState = { ...succeeded, coalition: null, termsServed, rngState: rng.getState() };
+    if (player && player.partyId === majorityParty.id) next = addMilestone(next, 'landslide');
+    return next;
   }
 
   const { formateurPartyId } = formCoalition(state.parties);
@@ -444,7 +456,11 @@ function resolveGovernment(state: GameState, rng: SeededRng): GameState {
     };
   }
 
-  return { ...succeeded, coalition, termsServed, rngState: rng.getState() };
+  let next: GameState = { ...succeeded, coalition, termsServed, rngState: rng.getState() };
+  if (player && coalition.memberPartyIds.length > 1 && coalition.memberPartyIds.includes(player.partyId)) {
+    next = addMilestone(next, 'coalition_survivor');
+  }
+  return next;
 }
 
 const NPC_BILL_SPONSOR_CHANCE = 0.3;
@@ -1101,13 +1117,16 @@ export function foundNewPartyAction(
   }
 
   return {
-    state: {
-      ...state,
-      politicians: result.updatedPoliticians,
-      parties: result.updatedParties,
-      partyLeaderId,
-      rngState: rng.getState(),
-    },
+    state: addMilestone(
+      {
+        ...state,
+        politicians: result.updatedPoliticians,
+        parties: result.updatedParties,
+        partyLeaderId,
+        rngState: rng.getState(),
+      },
+      'party_founder'
+    ),
     result,
   };
 }
@@ -1258,7 +1277,10 @@ export function suppressMovementAction(
   }
 
   return {
-    state: replaceMovement({ ...state, politicians, rngState: rng.getState() }, provinceId, result.movement),
+    state: addMilestone(
+      replaceMovement({ ...state, politicians, rngState: rng.getState() }, provinceId, result.movement),
+      'unifier'
+    ),
     outcome: { success: true, seceded: false },
   };
 }

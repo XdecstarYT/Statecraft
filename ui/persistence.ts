@@ -77,6 +77,44 @@ export function clearSavedCareer(): void {
   localStorage.removeItem(CAREER_SAVE_KEY);
 }
 
+const HALL_OF_FAME_KEY = 'statecraft-hall-of-fame-v1';
+const HALL_OF_FAME_MAX_ENTRIES = 25;
+
+export interface HallOfFameEntry {
+  name: string;
+  countryName: string;
+  turn: number;
+  personalPower: number;
+  partyDominance: number;
+  nationalPrestige: number;
+  contemporaryVerdict: number;
+  historiansVerdict: number;
+  achievements: string[];
+  recordedAt: string;
+}
+
+/** Records one playthrough snapshot into the cross-playthrough hall of fame — newest first, capped at 25 entries. */
+export function recordHallOfFameEntry(entry: HallOfFameEntry): void {
+  const existing = getHallOfFame();
+  const updated = [entry, ...existing].slice(0, HALL_OF_FAME_MAX_ENTRIES);
+  localStorage.setItem(HALL_OF_FAME_KEY, JSON.stringify(updated));
+}
+
+export function getHallOfFame(): HallOfFameEntry[] {
+  const raw = localStorage.getItem(HALL_OF_FAME_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearHallOfFame(): void {
+  localStorage.removeItem(HALL_OF_FAME_KEY);
+}
+
 const ONBOARDING_KEY = 'statecraft-onboarding-dismissed-v1';
 
 export function hasSeenOnboarding(): boolean {

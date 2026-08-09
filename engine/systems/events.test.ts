@@ -69,6 +69,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     polls: [],
     personalWealth: {},
     activeSummit: null,
+    milestones: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: { gdpGrowth: 2, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] },
