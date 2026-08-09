@@ -41,3 +41,13 @@ export function hasSavedGame(): boolean {
 export function clearSavedGame(): void {
   localStorage.removeItem(SAVE_KEY);
 }
+
+const ONBOARDING_KEY = 'statecraft-onboarding-dismissed-v1';
+
+export function hasSeenOnboarding(): boolean {
+  return localStorage.getItem(ONBOARDING_KEY) === '1';
+}
+
+export function markOnboardingSeen(): void {
+  localStorage.setItem(ONBOARDING_KEY, '1');
+}

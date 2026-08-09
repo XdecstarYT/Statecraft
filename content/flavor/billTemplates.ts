@@ -53,6 +53,48 @@ export const BILL_TEMPLATES: BillTemplate[] = [
       { id: 'p2', description: 'Phase out coal plant tax credits', budgetImpact: 600 },
     ],
   },
+  {
+    title: 'Affordable Housing Expansion Act',
+    provisions: [
+      { id: 'p1', description: 'Fund new public housing construction', budgetImpact: -3800 },
+      { id: 'p2', description: 'Cap annual rent increases in high-demand areas', budgetImpact: -100 },
+    ],
+  },
+  {
+    title: 'Higher Education Investment Act',
+    provisions: [
+      { id: 'p1', description: 'Expand need-based university grants', budgetImpact: -2900 },
+      { id: 'p2', description: 'Forgive a portion of vocational-training loans', budgetImpact: -1100 },
+    ],
+  },
+  {
+    title: 'Pension Solvency Reform Act',
+    provisions: [
+      { id: 'p1', description: 'Gradually raise the retirement age', budgetImpact: 2200 },
+      { id: 'p2', description: 'Index pension contributions to wage growth', budgetImpact: 400 },
+    ],
+  },
+  {
+    title: 'Digital Privacy Protection Act',
+    provisions: [
+      { id: 'p1', description: 'Mandate data-breach disclosure within 72 hours', budgetImpact: -150 },
+      { id: 'p2', description: 'Fund a new data-protection regulator', budgetImpact: -600 },
+    ],
+  },
+  {
+    title: 'Agricultural Resilience Act',
+    provisions: [
+      { id: 'p1', description: 'Subsidize drought-resistant crop research', budgetImpact: -1400 },
+      { id: 'p2', description: 'Extend low-interest loans to small farms', budgetImpact: -900 },
+    ],
+  },
+  {
+    title: 'Judicial Efficiency Act',
+    provisions: [
+      { id: 'p1', description: 'Fund additional trial-court judgeships', budgetImpact: -1200 },
+      { id: 'p2', description: 'Digitize court filing statewide', budgetImpact: -500 },
+    ],
+  },
 ];
 
 export function pickBillTemplate(rng: SeededRng): BillTemplate {

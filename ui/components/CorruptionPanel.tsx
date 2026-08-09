@@ -5,6 +5,13 @@ import { useStatecraftStore } from '../store';
 
 const TIERS: CorruptionTier[] = ['soft', 'medium', 'hard'];
 
+/** Deterministic (not RNG) pick so the flavor line varies by tier/target without touching game state. */
+function pickFlavorIndex(key: string, length: number): number {
+  let hash = 0;
+  for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  return hash % length;
+}
+
 export function CorruptionPanel() {
   const game = useStatecraftStore((s) => s.game);
   const lastOutcome = useStatecraftStore((s) => s.lastCorruptionOutcome);
@@ -18,7 +25,8 @@ export function CorruptionPanel() {
 
   const others = game.politicians.filter((p) => !p.isPlayer);
   const selectedTarget = targetId || others[0]?.id || '';
-  const actionText = CORRUPTION_ACTIONS[tier][0];
+  const actionPool = CORRUPTION_ACTIONS[tier];
+  const actionText = actionPool[pickFlavorIndex(`${tier}:${selectedTarget}`, actionPool.length)];
 
   return (
     <section className="panel">

@@ -1,15 +1,8 @@
-import {
-  CartesianGrid,
-  Legend,
-  Line,
-  LineChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
+import { Suspense, lazy } from 'react';
 import { formatCalendarDate, turnToCalendarDate } from '../../engine';
 import { useStatecraftStore } from '../store';
+
+const EconomyChart = lazy(() => import('./EconomyChart'));
 
 export function Dashboard() {
   const game = useStatecraftStore((s) => s.game);
@@ -37,20 +30,9 @@ export function Dashboard() {
         <Indicator label="Pending Effects" value={economy.pendingEffects.length} suffix="" />
       </div>
 
-      <div style={{ width: '100%', height: 260 }}>
-        <ResponsiveContainer>
-          <LineChart data={economyHistory}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="turn" label={{ value: 'Week', position: 'insideBottom', offset: -4 }} />
-            <YAxis />
-            <Tooltip labelFormatter={(turn: number) => formatCalendarDate(turnToCalendarDate(turn))} />
-            <Legend />
-            <Line type="monotone" dataKey="gdpGrowth" name="GDP Growth" stroke="#2563eb" dot={false} />
-            <Line type="monotone" dataKey="inflation" name="Inflation" stroke="#dc2626" dot={false} />
-            <Line type="monotone" dataKey="unemployment" name="Unemployment" stroke="#d97706" dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
+      <Suspense fallback={<div style={{ height: 260 }} />}>
+        <EconomyChart data={economyHistory} />
+      </Suspense>
     </section>
   );
 }

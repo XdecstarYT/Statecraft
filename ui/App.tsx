@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Difficulty } from '../engine';
+import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
 import { hasSavedGame } from './persistence';
 import { useStatecraftStore } from './store';
 import { Dashboard } from './components/Dashboard';
@@ -12,6 +13,7 @@ import { CorruptionPanel } from './components/CorruptionPanel';
 import { DiplomacyPanel } from './components/DiplomacyPanel';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
+import { OnboardingBanner } from './components/OnboardingBanner';
 
 const NAV_SECTIONS = [
   { id: 'section-dashboard', label: 'Dashboard' },
@@ -30,6 +32,7 @@ export default function App() {
   const loadGame = useStatecraftStore((s) => s.loadGame);
 
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
+  const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
   const [statusMessage, setStatusMessage] = useState('');
 
   useEffect(() => {
@@ -64,12 +67,19 @@ export default function App() {
         </span>
         {statusMessage && <span className="status-flash">{statusMessage}</span>}
         <div className="header-actions">
+          <select value={pendingCountryId} onChange={(e) => setPendingCountryId(e.target.value)}>
+            {STARTER_COUNTRY_OPTIONS.map((option) => (
+              <option key={option.id} value={option.id}>
+                {option.label}
+              </option>
+            ))}
+          </select>
           <select value={pendingDifficulty} onChange={(e) => setPendingDifficulty(e.target.value as Difficulty)}>
             <option value="easy">Easy</option>
             <option value="standard">Standard</option>
             <option value="hard">Hard</option>
           </select>
-          <button onClick={() => newGame(undefined, pendingDifficulty)}>New Game</button>
+          <button onClick={() => newGame(undefined, pendingDifficulty, pendingCountryId)}>New Game</button>
           <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Game</button>
           <button
             onClick={() => {
@@ -80,6 +90,8 @@ export default function App() {
           </button>
         </div>
       </header>
+
+      <OnboardingBanner />
 
       <nav className="app-nav">
         {NAV_SECTIONS.map((section) => (

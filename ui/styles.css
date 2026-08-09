@@ -22,7 +22,8 @@ body {
 .app-header {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.75rem 1rem;
   margin-bottom: 1rem;
 }
 
@@ -46,7 +47,40 @@ body {
 .header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.5rem;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .header-actions {
+    width: auto;
+    margin-left: auto;
+  }
+}
+
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 0.85rem;
+  color: #1e3a8a;
+}
+
+.onboarding-banner button {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .onboarding-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 .header-actions select {
@@ -118,6 +152,10 @@ body {
   border-radius: 8px;
   padding: 1.25rem;
   margin-bottom: 1.25rem;
+  /* Without this, a grid/flex item won't shrink below its content's intrinsic
+     width, so a wide table's own overflow-x:auto never gets a chance to kick
+     in and the whole page scrolls horizontally instead. */
+  min-width: 0;
 }
 
 .panel-header {
@@ -262,6 +300,7 @@ button:hover {
 
 .bill-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
@@ -386,6 +425,7 @@ button:hover {
 
 .corruption-controls {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: center;
   margin-bottom: 0.5rem;

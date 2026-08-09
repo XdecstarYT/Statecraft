@@ -46,6 +46,7 @@ import {
 } from '../engine';
 import { pickBillTemplate } from '../content/flavor/billTemplates';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
+import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
 import { saveGame as persistSave, loadGame as persistLoad } from './persistence';
 
 export interface EconomySnapshot {
@@ -86,7 +87,7 @@ interface StatecraftStore {
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
 
-  newGame: (seed?: number, difficulty?: Difficulty) => void;
+  newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string) => void;
   saveGame: () => void;
   loadGame: () => boolean;
   proposeNewBill: () => void;
@@ -117,8 +118,10 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   labResult: null,
   lastCorruptionOutcome: null,
 
-  newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard') => {
-    const game = createNewGame(seed, { difficulty });
+  newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria') => {
+    const option =
+      STARTER_COUNTRY_OPTIONS.find((o) => o.id === countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
+    const game = createNewGame(seed, { difficulty, country: option.country, parties: option.parties });
     set({
       game,
       economyHistory: [snapshotEconomy(game)],

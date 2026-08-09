@@ -19,13 +19,16 @@ Every outcome (whip counts, elections, the economy, corruption, crises) is resol
     diplomacy.ts     foreign relations + treaty lifecycle
     events.ts        weighted crisis-event tables keyed to live state
     legacy.ts        win-condition scoring + contemporary vs historians' verdict
+    npc.ts           rule-based NPC decisions — bill sponsorship, whip stances,
+                      relationship dynamics, election momentum (no LLM calls)
   rng.ts        seeded PRNG (mulberry32) — the engine's only source of randomness
   calendar.ts   turn -> Year/Month/Week conversion
   difficulty.ts easy/standard/hard settings with real mechanical effects
 
-/content    — pre-authored data: starter country/parties, voter blocs, media outlets,
-              NPC name pools, bill/headline/corruption templates, treaty templates,
-              foreign counterparts, the crisis-event table
+/content    — pre-authored data: two starter countries (parliamentary/FPTP and
+              presidential/PR), voter blocs, media outlets, NPC name pools,
+              bill/headline/corruption templates, treaty templates, foreign
+              counterparts, the crisis-event table
 
 /ui         — React app that reads engine state and dispatches actions; contains no
               game rules. ui/persistence.ts handles localStorage save/load (kept out
@@ -38,15 +41,18 @@ Every outcome (whip counts, elections, the economy, corruption, crises) is resol
 npm install
 npm run dev       # start the Vite dev server
 npm test          # run the engine's Vitest suite
+npm run build     # production build (code-split; recharts loads as its own chunk)
 ```
 
 ## Status
 
-All four build phases from `CLAUDE.md` are implemented:
+All of CLAUDE.md's four build phases are implemented, plus two more:
 
 - **Phase 1** — legislative engine (bill lifecycle, whip counting, floor votes), FPTP + D'Hondt elections, a deterministic economy with delayed policy effects, and the core turn-loop UI.
 - **Phase 2** — voter-bloc opinion modeling with sticky multi-audience approval, a media system with outlet bias framing, and STV/MMP/two-round-runoff/primary electoral systems.
 - **Phase 3** — a corruption/patronage/favor-bank system, international relations with a treaty lifecycle, and a weighted crisis/event engine keyed to live game state.
-- **Phase 4** — win-condition/legacy scoring (with a contemporary verdict that can diverge from the historians' verdict), an easy/standard/hard difficulty setting with real mechanical effects, localStorage save/load, and UI polish (a difficulty picker, save/load controls, an anchored nav bar).
+- **Phase 4** — win-condition/legacy scoring (with a contemporary verdict that can diverge from the historians' verdict), an easy/standard/hard difficulty setting with real mechanical effects, localStorage save/load, and UI polish.
+- **Phase 5** — rule-based NPC AI: rivals sponsor and whip their own bills, relationships shift from how the floor votes line up, and the player's own approval feeds back into their party's election performance.
+- **Phase 6** — a second starter country (presidential regime, PR legislature), broader content pools, an onboarding banner, a mobile-responsive layout, and a code-split production build.
 
-167 Vitest tests cover the engine layer.
+196 Vitest tests cover the engine layer.

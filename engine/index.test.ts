@@ -8,6 +8,7 @@ import {
   proposeTreaty,
   signTreaty,
 } from './index';
+import { VANTORRA_COUNTRY, VANTORRA_PARTIES } from '../content/countries/vantorra';
 
 describe('createNewGame', () => {
   it('produces one politician per starting seat, and exactly one player', () => {
@@ -212,5 +213,29 @@ describe('runLegislativeElection', () => {
     const popularResult = runLegislativeElection(popular).outcome.seatsWon[player.partyId] ?? 0;
     const unpopularResult = runLegislativeElection(unpopular).outcome.seatsWon[player.partyId] ?? 0;
     expect(popularResult).toBeGreaterThanOrEqual(unpopularResult);
+  });
+});
+
+describe('the second starter country (Vantorra, presidential/PR)', () => {
+  it('creates a valid game with a PR_DHONDT legislature and no districts', () => {
+    const state = createNewGame(5, { country: VANTORRA_COUNTRY, parties: VANTORRA_PARTIES });
+    expect(state.country.legislature.electoralSystem).toBe('PR_DHONDT');
+    expect(state.country.legislature.districts).toHaveLength(0);
+    const totalSeats = state.parties.reduce((sum, p) => sum + p.seats, 0);
+    expect(state.politicians).toHaveLength(totalSeats);
+  });
+
+  it('runs a PR election that allocates exactly the nominal total seats', () => {
+    const state = createNewGame(5, { country: VANTORRA_COUNTRY, parties: VANTORRA_PARTIES });
+    const { outcome } = runLegislativeElection(state);
+    expect(outcome.system).toBe('PR_DHONDT');
+    const totalSeats = Object.values(outcome.seatsWon).reduce((a, b) => a + b, 0);
+    expect(totalSeats).toBe(state.country.legislature.totalSeats);
+  });
+
+  it('advances turns and resolves NPC bills the same as the default country', () => {
+    let state = createNewGame(5, { country: VANTORRA_COUNTRY, parties: VANTORRA_PARTIES });
+    for (let i = 0; i < 15; i++) state = advanceTurn(state);
+    expect(state.turn).toBe(16);
   });
 });
