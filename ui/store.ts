@@ -45,6 +45,10 @@ import {
   ipoCompanyAction as engineIpoCompany,
   buySharesAction as engineBuyShares,
   sellSharesAction as engineSellShares,
+  setPolicingFunding,
+  setEnergyPolicy,
+  investInGreenInfrastructure,
+  investInInfrastructure,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -162,6 +166,11 @@ import {
   type TechActionOutcome,
   type CompanySector,
   type EnterpriseActionOutcome,
+  type PolicingFundingTier,
+  type EnergyPolicyLevel,
+  type GreenInvestmentTier,
+  type InfrastructureCategory,
+  type InfrastructureInvestmentTier,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -353,6 +362,10 @@ interface StatecraftStore {
   ipoCompanyAction: (companyId: string) => void;
   buySharesAction: (companyId: string, budgetToSpend: number) => void;
   sellSharesAction: (companyId: string, shares: number) => void;
+  setPolicingFundingAction: (tier: PolicingFundingTier) => void;
+  setEnergyPolicyAction: (policy: EnergyPolicyLevel) => void;
+  investInGreenInfrastructureAction: (tier: GreenInvestmentTier) => void;
+  investInInfrastructureAction: (category: InfrastructureCategory, tier: InfrastructureInvestmentTier) => void;
   buildMineAction: (depositId: string, ownership: FacilityOwnership) => void;
   upgradeMineAction: (mineId: string) => void;
   buildFactoryAction: (
@@ -1392,5 +1405,33 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = engineSellShares(game, companyId, shares);
     set({ game: state, lastEnterpriseOutcome: outcome });
+  },
+
+  setPolicingFundingAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, crime: setPolicingFunding(game.crime, tier) } });
+  },
+
+  setEnergyPolicyAction: (policy) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, environment: setEnergyPolicy(game.environment, policy) } });
+  },
+
+  investInGreenInfrastructureAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { environment, economyEffect } = investInGreenInfrastructure(game.environment, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, environment, economy } });
+  },
+
+  investInInfrastructureAction: (category, tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { infrastructure, economyEffect } = investInInfrastructure(game.infrastructure, category, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, infrastructure, economy } });
   },
 }));

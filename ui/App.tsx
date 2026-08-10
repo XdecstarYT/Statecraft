@@ -32,6 +32,9 @@ import { ResearchPanel } from './components/ResearchPanel';
 import { DemographicsPanel } from './components/DemographicsPanel';
 import { SocialPolicyPanel } from './components/SocialPolicyPanel';
 import { MarketsPanel } from './components/MarketsPanel';
+import { CrimePanel } from './components/CrimePanel';
+import { EnvironmentPanel } from './components/EnvironmentPanel';
+import { InfrastructurePanel } from './components/InfrastructurePanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -41,6 +44,7 @@ const TABS = [
   { id: 'industry', label: 'Industry' },
   { id: 'markets', label: 'Markets' },
   { id: 'governance', label: 'Governance' },
+  { id: 'society', label: 'Society' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
   { id: 'legacy', label: 'Legacy' },
@@ -335,6 +339,16 @@ export default function App() {
             <DemographicsPanel />
             <SocialPolicyPanel />
           </div>
+        </>
+      )}
+
+      {activeTab === 'society' && (
+        <>
+          <div className="panel-columns">
+            <CrimePanel />
+            <EnvironmentPanel />
+          </div>
+          <InfrastructurePanel />
         </>
       )}
 
