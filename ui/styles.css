@@ -753,6 +753,51 @@ button:disabled {
   }
 }
 
+/* ---------- Country hex map ---------- */
+
+.country-map-wrap {
+  width: 100%;
+  height: 420px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-elevated-2);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.country-map-svg {
+  width: 100%;
+  height: 100%;
+}
+
+.country-map-hex {
+  cursor: pointer;
+  transition: filter 0.12s ease;
+}
+
+.country-map-hex:hover {
+  filter: brightness(1.25);
+}
+
+.country-map-empty {
+  width: 100%;
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 1rem;
+  background: var(--bg-elevated-2);
+  border-radius: var(--radius-md);
+}
+
+@media (max-width: 900px) {
+  .country-map-wrap {
+    height: 300px;
+  }
+}
+
 .custom-bill-form {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);

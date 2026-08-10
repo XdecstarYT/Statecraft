@@ -37,6 +37,7 @@ import { EnvironmentPanel } from './components/EnvironmentPanel';
 import { InfrastructurePanel } from './components/InfrastructurePanel';
 import { ChirpPanel } from './components/ChirpPanel';
 import { MovementsPanel } from './components/MovementsPanel';
+import { CountryMap } from './components/CountryMap';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -294,6 +295,8 @@ export default function App() {
 
       {activeTab === 'legislature' && (
         <>
+          {/* TEMP: M2 visual verification, will be repositioned in M8 */}
+          <CountryMap />
           <div className="panel-columns">
             <BillPanel />
             <ElectionPanel />
