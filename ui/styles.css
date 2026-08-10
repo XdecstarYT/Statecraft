@@ -1124,7 +1124,8 @@ button:disabled {
 }
 
 .custom-bill-form input[type='text'],
-.custom-bill-form input[type='number'] {
+.custom-bill-form input[type='number'],
+.custom-bill-form select {
   background: var(--bg-elevated);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
@@ -1134,7 +1135,8 @@ button:disabled {
   font-family: inherit;
 }
 
-.custom-bill-form input:focus {
+.custom-bill-form input:focus,
+.custom-bill-form select:focus {
   outline: none;
   border-color: var(--accent);
 }
@@ -1199,6 +1201,25 @@ button:disabled {
   padding: 0.05rem 0.4rem;
   margin-right: 0.35rem;
   vertical-align: middle;
+}
+
+.bill-category-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--accent-text);
+  border: 1px solid var(--accent-text);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+
+.category-hint {
+  font-size: 0.75rem;
+  margin: -0.25rem 0 0.5rem;
 }
 
 /* ---------- Tables ---------- */

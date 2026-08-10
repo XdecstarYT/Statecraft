@@ -361,3 +361,17 @@ export function computeBillEconomyEffect(bill: Bill): EconomyDelta {
   const gdpGrowth = -netImpact / (BUDGET_IMPACT_SCALE * 4);
   return { budgetBalance, gdpGrowth };
 }
+
+/**
+ * Same net-fiscal-direction math as computeBillEconomyEffect, sign-flipped
+ * into "how much this bill invests in its own category" — positive for a
+ * net-spending bill, negative for a net-savings/austerity one. Consumed by
+ * engine/index.ts's applyBillCategoryEffect to size the bill's nudge to
+ * whichever specific system its category maps to (crime, pollution, life
+ * expectancy, ...), same no-free-lunch shape as the economy effect: real
+ * spending helps the domain, cuts hurt it.
+ */
+export function computeBillDomainMagnitude(bill: Bill): number {
+  const netImpact = bill.provisions.reduce((sum, p) => sum + p.budgetImpact, 0);
+  return -netImpact / BUDGET_IMPACT_SCALE;
+}

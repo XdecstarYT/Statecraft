@@ -52,6 +52,7 @@ import {
   advanceToCommittee,
   advanceToFloor,
   applyFloorVoteResult,
+  computeBillDomainMagnitude,
   computeBillEconomyEffect,
   proposeBill,
   relationshipKey,
@@ -677,6 +678,12 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   let relationships = state.relationships;
   let economy = state.economy;
   let interestGroups = state.interestGroups;
+  let socialPolicy = state.socialPolicy;
+  let crime = state.crime;
+  let environment = state.environment;
+  let infrastructure = state.infrastructure;
+  let research = state.research;
+  let playerMilitary = state.playerMilitary;
   bills = bills.map((bill) => {
     if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
     const sponsor = politicians.find((p) => p.id === bill.sponsorId)!;
@@ -695,7 +702,17 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     }
     const resolvedBill = applyFloorVoteResult(bill, result);
     if (resolvedBill.status === 'passed') {
-      economy = enactPassedBill({ ...state, economy }, resolvedBill).economy;
+      const enacted = enactPassedBill(
+        { ...state, economy, socialPolicy, crime, environment, infrastructure, research, playerMilitary },
+        resolvedBill
+      );
+      economy = enacted.economy;
+      socialPolicy = enacted.socialPolicy;
+      crime = enacted.crime;
+      environment = enacted.environment;
+      infrastructure = enacted.infrastructure;
+      research = enacted.research;
+      playerMilitary = enacted.playerMilitary;
     }
     interestGroups = applyBillOutcomeToGroups(interestGroups, resolvedBill, sponsor, resolvedBill.status === 'passed');
     return resolvedBill;
@@ -713,6 +730,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
         proposeBill({
           id: `npc-bill-${state.turn}-${bills.length + 1}`,
           title: template.title,
+          category: template.category,
           provisions: template.provisions,
           sponsorId: sponsor.id,
         }),
@@ -822,6 +840,12 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     scandals,
     interestGroups,
     eventLog,
+    socialPolicy,
+    crime,
+    environment,
+    infrastructure,
+    research,
+    playerMilitary,
   };
 }
 
@@ -2471,16 +2495,114 @@ export function advanceBillToFloor(state: GameState, billId: string): GameState 
 
 const BILL_ENACTMENT_DELAY_TURNS = 3;
 
+const BILL_CATEGORY_EFFECT_SCALE = 15;
+const BILL_CATEGORY_EFFECT_SCALE_MILITARY = 4;
+const MAX_BILL_CATEGORY_EFFECT = 10;
+const MAX_BILL_CATEGORY_EFFECT_MILITARY = 3;
+
+/**
+ * A law isn't just a budget line — depending on what it's actually about,
+ * passing it gives a real, bounded nudge to the specific national
+ * indicator its category implies (healthcare bills move life expectancy,
+ * environmental bills move pollution, and so on), on top of the generic
+ * economy effect every bill already carries. Same no-free-lunch shape as
+ * that economy effect: a net-spending bill in a category helps its
+ * indicator, a net-savings/austerity one hurts it. Applied immediately
+ * (not delayed like the economy effect) — same as every other direct
+ * investment action in these systems (investInResearch, setPolicingFunding,
+ * ...), and it's the *outcome indicators* being nudged, not the underlying
+ * funding-tier levers, so each system's own per-turn drift toward its
+ * funding-implied target still governs the long run. A bill with no
+ * category (or 'economic') only ever gets the economy effect.
+ */
+export function applyBillCategoryEffect(state: GameState, bill: Bill): GameState {
+  if (!bill.category || bill.category === 'economic') return state;
+
+  const magnitude = computeBillDomainMagnitude(bill);
+
+  switch (bill.category) {
+    case 'healthcare': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return {
+        ...state,
+        socialPolicy: {
+          ...state.socialPolicy,
+          lifeExpectancy: clamp(state.socialPolicy.lifeExpectancy + delta / 2, 0, 120),
+          povertyRate: clamp(state.socialPolicy.povertyRate - delta / 2, 0, 100),
+        },
+      };
+    }
+    case 'education': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return {
+        ...state,
+        socialPolicy: { ...state.socialPolicy, literacyRate: clamp(state.socialPolicy.literacyRate + delta, 0, 100) },
+      };
+    }
+    case 'welfare': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return {
+        ...state,
+        socialPolicy: { ...state.socialPolicy, povertyRate: clamp(state.socialPolicy.povertyRate - delta, 0, 100) },
+      };
+    }
+    case 'justice_safety': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return { ...state, crime: { ...state.crime, crimeRate: clamp(state.crime.crimeRate - delta, 0, 100) } };
+    }
+    case 'environment': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return {
+        ...state,
+        environment: {
+          ...state.environment,
+          pollutionIndex: clamp(state.environment.pollutionIndex - delta, 0, 100),
+          renewableShare: clamp(state.environment.renewableShare + delta / 2, 0, 100),
+        },
+      };
+    }
+    case 'infrastructure': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT) / 4;
+      return {
+        ...state,
+        infrastructure: {
+          transport: clamp(state.infrastructure.transport + delta, 0, 100),
+          power: clamp(state.infrastructure.power + delta, 0, 100),
+          water: clamp(state.infrastructure.water + delta, 0, 100),
+          digital: clamp(state.infrastructure.digital + delta, 0, 100),
+        },
+      };
+    }
+    case 'research_technology': {
+      const delta = clamp(magnitude * BILL_CATEGORY_EFFECT_SCALE, -MAX_BILL_CATEGORY_EFFECT, MAX_BILL_CATEGORY_EFFECT);
+      return { ...state, research: { ...state.research, capability: clamp(state.research.capability + delta, 0, 100) } };
+    }
+    case 'defense': {
+      const delta = clamp(
+        magnitude * BILL_CATEGORY_EFFECT_SCALE_MILITARY,
+        -MAX_BILL_CATEGORY_EFFECT_MILITARY,
+        MAX_BILL_CATEGORY_EFFECT_MILITARY
+      );
+      return { ...state, playerMilitary: { ...state.playerMilitary, strength: clamp(state.playerMilitary.strength + delta, 0, 100) } };
+    }
+    default:
+      return state;
+  }
+}
+
 /**
  * A passed bill is a law, and a law has real consequences: queues the
  * bill's net fiscal direction as a delayed economy effect (same lag
  * mechanism as any other policy) rather than leaving it as a cosmetic
- * number. A no-op for anything that isn't 'passed'.
+ * number, and — if it's tagged with a category — applies that category's
+ * real, immediate effect on the specific system it's actually about (see
+ * applyBillCategoryEffect). A no-op for anything that isn't 'passed'.
  */
 export function enactPassedBill(state: GameState, bill: Bill): GameState {
   if (bill.status !== 'passed') return state;
   const effect = computeBillEconomyEffect(bill);
-  return { ...state, economy: queuePolicyEffect(state.economy, effect, BILL_ENACTMENT_DELAY_TURNS) };
+  const withEconomy = { ...state, economy: queuePolicyEffect(state.economy, effect, BILL_ENACTMENT_DELAY_TURNS) };
+  return applyBillCategoryEffect(withEconomy, bill);
 }
 
 export interface CorruptionAttemptOutcome {

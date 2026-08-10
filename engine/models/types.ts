@@ -100,9 +100,29 @@ export type BillStatus =
   | 'vetoed'
   | 'struck_down';
 
+/**
+ * Which national system, if any, a passed bill nudges beyond the generic
+ * budget/growth effect every bill already carries — see
+ * engine/index.ts's applyBillCategoryEffect. 'economic' (and bills with no
+ * category at all, e.g. saves from before this existed) only ever get the
+ * generic effect.
+ */
+export type BillCategory =
+  | 'economic'
+  | 'healthcare'
+  | 'education'
+  | 'welfare'
+  | 'defense'
+  | 'environment'
+  | 'justice_safety'
+  | 'infrastructure'
+  | 'research_technology';
+
 export interface Bill {
   id: string;
   title: string;
+  /** Optional so bills from saves predating this field, and tests that don't care about it, stay valid — treated the same as 'economic' (no domain effect) when absent. */
+  category?: BillCategory;
   provisions: BillProvision[];
   sponsorId: string;
   status: BillStatus;

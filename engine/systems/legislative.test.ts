@@ -8,6 +8,7 @@ import {
   amendBillProvision,
   applyFloorVoteResult,
   attemptCloture,
+  computeBillDomainMagnitude,
   computeBillEconomyEffect,
   computeSupportProbability,
   invokeFilibuster,
@@ -284,6 +285,41 @@ describe('computeBillEconomyEffect', () => {
       proposeBill({ id: 'b5', title: 'Large', sponsorId: 's', provisions: [{ id: 'p1', description: 'x', budgetImpact: -5000 }] })
     );
     expect(Math.abs(large.budgetBalance!)).toBeGreaterThan(Math.abs(small.budgetBalance!));
+  });
+});
+
+describe('computeBillDomainMagnitude', () => {
+  it('is positive (a domain investment) for a net-spending bill', () => {
+    const bill = proposeBill({
+      id: 'b1',
+      title: 'Spending Bill',
+      sponsorId: 'sponsor',
+      provisions: [{ id: 'p1', description: 'Fund a program', budgetImpact: -4000 }],
+    });
+    expect(computeBillDomainMagnitude(bill)).toBeGreaterThan(0);
+  });
+
+  it('is negative (domain austerity) for a net-savings bill', () => {
+    const bill = proposeBill({
+      id: 'b2',
+      title: 'Austerity Bill',
+      sponsorId: 'sponsor',
+      provisions: [{ id: 'p1', description: 'Freeze spending', budgetImpact: 2000 }],
+    });
+    expect(computeBillDomainMagnitude(bill)).toBeLessThan(0);
+  });
+
+  it('is zero for a net-zero bill', () => {
+    const bill = proposeBill({
+      id: 'b3',
+      title: 'Neutral Bill',
+      sponsorId: 'sponsor',
+      provisions: [
+        { id: 'p1', description: 'Spend', budgetImpact: -1000 },
+        { id: 'p2', description: 'Save', budgetImpact: 1000 },
+      ],
+    });
+    expect(computeBillDomainMagnitude(bill)).toBeCloseTo(0, 10);
   });
 });
 

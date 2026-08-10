@@ -50,6 +50,8 @@ import {
   postTweetAction,
   advanceBillToFloor,
   proposeBill,
+  applyBillCategoryEffect,
+  enactPassedBill,
   advanceToCommittee,
   relationshipKey,
   runMovementsTurn,
@@ -596,7 +598,7 @@ describe('cabinet effects wired into gameplay', () => {
     // above: the shared rng stream shifts whenever a new per-turn system
     // is added upstream, so this needs enough samples to stay robust to
     // that rather than being tuned against one exact sequence.
-    const trials = 150;
+    const trials = 400;
     let totalWith = 0;
     let totalWithout = 0;
     for (let seed = 1; seed <= trials; seed++) {
@@ -1327,5 +1329,136 @@ describe('applyBillOutcomeToApproval (movement reactions)', () => {
     );
     const impact = withMovement.politicians.find((p) => p.id === player.id)!.approvalEvents.at(-1)!.impact;
     expect(impact).toBe(-15);
+  });
+});
+
+describe('applyBillCategoryEffect', () => {
+  function spendingBill(category: GameState['bills'][number]['category']): GameState['bills'][number] {
+    return {
+      ...proposeBill({
+        id: 'bill-spend',
+        title: 'Spending Bill',
+        category,
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Fund it', budgetImpact: -4000 }],
+      }),
+      status: 'passed',
+    };
+  }
+
+  function savingsBill(category: GameState['bills'][number]['category']): GameState['bills'][number] {
+    return {
+      ...proposeBill({
+        id: 'bill-save',
+        title: 'Austerity Bill',
+        category,
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Cut it', budgetImpact: 4000 }],
+      }),
+      status: 'passed',
+    };
+  }
+
+  it('a net-spending healthcare bill raises life expectancy and lowers poverty', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('healthcare'));
+    expect(next.socialPolicy.lifeExpectancy).toBeGreaterThan(state.socialPolicy.lifeExpectancy);
+    expect(next.socialPolicy.povertyRate).toBeLessThan(state.socialPolicy.povertyRate);
+  });
+
+  it('a net-savings healthcare bill hurts life expectancy — no free lunch', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, savingsBill('healthcare'));
+    expect(next.socialPolicy.lifeExpectancy).toBeLessThan(state.socialPolicy.lifeExpectancy);
+  });
+
+  it('a net-spending education bill raises literacy', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('education'));
+    expect(next.socialPolicy.literacyRate).toBeGreaterThan(state.socialPolicy.literacyRate);
+  });
+
+  it('a net-spending welfare bill lowers poverty', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('welfare'));
+    expect(next.socialPolicy.povertyRate).toBeLessThan(state.socialPolicy.povertyRate);
+  });
+
+  it('a net-spending justice_safety bill lowers the crime rate', () => {
+    const state = { ...createNewGame(1), crime: { ...createNewGame(1).crime, crimeRate: 50 } };
+    const next = applyBillCategoryEffect(state, spendingBill('justice_safety'));
+    expect(next.crime.crimeRate).toBeLessThan(state.crime.crimeRate);
+  });
+
+  it('a net-spending environment bill lowers pollution and raises renewable share', () => {
+    const state = {
+      ...createNewGame(1),
+      environment: { ...createNewGame(1).environment, pollutionIndex: 50 },
+    };
+    const next = applyBillCategoryEffect(state, spendingBill('environment'));
+    expect(next.environment.pollutionIndex).toBeLessThan(state.environment.pollutionIndex);
+    expect(next.environment.renewableShare).toBeGreaterThan(state.environment.renewableShare);
+  });
+
+  it('a net-spending infrastructure bill raises all four infrastructure categories', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('infrastructure'));
+    expect(next.infrastructure.transport).toBeGreaterThan(state.infrastructure.transport);
+    expect(next.infrastructure.power).toBeGreaterThan(state.infrastructure.power);
+    expect(next.infrastructure.water).toBeGreaterThan(state.infrastructure.water);
+    expect(next.infrastructure.digital).toBeGreaterThan(state.infrastructure.digital);
+  });
+
+  it('a net-spending research_technology bill raises research capability', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('research_technology'));
+    expect(next.research.capability).toBeGreaterThan(state.research.capability);
+  });
+
+  it('a net-spending defense bill raises military strength, by a smaller margin than other categories', () => {
+    const state = createNewGame(1);
+    const defenseNext = applyBillCategoryEffect(state, spendingBill('defense'));
+    const researchNext = applyBillCategoryEffect(state, spendingBill('research_technology'));
+    const defenseDelta = defenseNext.playerMilitary.strength - state.playerMilitary.strength;
+    const researchDelta = researchNext.research.capability - state.research.capability;
+    expect(defenseDelta).toBeGreaterThan(0);
+    expect(defenseDelta).toBeLessThan(researchDelta);
+  });
+
+  it('an economic-category bill is a no-op — it only ever gets the generic economy effect', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('economic'));
+    expect(next).toBe(state);
+  });
+
+  it('a bill with no category at all is also a no-op, for saves predating this field', () => {
+    const state = createNewGame(1);
+    const bill = { ...spendingBill('healthcare'), category: undefined };
+    const next = applyBillCategoryEffect(state, bill);
+    expect(next).toBe(state);
+  });
+
+  it('clamps an extreme bill so it cannot single-handedly max out the indicator', () => {
+    const state = { ...createNewGame(1), research: { ...createNewGame(1).research, capability: 50 } };
+    const hugeBill: GameState['bills'][number] = {
+      ...proposeBill({
+        id: 'bill-huge',
+        title: 'Enormous Bill',
+        category: 'research_technology',
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Fund it massively', budgetImpact: -500_000 }],
+      }),
+      status: 'passed',
+    };
+    const next = applyBillCategoryEffect(state, hugeBill);
+    expect(next.research.capability).toBeLessThanOrEqual(60);
+  });
+
+  it('enactPassedBill applies both the delayed economy effect and the immediate category effect', () => {
+    const state = createNewGame(1);
+    const bill = spendingBill('research_technology');
+    const next = enactPassedBill(state, bill);
+    expect(next.research.capability).toBeGreaterThan(state.research.capability);
+    expect(next.economy.pendingEffects.length).toBeGreaterThan(state.economy.pendingEffects.length);
   });
 });

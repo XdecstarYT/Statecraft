@@ -1,6 +1,23 @@
 import { useState } from 'react';
-import { computeLobbyingPressure, pollWhipCount, type Bill } from '../../engine';
+import { computeLobbyingPressure, pollWhipCount, type Bill, type BillCategory } from '../../engine';
 import { useStatecraftStore } from '../store';
+
+const CATEGORY_LABELS: Record<BillCategory, string> = {
+  economic: 'Economic',
+  healthcare: 'Healthcare',
+  education: 'Education',
+  welfare: 'Welfare',
+  defense: 'Defense',
+  environment: 'Environment',
+  justice_safety: 'Justice & Safety',
+  infrastructure: 'Infrastructure',
+  research_technology: 'Research & Tech',
+};
+
+function CategoryBadge({ category }: { category?: BillCategory }) {
+  if (!category) return null;
+  return <span className={`bill-category-badge bill-category-${category}`}>{CATEGORY_LABELS[category]}</span>;
+}
 
 export function BillPanel() {
   const game = useStatecraftStore((s) => s.game);
@@ -58,6 +75,7 @@ export function BillPanel() {
                 <div className="bill-summary">
                   <span className="bill-title">
                     <span className="law-badge">LAW</span> {law.title}
+                    <CategoryBadge category={law.category} />
                     <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>
                   </span>
                 </div>
@@ -81,10 +99,12 @@ function CustomBillForm() {
   const proposeCustomBill = useStatecraftStore((s) => s.proposeCustomBill);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [category, setCategory] = useState<BillCategory>('economic');
   const [provisions, setProvisions] = useState([{ description: '', budgetImpact: 0 }]);
 
   function reset() {
     setTitle('');
+    setCategory('economic');
     setProvisions([{ description: '', budgetImpact: 0 }]);
     setOpen(false);
   }
@@ -106,7 +126,7 @@ function CustomBillForm() {
   function submit() {
     const valid = title.trim().length > 0 && provisions.some((p) => p.description.trim().length > 0);
     if (!valid) return;
-    proposeCustomBill(title, provisions);
+    proposeCustomBill(title, category, provisions);
     reset();
   }
 
@@ -129,6 +149,22 @@ function CustomBillForm() {
           placeholder="e.g. National Broadband Act"
         />
       </label>
+
+      <label>
+        Category
+        <select value={category} onChange={(e) => setCategory(e.target.value as BillCategory)}>
+          {(Object.keys(CATEGORY_LABELS) as BillCategory[]).map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted category-hint">
+        {category === 'economic'
+          ? 'Only moves the budget and growth, like every bill does.'
+          : `Net spending here also nudges ${CATEGORY_LABELS[category].toLowerCase()} outcomes directly — net cuts hurt them.`}
+      </p>
 
       <div className="provision-rows">
         {provisions.map((p, i) => (
@@ -220,6 +256,7 @@ function BillRow({
       <div className="bill-summary" onClick={onToggle}>
         <span className="bill-title">
           {bill.title}
+          <CategoryBadge category={bill.category} />
           {!isPlayerBill && <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>}
         </span>
         <span className={`bill-status status-${bill.status}`}>{bill.status}</span>
