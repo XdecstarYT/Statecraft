@@ -80,12 +80,15 @@ interface GlobeProps {
  * A self-contained three.js globe — no textures/network assets, so it works
  * fully offline: a shaded sphere plus one marker per nation, sized and
  * color-graded (blue -> red) by military strength, positioned from real
- * approximate capital coordinates. Click a marker to select that nation;
- * drag to orbit, scroll to zoom.
+ * approximate capital coordinates. A pulsing red ring flags any nation
+ * currently at active war with the player, independent of whichever filter
+ * is selected — real state.wars data, not a placeholder effect. Click a
+ * marker to select that nation; drag to orbit, scroll to zoom.
  */
 export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const markersRef = useRef<Map<string, THREE.Mesh>>(new Map());
+  const warRingsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
 
@@ -144,17 +147,36 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     scene.add(atmosphere);
 
     const BASE_MARKER_RADIUS = 0.11;
+    // Sized to clear the largest possible marker (BASE_MARKER_RADIUS * MAX_SCALE
+    // * the 1.9x selection bump) with room to spare, so the ring is never
+    // occluded by a big, selected, high-value marker underneath it.
+    const WAR_RING_RADIUS = 0.5;
     markersRef.current.clear();
+    warRingsRef.current.clear();
     for (const nation of nations) {
+      const position = latLngToVector3(nation.location.lat, nation.location.lng, GLOBE_RADIUS + 0.05);
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(BASE_MARKER_RADIUS, 10, 10),
         new THREE.MeshBasicMaterial({ color: 0xffffff })
       );
-      marker.position.copy(latLngToVector3(nation.location.lat, nation.location.lng, GLOBE_RADIUS + 0.05));
+      marker.position.copy(position);
       marker.userData.nationId = nation.id;
       marker.userData.baseScale = 1;
       scene.add(marker);
       markersRef.current.set(nation.id, marker);
+
+      // A pulsing red ring flags an active war regardless of which filter
+      // is showing — real state (state.wars), not a placeholder effect.
+      // Hidden by default; the appearance effect below toggles visibility.
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(WAR_RING_RADIUS * 0.85, WAR_RING_RADIUS, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff3b3b, transparent: true, opacity: 0.85, side: THREE.DoubleSide })
+      );
+      ring.position.copy(position);
+      ring.lookAt(0, 0, 0);
+      ring.visible = false;
+      scene.add(ring);
+      warRingsRef.current.set(nation.id, ring);
     }
 
     const raycaster = new THREE.Raycaster();
@@ -189,6 +211,10 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     function animate() {
       frameId = requestAnimationFrame(animate);
       controls.update();
+      const pulse = 1 + 0.18 * Math.sin(performance.now() * 0.004);
+      warRingsRef.current.forEach((ring) => {
+        if (ring.visible) ring.scale.setScalar(pulse);
+      });
       renderer.render(scene, camera);
     }
     animate();
@@ -234,6 +260,9 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     if (!game) return;
     const nations = game.foreignCounterparts;
     const maxProduction = Math.max(1, ...nations.map(sumProduction));
+    const activeWarCounterpartIds = new Set(
+      game.wars.filter((w) => w.status === 'active').map((w) => w.counterpartId)
+    );
     markersRef.current.forEach((mesh, id) => {
       const nation = nations.find((n) => n.id === id);
       if (!nation) return;
@@ -241,6 +270,9 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
       (mesh.material as THREE.MeshBasicMaterial).color.setHSL(appearance.hue, 0.8, 0.55);
       mesh.userData.baseScale = appearance.scale;
       mesh.scale.setScalar(appearance.scale * (id === selectedId ? 1.9 : 1));
+    });
+    warRingsRef.current.forEach((ring, id) => {
+      ring.visible = activeWarCounterpartIds.has(id);
     });
   }, [filter, game, selectedId]);
 
