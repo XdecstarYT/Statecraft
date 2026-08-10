@@ -1,0 +1,1055 @@
+:root {
+  color-scheme: dark;
+
+  --bg: #0d1117;
+  --bg-elevated: #151b28;
+  --bg-elevated-2: #1b2333;
+  --bg-hover: #202a3d;
+  --border: #26304533;
+  --border-soft: #232c3f;
+  --border-strong: #303c56;
+
+  --text-primary: #e9edf5;
+  --text-secondary: #a3aec4;
+  --text-muted: #6c7791;
+
+  --accent: #6366f1;
+  --accent-hover: #7880f5;
+  --accent-soft: rgba(99, 102, 241, 0.16);
+  --accent-text: #b4b8ff;
+
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.14);
+  --success-text: #6ee7b7;
+
+  --danger: #f87171;
+  --danger-soft: rgba(248, 113, 113, 0.14);
+  --danger-text: #fca5a5;
+
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.14);
+  --warning-text: #fcd34d;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.28);
+
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+}
+
+html {
+  font-size: 15px;
+}
+
+/* ---------- Accessibility settings ---------- */
+
+/* Font scale: overriding the root rem base scales every rem-sized element site-wide. */
+html[data-font-scale='large'] {
+  font-size: 18px;
+}
+
+html[data-font-scale='xlarge'] {
+  font-size: 21px;
+}
+
+/* Colorblind-safe palette: swaps green/red for a blue/orange pair (Okabe-Ito-inspired),
+   distinguishable under the common red-green colorblindness types. Every pass/fail,
+   yes/no, and status indicator in the app is driven by these same variables. */
+html[data-colorblind='true'] {
+  --success: #3d9be9;
+  --success-soft: rgba(61, 155, 233, 0.16);
+  --success-text: #8fc9f5;
+
+  --danger: #e8850c;
+  --danger-soft: rgba(232, 133, 12, 0.16);
+  --danger-text: #f5b768;
+}
+
+html[data-reduced-motion='true'] *,
+html[data-reduced-motion='true'] *::before,
+html[data-reduced-motion='true'] *::after {
+  transition-duration: 0.001ms !important;
+  animation-duration: 0.001ms !important;
+  scroll-behavior: auto !important;
+}
+
+label.checkbox-label {
+  flex-direction: row;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+button, select {
+  font-family: inherit;
+}
+
+/* ---------- Layout shell ---------- */
+
+.app-shell {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 1.25rem 1.25rem 3rem;
+}
+
+@media (max-width: 640px) {
+  .app-shell {
+    padding: 0.85rem 0.75rem 2rem;
+  }
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  background: linear-gradient(135deg, var(--text-primary), var(--accent-text));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.seed-tag {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  margin-right: auto;
+  text-transform: capitalize;
+  font-variant-numeric: tabular-nums;
+}
+
+.status-flash {
+  color: var(--success-text);
+  font-weight: 600;
+  font-size: 0.8rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  width: 100%;
+}
+
+@media (min-width: 640px) {
+  .header-actions {
+    width: auto;
+    margin-left: auto;
+  }
+}
+
+.header-actions select {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  text-transform: capitalize;
+}
+
+/* ---------- Tab navigation ---------- */
+
+.app-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  background: var(--bg);
+  padding: 0.6rem 0 0.9rem;
+  margin-bottom: 0.25rem;
+}
+
+.app-tabs button {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+
+.app-tabs button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.app-tabs button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
+.onboarding-banner {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  background: var(--accent-soft);
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.9rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.onboarding-banner strong {
+  color: var(--text-primary);
+}
+
+.onboarding-banner button {
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .onboarding-banner {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+/* ---------- Buttons ---------- */
+
+button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.75rem;
+  font-size: 0.8rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease, transform 0.06s ease;
+}
+
+button:hover {
+  background: var(--accent-hover);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Low-emphasis buttons for dense repeated action rows (whip tables, etc). */
+.row-actions button,
+.bill-row .row-actions button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  padding: 0.22rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.row-actions button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+/* ---------- Panels ---------- */
+
+.panel {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.85rem;
+  min-width: 0;
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.panel-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.panel-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .panel-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.subheading {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 0.9rem 0 0.5rem;
+}
+
+.category-group {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+  padding: 0 0.7rem;
+}
+
+.category-group summary {
+  cursor: pointer;
+  padding: 0.55rem 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.category-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.category-group summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.45rem;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.category-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.category-group .scandal-list {
+  padding-bottom: 0.6rem;
+}
+
+.category-count {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.table-category-row td {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-elevated-2);
+  padding-top: 0.5rem;
+}
+
+.muted {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+/* ---------- Legacy score bars ---------- */
+
+.legacy-bars,
+.verdict-columns {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-bottom: 0.7rem;
+}
+
+.score-bar-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.score-bar-track {
+  background: var(--bg-elevated-2);
+  border-radius: 999px;
+  height: 6px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  background: linear-gradient(90deg, var(--accent), #a78bfa);
+  height: 100%;
+  border-radius: 999px;
+}
+
+/* ---------- Dashboard indicators ---------- */
+
+.indicator-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 0.55rem;
+  margin-bottom: 0.9rem;
+}
+
+.indicator {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.55rem;
+}
+
+.indicator-label {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-bottom: 0.15rem;
+}
+
+.indicator-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ---------- Billboard ---------- */
+
+.billboard {
+  min-height: 260px;
+}
+
+.billboard-tabs {
+  display: flex;
+  gap: 0.3rem;
+  margin-bottom: 0.6rem;
+}
+
+.billboard-tabs button {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  padding: 0.28rem 0.7rem;
+}
+
+.billboard-tabs button:hover {
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+.billboard-tabs button.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-text, var(--accent));
+}
+
+.billboard-slide {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  padding: 0.85rem 1rem;
+}
+
+.billboard-slide h3 {
+  margin: 0.4rem 0 0.3rem;
+  font-size: 0.95rem;
+}
+
+.result-pass {
+  color: var(--success-text);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.result-fail {
+  color: var(--danger-text);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+/* ---------- Bills ---------- */
+
+.bill-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.bill-row {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  margin-bottom: 0.45rem;
+  overflow: hidden;
+}
+
+.bill-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.75rem;
+  cursor: pointer;
+  background: var(--bg-elevated-2);
+  transition: background 0.12s ease;
+}
+
+.bill-summary:hover {
+  background: var(--bg-hover);
+}
+
+.bill-title {
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.bill-status {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.status-passed {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.status-failed,
+.status-vetoed,
+.status-broken {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.status-floor,
+.status-unresolved,
+.status-proposed {
+  background: var(--warning-soft);
+  color: var(--warning-text);
+}
+
+.status-active,
+.status-resolved {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.bill-detail {
+  padding: 0.75rem;
+}
+
+.provision-list {
+  margin: 0 0 0.65rem;
+  padding-left: 1.1rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+}
+
+.bill-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+
+.whip-summary {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  margin-bottom: 0.45rem;
+}
+
+/* ---------- Ghost buttons + form controls ---------- */
+
+.ghost-button {
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border-strong);
+  padding: 0.35rem 0.7rem;
+  font-size: 0.78rem;
+}
+
+.ghost-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.danger-button {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+  border: 1px solid var(--danger);
+}
+
+.danger-button:hover {
+  background: var(--danger);
+  color: #fff;
+}
+
+/* ---------- World panel ---------- */
+
+.panel-header input[type='text'] {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+  min-width: 0;
+  flex: 1;
+  max-width: 260px;
+}
+
+.nation-picker-wrap {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.85rem;
+}
+
+.nation-picker {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.nation-picker button {
+  width: 100%;
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  border-radius: 0;
+  text-align: left;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.nation-picker button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.nation-picker button.active {
+  background: var(--accent-soft, var(--bg-hover));
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.nation-detail {
+  border-top: 1px solid var(--border-soft);
+  padding-top: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+.province-report-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.election-night-provinces .bill-status {
+  padding: 0.1rem 0.45rem;
+  font-size: 0.6rem;
+}
+
+.nation-detail h3 {
+  margin: 0 0 0.15rem;
+  font-size: 1rem;
+}
+
+/* ---------- Globe ---------- */
+
+.globe-panel .panel-header {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.globe-panel .panel-header span.muted {
+  font-size: 0.72rem;
+}
+
+.globe-container {
+  width: 100%;
+  height: 420px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: grab;
+}
+
+.globe-container:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 900px) {
+  .globe-container {
+    height: 300px;
+  }
+}
+
+.custom-bill-form {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.custom-bill-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.custom-bill-form label.checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+
+.custom-bill-form input[type='text'],
+.custom-bill-form input[type='number'] {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 0.4rem 0.55rem;
+  font-size: 0.82rem;
+  font-family: inherit;
+}
+
+.custom-bill-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.provision-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.provision-row {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.provision-row input[type='text'] {
+  flex: 3;
+}
+
+.provision-row input[type='number'] {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---------- Statute book / laws ---------- */
+
+.statute-book-header {
+  margin-top: 0.9rem;
+  border-top: 1px solid var(--border-soft);
+  padding-top: 0.75rem;
+}
+
+.statute-book-header h3 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.law-row {
+  background: var(--success-soft);
+}
+
+.law-row .bill-summary {
+  background: transparent;
+  cursor: default;
+}
+
+.law-row .provision-list {
+  padding: 0 0.75rem 0.65rem;
+}
+
+.law-badge {
+  display: inline-block;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--success-text);
+  border: 1px solid var(--success-text);
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+}
+
+/* ---------- Tables ---------- */
+
+.whip-table-wrap {
+  overflow-x: auto;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.whip-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.78rem;
+}
+
+.whip-table th,
+.whip-table td {
+  border-bottom: 1px solid var(--border-soft);
+  padding: 0.3rem 0.55rem;
+  text-align: left;
+  white-space: nowrap;
+  font-size: 0.85rem;
+}
+
+.whip-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated-2);
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.whip-table tbody tr:hover {
+  background: var(--bg-elevated-2);
+}
+
+.stance-yes {
+  color: var(--success-text);
+  font-weight: 600;
+}
+
+.stance-no {
+  color: var(--danger-text);
+  font-weight: 600;
+}
+
+.stance-undecided {
+  color: var(--text-muted);
+}
+
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+/* ---------- Power & Patronage ---------- */
+
+.corruption-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+
+.corruption-controls select {
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated-2);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+}
+
+.scandal-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.scandal-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  background: var(--bg-elevated-2);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.scandal-item.status-unresolved,
+.scandal-item.status-proposed {
+  border-left-color: var(--warning);
+}
+
+.scandal-item.status-resolved,
+.scandal-item.status-active,
+.scandal-item.status-won {
+  border-left-color: var(--success);
+}
+
+.scandal-item.status-broken,
+.scandal-item.status-lost,
+.scandal-item.status-cancelled {
+  border-left-color: var(--danger);
+}
+
+.scandal-item.status-stalemate {
+  border-left-color: var(--text-muted);
+}
+
+/* ---------- Press coverage / event log ---------- */
+
+.coverage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.coverage-item {
+  background: var(--bg-elevated-2);
+  border-left: 3px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  padding: 0.55rem 0.75rem;
+}
+
+.coverage-item.frame-favorable {
+  border-left-color: var(--success);
+}
+
+.coverage-item.frame-neutral {
+  border-left-color: var(--text-muted);
+}
+
+.coverage-item.frame-critical {
+  border-left-color: var(--danger);
+}
+
+.coverage-outlet {
+  font-weight: 600;
+  font-size: 0.8rem;
+  margin-right: 0.5rem;
+}
+
+.coverage-frame {
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding: 0.12rem 0.5rem;
+  border-radius: 999px;
+}
+
+.frame-badge-favorable {
+  background: var(--success-soft);
+  color: var(--success-text);
+}
+
+.frame-badge-neutral {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+}
+
+.frame-badge-critical {
+  background: var(--danger-soft);
+  color: var(--danger-text);
+}
+
+.coverage-headline {
+  margin: 0.35rem 0 0;
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+}
+
+/* ---------- Scrollbars (webkit) ---------- */
+
+.whip-table-wrap::-webkit-scrollbar,
+.coverage-list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.whip-table-wrap::-webkit-scrollbar-thumb,
+.coverage-list::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
