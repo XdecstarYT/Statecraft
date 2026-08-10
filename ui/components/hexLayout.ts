@@ -49,19 +49,9 @@ export function computeDistrictLayout(districtIds: string[]): AxialCoord[] {
   return layout;
 }
 
-/** Flat-topped axial -> pixel conversion (matches the hex polygon points used in CountryMap). */
+/** Flat-topped axial -> planar (x, z in the 3D scene) conversion. */
 export function axialToPixel(q: number, r: number, hexSize: number): { x: number; y: number } {
   const x = hexSize * ((3 / 2) * q);
   const y = hexSize * (Math.sqrt(3) * (r + q / 2));
   return { x, y };
-}
-
-/** SVG polygon points for a flat-topped hexagon of the given size, centered at (cx, cy). */
-export function hexPolygonPoints(cx: number, cy: number, size: number): string {
-  const points: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 180) * (60 * i);
-    points.push(`${cx + size * Math.cos(angle)},${cy + size * Math.sin(angle)}`);
-  }
-  return points.join(' ');
 }
