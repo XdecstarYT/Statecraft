@@ -26,6 +26,13 @@ import {
   mergePartiesAction as engineMergeParties,
   rebrandPartyAction as engineRebrandParty,
   castSummitVoteAction as engineCastSummitVote,
+  buildMineAction as engineBuildMine,
+  upgradeMineAction as engineUpgradeMine,
+  buildFactoryAction as engineBuildFactory,
+  upgradeFactoryAction as engineUpgradeFactory,
+  sellRawResourceAction as engineSellRawResource,
+  sellProcessedGoodAction as engineSellProcessedGood,
+  investInLogistics,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -121,13 +128,20 @@ import {
   type Difficulty,
   type EducationTrack,
   type ElectionOutcome,
+  type FacilityActionOutcome,
+  type FacilityLocationType,
+  type FacilityOwnership,
   type FloorVoteResult,
   type FoundPartyResult,
   type GameState,
   type IdeologyPosition,
   type IntelligenceInvestmentTier,
   type LocalRaceOutcome,
+  type LogisticsInvestmentTier,
   type MilitaryInvestmentTier,
+  type ProcessedGoodType,
+  type RawResourceType,
+  type SaleResult,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -208,6 +222,8 @@ interface StatecraftStore {
   lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
   lastPollResult: PollResult | null;
   lastSummitOutcome: SummitOutcome | null;
+  lastFacilityOutcome: FacilityActionOutcome | null;
+  lastSale: (SaleResult & { good: string }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -300,6 +316,18 @@ interface StatecraftStore {
   grantAutonomyAction: (provinceId: string) => void;
   callReferendumAction: (provinceId: string) => void;
   suppressMovementAction: (provinceId: string) => void;
+  buildMineAction: (depositId: string, ownership: FacilityOwnership) => void;
+  upgradeMineAction: (mineId: string) => void;
+  buildFactoryAction: (
+    locationId: string,
+    locationType: FacilityLocationType,
+    recipeId: string,
+    ownership: FacilityOwnership
+  ) => void;
+  upgradeFactoryAction: (factoryId: string) => void;
+  sellRawResourceAction: (resource: RawResourceType, units: number, sellAs: FacilityOwnership) => void;
+  sellProcessedGoodAction: (good: ProcessedGoodType, units: number, ownership: FacilityOwnership) => void;
+  investInLogisticsAction: (tier: LogisticsInvestmentTier) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -329,6 +357,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastEndorsementOutcome: null,
   lastPollResult: null,
   lastSummitOutcome: null,
+  lastFacilityOutcome: null,
+  lastSale: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -1189,5 +1219,55 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineSuppressMovement(game, provinceId);
     if (!outcome) return;
     set({ game: state, lastSuppressionOutcome: { ...outcome, provinceId } });
+  },
+
+  buildMineAction: (depositId, ownership) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineBuildMine(game, depositId, ownership);
+    set({ game: state, lastFacilityOutcome: outcome });
+  },
+
+  upgradeMineAction: (mineId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineUpgradeMine(game, mineId);
+    set({ game: state, lastFacilityOutcome: outcome });
+  },
+
+  buildFactoryAction: (locationId, locationType, recipeId, ownership) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineBuildFactory(game, locationId, locationType, recipeId, ownership);
+    set({ game: state, lastFacilityOutcome: outcome });
+  },
+
+  upgradeFactoryAction: (factoryId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineUpgradeFactory(game, factoryId);
+    set({ game: state, lastFacilityOutcome: outcome });
+  },
+
+  sellRawResourceAction: (resource, units, sellAs) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, sale } = engineSellRawResource(game, resource, units, sellAs);
+    set({ game: state, lastSale: { ...sale, good: resource } });
+  },
+
+  sellProcessedGoodAction: (good, units, ownership) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, sale } = engineSellProcessedGood(game, good, units, ownership);
+    set({ game: state, lastSale: { ...sale, good } });
+  },
+
+  investInLogisticsAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { network, economyEffect } = investInLogistics(game.logisticsNetwork, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, logisticsNetwork: network, economy } });
   },
 }));

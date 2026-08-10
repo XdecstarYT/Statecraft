@@ -26,12 +26,14 @@ import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
 import { AccessibilityPanel } from './components/AccessibilityPanel';
+import { IndustryPanel } from './components/IndustryPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
   { id: 'opinion', label: 'Opinion & Campaign' },
   { id: 'power', label: 'Power' },
   { id: 'world', label: 'World' },
+  { id: 'industry', label: 'Industry' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
   { id: 'legacy', label: 'Legacy' },
@@ -311,6 +313,8 @@ export default function App() {
           <SummitPanel />
         </>
       )}
+
+      {activeTab === 'industry' && <IndustryPanel />}
 
       {activeTab === 'events' && <EventLogPanel />}
       {activeTab === 'lab' && (
