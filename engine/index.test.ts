@@ -29,6 +29,14 @@ import {
   sellProcessedGoodAction,
   runIndustryTurn,
   MAX_MINE_TIER,
+  nominateJusticeAction,
+  confirmJusticeAction,
+  unlockTechAction,
+  runJudiciaryTurn,
+  runResearchTurn,
+  runDemographicsTurn,
+  runSocialPolicyTurn,
+  DEFAULT_COURT_SIZE,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -860,5 +868,114 @@ describe('industry (mining, logistics, manufacturing, market)', () => {
     const { state: after, sale } = sellProcessedGoodAction(stocked, 'steel', 999, 'state');
     expect(sale.unitsSold).toBe(10);
     expect(after.stateGoodsStockpile.steel).toBe(0);
+  });
+});
+
+describe('judiciary, research, demographics, and social policy', () => {
+  it('createNewGame seeds real defaults for all four systems', () => {
+    const state = createNewGame(1);
+    expect(state.court.seats).toHaveLength(DEFAULT_COURT_SIZE);
+    expect(state.court.seats.every((s) => s === null)).toBe(true);
+    expect(state.judicialReviewCases).toEqual([]);
+    expect(state.research).toEqual({ capability: 20, accumulatedPoints: 0, unlockedTechIds: [] });
+    expect(state.demographics.population).toBeGreaterThan(0);
+    expect(state.socialPolicy.lifeExpectancy).toBeGreaterThan(0);
+  });
+
+  it('nominateJusticeAction fills a vacant seat and rejects an out-of-range one', () => {
+    const state = createNewGame(1);
+    const { state: after, outcome } = nominateJusticeAction(state, 0);
+    expect(outcome.success).toBe(true);
+    expect(after.court.seats[0]?.status).toBe('nominated');
+
+    const invalid = nominateJusticeAction(state, 99);
+    expect(invalid.outcome).toEqual({ success: false, reason: 'invalid_seat' });
+  });
+
+  it('confirmJusticeAction resolves a pending nominee and refuses an empty seat', () => {
+    const state = createNewGame(1);
+    const { state: nominated } = nominateJusticeAction(state, 0);
+    const { state: after, outcome, result } = confirmJusticeAction(nominated, 0);
+    expect(outcome.success).toBe(true);
+    expect(result).not.toBeNull();
+    expect(after.court.seats[0] === null || after.court.seats[0]?.status === 'confirmed').toBe(true);
+
+    const empty = confirmJusticeAction(state, 1);
+    expect(empty.outcome).toEqual({ success: false, reason: 'no_nominee' });
+  });
+
+  it('runJudiciaryTurn never files a review case while the court lacks a quorum', () => {
+    let state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    state = { ...state, bills: [{ id: 'b1', title: 'Test Bill', provisions: [], sponsorId: player.id, status: 'passed', whipCount: {} }] };
+    for (let i = 0; i < 30; i++) {
+      const rng = new SeededRng(state.rngState);
+      state = runJudiciaryTurn(state, rng);
+      state = { ...state, rngState: rng.getState() };
+    }
+    expect(state.judicialReviewCases).toEqual([]);
+  });
+
+  it('runJudiciaryTurn files and eventually resolves a review case once the court has quorum', () => {
+    let state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const justice = (id: string) => ({
+      id,
+      name: id,
+      ideology: { economic: 0, social: 0 },
+      integrity: 8,
+      status: 'confirmed' as const,
+    });
+    state = {
+      ...state,
+      court: { seats: [justice('j0'), justice('j1'), justice('j2'), null, null] },
+      bills: [{ id: 'b1', title: 'Test Bill', provisions: [], sponsorId: player.id, status: 'passed', whipCount: {} }],
+    };
+
+    let sawCase = false;
+    let sawResolution = false;
+    for (let i = 0; i < 60; i++) {
+      const rng = new SeededRng(state.rngState);
+      state = runJudiciaryTurn(state, rng);
+      state = { ...state, rngState: rng.getState() };
+      if (state.judicialReviewCases.length > 0) sawCase = true;
+      if (state.judicialReviewCases.some((c) => c.status !== 'pending')) sawResolution = true;
+    }
+    expect(sawCase).toBe(true);
+    expect(sawResolution).toBe(true);
+  });
+
+  it('runResearchTurn accumulates points, and unlockTechAction spends them for a real economic payoff', () => {
+    let state = createNewGame(1);
+    for (let i = 0; i < 30; i++) state = runResearchTurn(state);
+    expect(state.research.accumulatedPoints).toBeGreaterThan(0);
+
+    const { state: after, outcome } = unlockTechAction(state, 'basic-metallurgy');
+    expect(outcome.success).toBe(true);
+    expect(after.research.unlockedTechIds).toContain('basic-metallurgy');
+    expect(after.economy.gdpGrowth).toBeGreaterThan(state.economy.gdpGrowth);
+
+    const missingPrereq = unlockTechAction(after, 'advanced-robotics');
+    expect(missingPrereq.outcome).toEqual({ success: false, reason: 'prerequisites_not_met' });
+
+    const unknown = unlockTechAction(after, 'not-a-real-tech');
+    expect(unknown.outcome).toEqual({ success: false, reason: 'tech_not_found' });
+  });
+
+  it('runDemographicsTurn moves population and feeds the economy and voter blocs', () => {
+    const state = createNewGame(1);
+    const next = runDemographicsTurn(state);
+    expect(next.demographics.population).not.toBe(state.demographics.population);
+    expect(next.voterBlocs).toHaveLength(state.voterBlocs.length);
+  });
+
+  it('runSocialPolicyTurn drifts indicators toward a changed funding target, bills the budget, and pushes an approval event', () => {
+    let state = createNewGame(1);
+    state = { ...state, socialPolicy: { ...state.socialPolicy, healthcareFunding: 'generous' } };
+    const next = runSocialPolicyTurn(state);
+    const player = next.politicians.find((p) => p.isPlayer)!;
+    expect(next.socialPolicy.lifeExpectancy).toBeGreaterThan(state.socialPolicy.lifeExpectancy);
+    expect(next.economy.budgetBalance).toBeLessThan(state.economy.budgetBalance);
+    expect(player.approvalEvents.length).toBeGreaterThan(0);
   });
 });

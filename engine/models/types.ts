@@ -97,7 +97,8 @@ export type BillStatus =
   | 'floor'
   | 'passed'
   | 'failed'
-  | 'vetoed';
+  | 'vetoed'
+  | 'struck_down';
 
 export interface Bill {
   id: string;
@@ -662,6 +663,112 @@ export interface EventLogEntry {
   description: string;
 }
 
+/**
+ * JUDICIARY — a real check-and-balance: the player nominates justices to a
+ * fixed-size court, the legislature confirms (or rejects) them by vote, and
+ * once seated the court can strike down a passed bill on judicial review —
+ * likelier the further the bill's provisions sit from the median justice's
+ * ideology. See engine/systems/judiciary.ts.
+ */
+export type CourtSeatStatus = 'nominated' | 'confirmed';
+
+export interface Justice {
+  id: string;
+  name: string;
+  ideology: IdeologyPosition;
+  /** 1..10 — a principled justice is likelier to actually apply the law rather than vote along raw ideology alone. */
+  integrity: number;
+  status: CourtSeatStatus;
+  turnAppointed?: number;
+  /** Confirmation vote tally while status is 'nominated'; cleared once confirmed or rejected. */
+  confirmationVotes?: Record<string, WhipStance>;
+}
+
+/** A fixed-size bench; a null entry is a vacant seat with no nominee at all. */
+export interface Court {
+  seats: (Justice | null)[];
+}
+
+export type JudicialReviewStatus = 'pending' | 'upheld' | 'struck_down';
+
+/** One passed bill's judicial review, from filing to resolution. See engine/systems/judiciary.ts. */
+export interface JudicialReviewCase {
+  id: string;
+  billId: string;
+  billTitle: string;
+  turnFiled: number;
+  status: JudicialReviewStatus;
+  turnResolved?: number;
+}
+
+/**
+ * TECHNOLOGY & RESEARCH — a real R&D investment track: invested capability
+ * (mirrors logisticsNetwork/intelligenceCapability's pattern) generates
+ * research points each turn, which accumulate toward unlocking tech-tree
+ * nodes gated by prerequisites. See engine/systems/research.ts and
+ * content/research/techTree.ts for the pre-authored tree itself.
+ */
+export type TechCategory = 'industry' | 'military' | 'economy' | 'governance';
+
+export interface TechNode {
+  id: string;
+  name: string;
+  description: string;
+  category: TechCategory;
+  /** Accumulated research points required to unlock, once every prerequisite is already unlocked. */
+  cost: number;
+  prerequisites: string[];
+  /** One-time economic payoff applied the moment this tech unlocks — a real, felt reward for research, not just a checkbox. */
+  economyEffect: EconomyDelta;
+}
+
+export interface ResearchState {
+  /** 0..100 — invested national R&D capability, grown via investInResearch. */
+  capability: number;
+  accumulatedPoints: number;
+  unlockedTechIds: string[];
+}
+
+/**
+ * IMMIGRATION & DEMOGRAPHICS — population as a real, moving number: natural
+ * growth (births minus deaths) plus net migration, the latter driven by how
+ * the country's economy compares to the wider world and by the player's own
+ * openness policy. Feeds back into the labor force (economy) and voter bloc
+ * sizes (opinion). See engine/systems/demographics.ts.
+ */
+export type ImmigrationPolicyLevel = 'closed' | 'restricted' | 'open';
+
+export interface DemographicsState {
+  /** Thousands of people. */
+  population: number;
+  /** Percent/turn — births minus deaths, before migration. */
+  naturalGrowthRate: number;
+  /** Percent/turn of population, positive net-in, negative net-out. */
+  netMigrationRate: number;
+  policy: ImmigrationPolicyLevel;
+}
+
+/**
+ * HEALTHCARE, EDUCATION & WELFARE — three independently-set funding tiers,
+ * each nudging a real outcome indicator toward a funding-implied target at
+ * a decay rate (same "sticky, not instant" shape as economy/approval), which
+ * in turn feed back into approval and the wider economy. See
+ * engine/systems/socialPolicy.ts.
+ */
+export type SocialFundingTier = 'minimal' | 'standard' | 'generous';
+
+export interface SocialPolicyState {
+  healthcareFunding: SocialFundingTier;
+  educationFunding: SocialFundingTier;
+  welfareFunding: SocialFundingTier;
+  /** Years. */
+  lifeExpectancy: number;
+  /** 0..100. */
+  literacyRate: number;
+  /** 0..100. */
+  povertyRate: number;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -730,6 +837,11 @@ export interface GameState {
   privateGoodsStockpile: Record<ProcessedGoodType, number>;
   /** Current market price for every raw resource and processed good. See engine/systems/market.ts. */
   marketPrices: Record<RawResourceType | ProcessedGoodType, number>;
+  court: Court;
+  judicialReviewCases: JudicialReviewCase[];
+  research: ResearchState;
+  demographics: DemographicsState;
+  socialPolicy: SocialPolicyState;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

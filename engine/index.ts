@@ -152,6 +152,27 @@ import { RAW_RESOURCES } from '../content/resources/resourceTypes';
 import { MANUFACTURING_RECIPES } from '../content/resources/recipes';
 import { RAW_RESOURCE_BASE_PRICES, PROCESSED_GOOD_BASE_PRICES } from '../content/resources/market';
 import {
+  applyConfirmationResult,
+  canHearCases,
+  computeCourtIdeology,
+  computeStrikeDownProbability,
+  createEmptyCourt,
+  nominateJustice,
+  resolveConfirmationVote,
+  resolveJudicialReview,
+  rollForJudicialReviewChallenge,
+  rollForJusticeRetirements,
+  type ConfirmationVoteResult,
+} from './systems/judiciary';
+import { advanceResearchPoints, canAffordTech, isTechAvailable, unlockTech } from './systems/research';
+import { TECH_TREE } from '../content/research/techTree';
+import {
+  advanceDemographicsTurn,
+  applyDemographicChangeToBlocs,
+  computeLaborForceEffect,
+} from './systems/demographics';
+import { advanceSocialIndicators, computeSocialPolicyApprovalImpact, computeSocialPolicyBudgetEffect } from './systems/socialPolicy';
+import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
   getProvinces,
@@ -222,9 +243,16 @@ export * from './systems/mining';
 export * from './systems/logistics';
 export * from './systems/manufacturing';
 export * from './systems/market';
+export * from './systems/judiciary';
+export * from './systems/research';
+export * from './systems/demographics';
+export * from './systems/socialPolicy';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
+
+/** Fixed bench size for the judiciary — see engine/systems/judiciary.ts. */
+export const DEFAULT_COURT_SIZE = 5;
 
 const STARTING_ECONOMY: EconomyState = {
   gdpGrowth: 2.1,
@@ -410,6 +438,18 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     stateGoodsStockpile,
     privateGoodsStockpile,
     marketPrices,
+    court: createEmptyCourt(DEFAULT_COURT_SIZE),
+    judicialReviewCases: [],
+    research: { capability: 20, accumulatedPoints: 0, unlockedTechIds: [] },
+    demographics: { population: 5000, naturalGrowthRate: 0.05, netMigrationRate: 0, policy: 'restricted' },
+    socialPolicy: {
+      healthcareFunding: 'standard',
+      educationFunding: 'standard',
+      welfareFunding: 'standard',
+      lifeExpectancy: 75,
+      literacyRate: 88,
+      povertyRate: 14,
+    },
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -940,6 +980,86 @@ export function runIndustryTurn(state: GameState, rng: SeededRng): GameState {
   };
 }
 
+/**
+ * Resolves one turn of the judiciary: any confirmed justice has a small
+ * ongoing chance of retiring (vacating their seat), any review case still
+ * 'pending' from last turn is resolved against the court's current
+ * ideology, and — once the bench has a quorum — any newly-passed bill with
+ * no review case on file yet has a real chance of being freshly
+ * challenged (to be resolved next turn, giving the challenge one turn of
+ * real suspense rather than an instant verdict).
+ */
+export function runJudiciaryTurn(state: GameState, rng: SeededRng): GameState {
+  const court = rollForJusticeRetirements(state.court, rng);
+
+  let bills = state.bills;
+  const resolvedCases = state.judicialReviewCases.map((reviewCase) => {
+    if (reviewCase.status !== 'pending') return reviewCase;
+    const courtIdeology = computeCourtIdeology(court);
+    if (!courtIdeology) return reviewCase;
+    const bill = bills.find((b) => b.id === reviewCase.billId);
+    const sponsor = bill ? state.politicians.find((p) => p.id === bill.sponsorId) : undefined;
+    const strikeDownProbability = computeStrikeDownProbability(courtIdeology, sponsor?.ideology ?? { economic: 0, social: 0 });
+    const resolved = resolveJudicialReview(reviewCase, strikeDownProbability, rng, state.turn);
+    if (resolved.status === 'struck_down') {
+      bills = bills.map((b) => (b.id === reviewCase.billId ? { ...b, status: 'struck_down' as const } : b));
+    }
+    return resolved;
+  });
+
+  let judicialReviewCases = resolvedCases;
+  if (canHearCases(court)) {
+    const alreadyFiledBillIds = new Set(judicialReviewCases.map((c) => c.billId));
+    for (const bill of bills) {
+      if (bill.status !== 'passed' || alreadyFiledBillIds.has(bill.id)) continue;
+      if (rollForJudicialReviewChallenge(rng)) {
+        judicialReviewCases = [
+          ...judicialReviewCases,
+          { id: `review-${bill.id}`, billId: bill.id, billTitle: bill.title, turnFiled: state.turn, status: 'pending' as const },
+        ];
+      }
+    }
+  }
+
+  return { ...state, court, bills, judicialReviewCases };
+}
+
+/** Accumulates this turn's research points. Unlocking a tech is always a deliberate player action (see unlockTechAction), never automatic. */
+export function runResearchTurn(state: GameState): GameState {
+  return { ...state, research: advanceResearchPoints(state.research) };
+}
+
+/**
+ * Advances population by natural growth plus net migration, then feeds
+ * that migration back into the economy (a growing/shrinking labor force is
+ * a real, if modest, tailwind or headwind) and into voter bloc
+ * persuadability (rapid demographic change leaves more of the electorate
+ * genuinely undecided, regardless of which direction it runs).
+ */
+export function runDemographicsTurn(state: GameState): GameState {
+  const demographics = advanceDemographicsTurn(state.demographics, state.economy);
+  const economy = applyImmediateEffect(state.economy, computeLaborForceEffect(demographics.netMigrationRate));
+  const voterBlocs = applyDemographicChangeToBlocs(state.voterBlocs, demographics.netMigrationRate);
+  return { ...state, demographics, economy, voterBlocs };
+}
+
+const SOCIAL_POLICY_APPROVAL_DECAY_TURNS = 6;
+
+/** Nudges healthcare/education/welfare outcome indicators toward their funding-implied targets, bills the ongoing cost, and reflects the result back onto the player's public approval. */
+export function runSocialPolicyTurn(state: GameState): GameState {
+  const socialPolicy = advanceSocialIndicators(state.socialPolicy);
+  const economy = applyImmediateEffect(state.economy, computeSocialPolicyBudgetEffect(socialPolicy));
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) =>
+        p.id === player.id
+          ? pushApprovalEvent(p, 'public', computeSocialPolicyApprovalImpact(socialPolicy), SOCIAL_POLICY_APPROVAL_DECAY_TURNS)
+          : p
+      )
+    : state.politicians;
+  return { ...state, socialPolicy, economy, politicians };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -961,6 +1081,10 @@ export function advanceTurn(state: GameState): GameState {
   next = runWealthScandalTurn(next, rng);
   next = runSummitTurn(next, rng);
   next = runIndustryTurn(next, rng);
+  next = runJudiciaryTurn(next, rng);
+  next = runResearchTurn(next);
+  next = runDemographicsTurn(next);
+  next = runSocialPolicyTurn(next);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1370,6 +1494,85 @@ export function sellProcessedGoodAction(
     },
     sale,
   };
+}
+
+export type JudiciaryActionFailureReason = 'invalid_seat' | 'no_nominee' | 'already_confirmed';
+
+export interface JudiciaryActionOutcome {
+  success: boolean;
+  reason?: JudiciaryActionFailureReason;
+}
+
+/**
+ * The player nominates a fresh candidate to a court seat — vacant, or
+ * replacing whoever's currently sitting there awaiting confirmation (an
+ * already-confirmed justice can't be un-nominated this way; they have to
+ * retire on their own). The nominee's ideology jitters around the player's
+ * own party — heads of government tend to nominate ideologically
+ * sympathetic judges — and integrity is drawn fresh each time, so a "safe"
+ * pick is never guaranteed.
+ */
+export function nominateJusticeAction(state: GameState, seatIndex: number): { state: GameState; outcome: JudiciaryActionOutcome } {
+  if (seatIndex < 0 || seatIndex >= state.court.seats.length) {
+    return { state, outcome: { success: false, reason: 'invalid_seat' } };
+  }
+  const existing = state.court.seats[seatIndex];
+  if (existing && existing.status === 'confirmed') {
+    return { state, outcome: { success: false, reason: 'already_confirmed' } };
+  }
+
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const playerParty = state.parties.find((p) => p.id === player?.partyId);
+  const baseIdeology = playerParty?.ideology ?? { economic: 0, social: 0 };
+  const jitter = () => (rng.next() - 0.5) * 40;
+  const nominee = {
+    id: `justice-${state.turn}-${seatIndex}-${rng.nextInt(1000, 9999)}`,
+    name: generateName(rng),
+    ideology: { economic: clampAxis(baseIdeology.economic + jitter()), social: clampAxis(baseIdeology.social + jitter()) },
+    integrity: rng.nextInt(3, 10),
+  };
+
+  const court = nominateJustice(state.court, seatIndex, nominee, state.turn);
+  return { state: { ...state, court, rngState: rng.getState() }, outcome: { success: true } };
+}
+
+/** Puts the nominee currently sitting in `seatIndex` to a full-chamber confirmation vote. A simple majority confirms; a rejected nominee leaves the seat vacant again. */
+export function confirmJusticeAction(
+  state: GameState,
+  seatIndex: number
+): { state: GameState; outcome: JudiciaryActionOutcome; result: ConfirmationVoteResult | null } {
+  const nominee = state.court.seats[seatIndex];
+  if (!nominee || nominee.status !== 'nominated') {
+    return { state, outcome: { success: false, reason: 'no_nominee' }, result: null };
+  }
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveConfirmationVote(nominee, state.politicians, rng);
+  const court = applyConfirmationResult(state.court, seatIndex, result);
+  return { state: { ...state, court, rngState: rng.getState() }, outcome: { success: true }, result };
+}
+
+export type TechActionFailureReason = 'tech_not_found' | 'already_unlocked' | 'prerequisites_not_met' | 'insufficient_points';
+
+export interface TechActionOutcome {
+  success: boolean;
+  reason?: TechActionFailureReason;
+}
+
+/** Spends accumulated research points to unlock a tech-tree node, applying its one-time economic payoff immediately. */
+export function unlockTechAction(state: GameState, techId: string): { state: GameState; outcome: TechActionOutcome } {
+  const tech = TECH_TREE.find((t) => t.id === techId);
+  if (!tech) return { state, outcome: { success: false, reason: 'tech_not_found' } };
+  if (!isTechAvailable(tech, state.research.unlockedTechIds)) {
+    const alreadyUnlocked = state.research.unlockedTechIds.includes(tech.id);
+    return { state, outcome: { success: false, reason: alreadyUnlocked ? 'already_unlocked' : 'prerequisites_not_met' } };
+  }
+  if (!canAffordTech(tech, state.research.accumulatedPoints)) {
+    return { state, outcome: { success: false, reason: 'insufficient_points' } };
+  }
+  const { research, economyEffect } = unlockTech(state.research, tech);
+  const economy = applyImmediateEffect(state.economy, economyEffect);
+  return { state: { ...state, research, economy }, outcome: { success: true } };
 }
 
 /**
