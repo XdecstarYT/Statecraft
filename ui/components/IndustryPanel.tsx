@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import {
   MAX_FACTORY_TIER,
   MAX_MINE_TIER,
@@ -7,6 +7,7 @@ import {
   type FacilityOwnership,
   type ProcessedGoodType,
   type RawResourceType,
+  type ResourceDeposit,
 } from '../../engine';
 import { RAW_RESOURCES } from '../../content/resources/resourceTypes';
 import { MANUFACTURING_RECIPES } from '../../content/resources/recipes';
@@ -16,6 +17,47 @@ const RESOURCE_NAMES: Record<string, string> = Object.fromEntries(RAW_RESOURCES.
 
 function titleCase(s: string): string {
   return s.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// Groups resources/goods into broad categories purely for display — doesn't affect any game math.
+const RESOURCE_CATEGORY: Record<RawResourceType, string> = {
+  iron_ore: 'Metals & Minerals',
+  copper_ore: 'Metals & Minerals',
+  bauxite: 'Metals & Minerals',
+  gold_ore: 'Metals & Minerals',
+  rare_earth_minerals: 'Metals & Minerals',
+  stone: 'Metals & Minerals',
+  coal: 'Fuels & Energy',
+  crude_oil: 'Fuels & Energy',
+  natural_gas: 'Fuels & Energy',
+  grain: 'Agriculture & Timber',
+  timber: 'Agriculture & Timber',
+};
+const RESOURCE_CATEGORY_ORDER = ['Metals & Minerals', 'Fuels & Energy', 'Agriculture & Timber'];
+
+const GOOD_CATEGORY: Record<ProcessedGoodType, string> = {
+  steel: 'Metals & Alloys',
+  copper_wire: 'Metals & Alloys',
+  aluminum: 'Metals & Alloys',
+  machinery: 'Metals & Alloys',
+  jewelry: 'Metals & Alloys',
+  refined_fuel: 'Energy & Chemicals',
+  chemicals: 'Energy & Chemicals',
+  lumber: 'Agriculture & Timber',
+  processed_food: 'Agriculture & Timber',
+  electronics: 'Electronics',
+};
+const GOOD_CATEGORY_ORDER = ['Metals & Alloys', 'Energy & Chemicals', 'Agriculture & Timber', 'Electronics'];
+
+function groupByCategory<T>(items: T[], categoryOf: (item: T) => string, order: string[]): [string, T[]][] {
+  const buckets = new Map<string, T[]>();
+  for (const item of items) {
+    const category = categoryOf(item);
+    const bucket = buckets.get(category);
+    if (bucket) bucket.push(item);
+    else buckets.set(category, [item]);
+  }
+  return order.filter((category) => buckets.has(category)).map((category) => [category, buckets.get(category)!]);
 }
 
 export function IndustryPanel() {
@@ -43,18 +85,28 @@ export function IndustryPanel() {
   const [sellGoodUnits, setSellGoodUnits] = useState(20);
   const [sellGoodOwnership, setSellGoodOwnership] = useState<FacilityOwnership>('state');
 
+  const [foreignSearch, setForeignSearch] = useState('');
+
   const provinces = useMemo(() => (game ? getProvinces(game.country) : []), [game]);
 
   if (!game) return null;
 
   const player = game.politicians.find((p) => p.isPlayer);
   const domesticDeposits = game.resourceDeposits.filter((d) => d.locationType === 'domestic');
-  const foreignDeposits = game.resourceDeposits.filter((d) => d.locationType === 'foreign');
 
   const locationName = (id: string, type: FacilityLocationType): string =>
     type === 'domestic'
       ? provinces.find((p) => p.id === id)?.name ?? id
       : game.foreignCounterparts.find((c) => c.id === id)?.name ?? id;
+
+  const foreignSearchQuery = foreignSearch.trim().toLowerCase();
+  const foreignDeposits = game.resourceDeposits.filter((d) => {
+    if (d.locationType !== 'foreign') return false;
+    if (!foreignSearchQuery) return true;
+    const resourceLabel = (RESOURCE_NAMES[d.resource] ?? d.resource).toLowerCase();
+    const nationLabel = locationName(d.locationId, 'foreign').toLowerCase();
+    return resourceLabel.includes(foreignSearchQuery) || nationLabel.includes(foreignSearchQuery);
+  });
 
   const mineForDeposit = (depositId: string) => game.mines.find((m) => m.depositId === depositId);
 
@@ -63,7 +115,7 @@ export function IndustryPanel() {
       ? provinces.map((p) => ({ id: p.id, name: p.name }))
       : game.foreignCounterparts.map((c) => ({ id: c.id, name: c.name }));
 
-  const renderDepositList = (deposits: typeof domesticDeposits, locationType: FacilityLocationType) => (
+  const renderDepositList = (deposits: ResourceDeposit[], locationType: FacilityLocationType) => (
     <ul className="scandal-list">
       {deposits.map((d) => {
         const mine = mineForDeposit(d.id);
@@ -96,6 +148,31 @@ export function IndustryPanel() {
       })}
       {deposits.length === 0 && <p className="muted">No deposits here.</p>}
     </ul>
+  );
+
+  const renderCategorizedDeposits = (
+    deposits: ResourceDeposit[],
+    locationType: FacilityLocationType,
+    defaultOpen: boolean
+  ) => {
+    const groups = groupByCategory(deposits, (d) => RESOURCE_CATEGORY[d.resource] ?? 'Other', RESOURCE_CATEGORY_ORDER);
+    if (groups.length === 0) return <p className="muted">No deposits found.</p>;
+    return groups.map(([category, items]) => (
+      <details key={category} className="category-group" open={defaultOpen}>
+        <summary>
+          <span>{category}</span>
+          <span className="category-count">{items.length}</span>
+        </summary>
+        {renderDepositList(items, locationType)}
+      </details>
+    ));
+  };
+
+  const rawResourcesByCategory = groupByCategory(RAW_RESOURCES, (r) => RESOURCE_CATEGORY[r.id] ?? 'Other', RESOURCE_CATEGORY_ORDER);
+  const recipesByCategory = groupByCategory(
+    MANUFACTURING_RECIPES,
+    (r) => GOOD_CATEGORY[r.outputGood] ?? 'Other',
+    GOOD_CATEGORY_ORDER
   );
 
   return (
@@ -133,11 +210,18 @@ export function IndustryPanel() {
       <div className="panel-columns">
         <div>
           <h4 className="subheading">Domestic Deposits</h4>
-          {renderDepositList(domesticDeposits, 'domestic')}
+          {renderCategorizedDeposits(domesticDeposits, 'domestic', true)}
         </div>
         <div>
           <h4 className="subheading">Foreign Deposits</h4>
-          {renderDepositList(foreignDeposits, 'foreign')}
+          <input
+            type="text"
+            placeholder="Search resource or nation…"
+            value={foreignSearch}
+            onChange={(e) => setForeignSearch(e.target.value)}
+            style={{ marginBottom: '0.5rem', width: '100%' }}
+          />
+          {renderCategorizedDeposits(foreignDeposits, 'foreign', foreignSearchQuery.length > 0)}
         </div>
       </div>
 
@@ -170,10 +254,14 @@ export function IndustryPanel() {
         <label>
           Recipe
           <select value={factoryRecipeId} onChange={(e) => setFactoryRecipeId(e.target.value)}>
-            {MANUFACTURING_RECIPES.map((r) => (
-              <option key={r.id} value={r.id}>
-                {titleCase(r.outputGood)}
-              </option>
+            {GOOD_CATEGORY_ORDER.map((category) => (
+              <optgroup key={category} label={category}>
+                {MANUFACTURING_RECIPES.filter((r) => GOOD_CATEGORY[r.outputGood] === category).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {titleCase(r.outputGood)}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -238,12 +326,19 @@ export function IndustryPanel() {
           </tr>
         </thead>
         <tbody>
-          {RAW_RESOURCES.map((r) => (
-            <tr key={r.id}>
-              <td>{r.name}</td>
-              <td>{(game.rawResourceStockpile[r.id] ?? 0).toFixed(0)}</td>
-              <td>{(game.marketPrices[r.id] ?? 0).toFixed(2)}</td>
-            </tr>
+          {rawResourcesByCategory.map(([category, resources]) => (
+            <Fragment key={category}>
+              <tr className="table-category-row">
+                <td colSpan={3}>{category}</td>
+              </tr>
+              {resources.map((r) => (
+                <tr key={r.id}>
+                  <td>{r.name}</td>
+                  <td>{(game.rawResourceStockpile[r.id] ?? 0).toFixed(0)}</td>
+                  <td>{(game.marketPrices[r.id] ?? 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -251,10 +346,14 @@ export function IndustryPanel() {
         <label>
           Resource
           <select value={sellRawId} onChange={(e) => setSellRawId(e.target.value as RawResourceType)}>
-            {RAW_RESOURCES.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
+            {RESOURCE_CATEGORY_ORDER.map((category) => (
+              <optgroup key={category} label={category}>
+                {RAW_RESOURCES.filter((r) => RESOURCE_CATEGORY[r.id] === category).map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -290,13 +389,20 @@ export function IndustryPanel() {
           </tr>
         </thead>
         <tbody>
-          {MANUFACTURING_RECIPES.map((r) => (
-            <tr key={r.outputGood}>
-              <td>{titleCase(r.outputGood)}</td>
-              <td>{(game.stateGoodsStockpile[r.outputGood] ?? 0).toFixed(0)}</td>
-              <td>{(game.privateGoodsStockpile[r.outputGood] ?? 0).toFixed(0)}</td>
-              <td>{(game.marketPrices[r.outputGood] ?? 0).toFixed(2)}</td>
-            </tr>
+          {recipesByCategory.map(([category, recipes]) => (
+            <Fragment key={category}>
+              <tr className="table-category-row">
+                <td colSpan={4}>{category}</td>
+              </tr>
+              {recipes.map((r) => (
+                <tr key={r.outputGood}>
+                  <td>{titleCase(r.outputGood)}</td>
+                  <td>{(game.stateGoodsStockpile[r.outputGood] ?? 0).toFixed(0)}</td>
+                  <td>{(game.privateGoodsStockpile[r.outputGood] ?? 0).toFixed(0)}</td>
+                  <td>{(game.marketPrices[r.outputGood] ?? 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </Fragment>
           ))}
         </tbody>
       </table>
@@ -304,10 +410,14 @@ export function IndustryPanel() {
         <label>
           Good
           <select value={sellGoodId} onChange={(e) => setSellGoodId(e.target.value as ProcessedGoodType)}>
-            {MANUFACTURING_RECIPES.map((r) => (
-              <option key={r.outputGood} value={r.outputGood}>
-                {titleCase(r.outputGood)}
-              </option>
+            {GOOD_CATEGORY_ORDER.map((category) => (
+              <optgroup key={category} label={category}>
+                {MANUFACTURING_RECIPES.filter((r) => GOOD_CATEGORY[r.outputGood] === category).map((r) => (
+                  <option key={r.outputGood} value={r.outputGood}>
+                    {titleCase(r.outputGood)}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>

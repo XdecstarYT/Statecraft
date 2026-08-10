@@ -339,6 +339,59 @@ button:disabled {
   margin: 0.9rem 0 0.5rem;
 }
 
+.category-group {
+  background: var(--bg-elevated-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.5rem;
+  padding: 0 0.7rem;
+}
+
+.category-group summary {
+  cursor: pointer;
+  padding: 0.55rem 0;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  list-style: none;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.category-group summary::-webkit-details-marker {
+  display: none;
+}
+
+.category-group summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 0.45rem;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.category-group[open] summary::before {
+  transform: rotate(90deg);
+}
+
+.category-group .scandal-list {
+  padding-bottom: 0.6rem;
+}
+
+.category-count {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
+.table-category-row td {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: var(--bg-elevated-2);
+  padding-top: 0.5rem;
+}
+
 .muted {
   color: var(--text-muted);
   font-size: 0.8rem;
