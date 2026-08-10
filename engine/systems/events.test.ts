@@ -96,6 +96,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
     infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
     socialMedia: { posts: [], followerCount: 1000 },
+    movements: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: { gdpGrowth: 2, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] },

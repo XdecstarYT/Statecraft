@@ -52,6 +52,8 @@ import {
   proposeBill,
   advanceToCommittee,
   relationshipKey,
+  runMovementsTurn,
+  applyBillOutcomeToApproval,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -1239,5 +1241,91 @@ describe('advanceBillToFloor (strategic opposition whipping)', () => {
   it('is a no-op for an unknown bill id', () => {
     const state = createNewGame(1);
     expect(advanceBillToFloor(state, 'no-such-bill')).toBe(state);
+  });
+});
+
+describe('runMovementsTurn (grassroots movements)', () => {
+  function withAggrievedBloc(base: GameState): GameState {
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const politicians = base.politicians.map((p) =>
+      p.id === player.id ? { ...p, ideology: { economic: 80, social: 80 } } : p
+    );
+    const voterBlocs: GameState['voterBlocs'] = [
+      { id: 'aggrieved-bloc', name: 'Aggrieved Bloc', size: 0.5, ideology: { economic: -80, social: -80 }, persuadability: 0.8, issueSalience: [] },
+    ];
+    return { ...base, politicians, voterBlocs };
+  }
+
+  it('eventually organizes a movement out of a badly aggrieved voter bloc', () => {
+    let state = withAggrievedBloc(createNewGame(1));
+    let spawned = false;
+    for (let i = 0; i < 100 && !spawned; i++) {
+      state = runMovementsTurn(state, new SeededRng(state.rngState));
+      state = { ...state, rngState: state.rngState + 1, turn: state.turn + 1 };
+      if (state.movements.length > 0) spawned = true;
+    }
+    expect(spawned).toBe(true);
+    expect(state.movements[0].originBlocId).toBe('aggrieved-bloc');
+  });
+
+  it('decays and prunes a movement once its origin bloc stops being aggrieved', () => {
+    const base = createNewGame(1);
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const state: GameState = {
+      ...base,
+      politicians: base.politicians.map((p) => (p.id === player.id ? { ...p, ideology: { economic: 0, social: 0 } } : p)),
+      voterBlocs: [{ id: 'content-bloc', name: 'Content Bloc', size: 0.5, ideology: { economic: 5, social: 5 }, persuadability: 0.8, issueSalience: [] }],
+      movements: [
+        { id: 'm1', name: 'Fading Movement', mission: 'Testing.', ideology: { economic: -80, social: -80 }, originBlocId: 'content-bloc', size: 2, founded: 1 },
+      ],
+    };
+    const next = runMovementsTurn(state, new SeededRng(1));
+    expect(next.movements.find((m) => m.id === 'm1')).toBeUndefined();
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = withAggrievedBloc(createNewGame(1));
+    const a = runMovementsTurn(state, new SeededRng(state.rngState));
+    const b = runMovementsTurn(state, new SeededRng(state.rngState));
+    expect(a.movements).toEqual(b.movements);
+  });
+});
+
+describe('applyBillOutcomeToApproval (movement reactions)', () => {
+  it('gives a bigger approval boost to a passed bill when a supportive movement backs it', () => {
+    const base = createNewGame(1);
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const withoutMovement = applyBillOutcomeToApproval(base, player.id, true);
+    const withMovement = applyBillOutcomeToApproval(
+      {
+        ...base,
+        movements: [
+          { id: 'm1', name: 'Allied Movement', mission: 'Testing.', ideology: player.ideology, originBlocId: 'b', size: 80, founded: 1 },
+        ],
+      },
+      player.id,
+      true
+    );
+
+    const impactWithout = withoutMovement.politicians.find((p) => p.id === player.id)!.approvalEvents.at(-1)!.impact;
+    const impactWith = withMovement.politicians.find((p) => p.id === player.id)!.approvalEvents.at(-1)!.impact;
+    expect(impactWith).toBeGreaterThan(impactWithout);
+  });
+
+  it('is unaffected by movements when the bill fails', () => {
+    const base = createNewGame(1);
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const withMovement = applyBillOutcomeToApproval(
+      {
+        ...base,
+        movements: [
+          { id: 'm1', name: 'Allied Movement', mission: 'Testing.', ideology: player.ideology, originBlocId: 'b', size: 80, founded: 1 },
+        ],
+      },
+      player.id,
+      false
+    );
+    const impact = withMovement.politicians.find((p) => p.id === player.id)!.approvalEvents.at(-1)!.impact;
+    expect(impact).toBe(-15);
   });
 });

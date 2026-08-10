@@ -36,6 +36,7 @@ import { CrimePanel } from './components/CrimePanel';
 import { EnvironmentPanel } from './components/EnvironmentPanel';
 import { InfrastructurePanel } from './components/InfrastructurePanel';
 import { ChirpPanel } from './components/ChirpPanel';
+import { MovementsPanel } from './components/MovementsPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -302,10 +303,13 @@ export default function App() {
       )}
 
       {activeTab === 'opinion' && (
-        <div className="panel-columns">
-          <OpinionPanel />
-          <MediaPanel />
-        </div>
+        <>
+          <div className="panel-columns">
+            <OpinionPanel />
+            <MediaPanel />
+          </div>
+          <MovementsPanel />
+        </>
       )}
 
       {activeTab === 'power' && (

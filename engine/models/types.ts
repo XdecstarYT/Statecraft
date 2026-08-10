@@ -878,6 +878,28 @@ export interface SocialMediaState {
   followerCount: number;
 }
 
+export type MovementStance = 'hostile' | 'neutral' | 'supportive';
+
+/**
+ * A grassroots movement that organizes out of a voter bloc's accumulated
+ * grievance against how poorly the player's own ideology matches theirs.
+ * Its stance toward the player is always derived fresh from current
+ * ideology (see computeMovementStance in engine/systems/movements.ts),
+ * never stored, so it can never go stale as the player's positions shift.
+ */
+export interface GrassrootsMovement {
+  id: string;
+  name: string;
+  /** A one-line mission statement, assembled from pre-authored templates. */
+  mission: string;
+  ideology: IdeologyPosition;
+  /** The voter bloc this movement organized out of. */
+  originBlocId: string;
+  /** 0..100 — how large/organized the movement currently is. */
+  size: number;
+  founded: number;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -956,6 +978,7 @@ export interface GameState {
   environment: EnvironmentState;
   infrastructure: InfrastructureState;
   socialMedia: SocialMediaState;
+  movements: GrassrootsMovement[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

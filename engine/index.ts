@@ -212,6 +212,16 @@ import {
 } from './systems/socialMedia';
 import { PERSONAS } from '../content/socialMedia/personas';
 import { POST_TEMPLATES } from '../content/socialMedia/postTemplates';
+import {
+  advanceMovementSize,
+  computeAggregateMovementBillReaction,
+  computeMovementApprovalPressure,
+  computeMovementStance,
+  isMovementActive,
+  rollMovementProtest,
+  trySpawnMovement,
+} from './systems/movements';
+import { MOVEMENT_NAME_TEMPLATES, MOVEMENT_MISSION_TEMPLATES } from '../content/movements/nameTemplates';
 import { PLAYER_TWEET_OPTIONS } from '../content/socialMedia/playerTweetOptions';
 import {
   computeVictoryMarginFraction,
@@ -295,6 +305,7 @@ export * from './systems/publicSafety';
 export * from './systems/environment';
 export * from './systems/infrastructure';
 export * from './systems/socialMedia';
+export * from './systems/movements';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -503,6 +514,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
     infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
     socialMedia: { posts: [], followerCount: 1000 },
+    movements: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -1249,6 +1261,56 @@ export function runSocialMediaTurn(state: GameState, rng: SeededRng): GameState 
   return { ...state, socialMedia: { posts, followerCount: state.socialMedia.followerCount + passiveGrowth } };
 }
 
+/**
+ * Resolves one turn of grassroots movement activity: every active movement
+ * grows or decays with how aggrieved its origin bloc currently is (and
+ * fully decayed ones are dropped), a fresh movement may organize out of
+ * whichever bloc is worst-off, the first sufficiently large hostile
+ * movement may stage its own protest (never stacking on an already-active
+ * one), and the net approval pressure of every active movement — support
+ * pulling the player's approval up, hostility pulling it down — lands as a
+ * single real, decaying approval event.
+ */
+export function runMovementsTurn(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const playerIdeology = player?.ideology ?? { economic: 0, social: 0 };
+
+  const advanced = state.movements
+    .map((m) => advanceMovementSize(m, state.voterBlocs, playerIdeology))
+    .filter(isMovementActive);
+
+  const spawned = trySpawnMovement(
+    state.voterBlocs,
+    advanced,
+    playerIdeology,
+    state.turn,
+    rng,
+    MOVEMENT_NAME_TEMPLATES,
+    MOVEMENT_MISSION_TEMPLATES
+  );
+  const movements = spawned ? [...advanced, spawned] : advanced;
+
+  let protests = state.protests;
+  for (const movement of movements) {
+    const stance = computeMovementStance(movement, playerIdeology);
+    const protest = rollMovementProtest(movement, stance, protests, state.turn, rng);
+    if (protest) {
+      protests = [...protests, protest];
+      break;
+    }
+  }
+
+  let politicians = state.politicians;
+  if (player) {
+    const pressure = computeMovementApprovalPressure(movements, playerIdeology);
+    if (pressure !== 0) {
+      politicians = politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', pressure, 4) : p));
+    }
+  }
+
+  return { ...state, movements, protests, politicians };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -1279,6 +1341,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runEnvironmentTurn(next);
   next = runInfrastructureTurn(next);
   next = runSocialMediaTurn(next, rng);
+  next = runMovementsTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -2365,15 +2428,22 @@ export function generateEventCoverage(
  * Pushes a decaying public-approval nudge onto a bill's sponsor after a
  * floor vote — a win bumps them up, a loss knocks them down, but per the
  * approval-update rules in opinion.ts it fades in gradually rather than
- * jumping straight there.
+ * jumping straight there. Any grassroots movement whose ground the bill
+ * touches piles onto the same event: a supportive movement amplifies a win,
+ * a hostile one punishes it (see computeAggregateMovementBillReaction).
  */
 export function applyBillOutcomeToApproval(
   state: GameState,
   sponsorId: string,
   passed: boolean
 ): GameState {
+  const sponsor = state.politicians.find((p) => p.id === sponsorId);
+  const movementReaction = sponsor
+    ? computeAggregateMovementBillReaction(state.movements, sponsor.ideology, passed)
+    : 0;
+  const impact = (passed ? 15 : -15) + movementReaction;
   const politicians = state.politicians.map((p) =>
-    p.id === sponsorId ? pushApprovalEvent(p, 'public', passed ? 15 : -15, 6) : p
+    p.id === sponsorId ? pushApprovalEvent(p, 'public', impact, 6) : p
   );
   return { ...state, politicians };
 }
