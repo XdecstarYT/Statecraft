@@ -27,6 +27,10 @@ import { LegacyPanel } from './components/LegacyPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
 import { AccessibilityPanel } from './components/AccessibilityPanel';
 import { IndustryPanel } from './components/IndustryPanel';
+import { JudiciaryPanel } from './components/JudiciaryPanel';
+import { ResearchPanel } from './components/ResearchPanel';
+import { DemographicsPanel } from './components/DemographicsPanel';
+import { SocialPolicyPanel } from './components/SocialPolicyPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -34,6 +38,7 @@ const TABS = [
   { id: 'power', label: 'Power' },
   { id: 'world', label: 'World' },
   { id: 'industry', label: 'Industry' },
+  { id: 'governance', label: 'Governance' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
   { id: 'legacy', label: 'Legacy' },
@@ -315,6 +320,19 @@ export default function App() {
       )}
 
       {activeTab === 'industry' && <IndustryPanel />}
+
+      {activeTab === 'governance' && (
+        <>
+          <div className="panel-columns">
+            <JudiciaryPanel />
+            <ResearchPanel />
+          </div>
+          <div className="panel-columns">
+            <DemographicsPanel />
+            <SocialPolicyPanel />
+          </div>
+        </>
+      )}
 
       {activeTab === 'events' && <EventLogPanel />}
       {activeTab === 'lab' && (

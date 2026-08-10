@@ -33,6 +33,14 @@ import {
   sellRawResourceAction as engineSellRawResource,
   sellProcessedGoodAction as engineSellProcessedGood,
   investInLogistics,
+  nominateJusticeAction as engineNominateJustice,
+  confirmJusticeAction as engineConfirmJustice,
+  investInResearch,
+  unlockTechAction as engineUnlockTech,
+  setImmigrationPolicy,
+  setHealthcareFunding,
+  setEducationFunding,
+  setWelfareFunding,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -135,13 +143,19 @@ import {
   type FoundPartyResult,
   type GameState,
   type IdeologyPosition,
+  type ImmigrationPolicyLevel,
   type IntelligenceInvestmentTier,
+  type JudiciaryActionOutcome,
+  type ConfirmationVoteResult,
   type LocalRaceOutcome,
   type LogisticsInvestmentTier,
   type MilitaryInvestmentTier,
   type ProcessedGoodType,
   type RawResourceType,
+  type ResearchInvestmentTier,
   type SaleResult,
+  type SocialFundingTier,
+  type TechActionOutcome,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -224,6 +238,9 @@ interface StatecraftStore {
   lastSummitOutcome: SummitOutcome | null;
   lastFacilityOutcome: FacilityActionOutcome | null;
   lastSale: (SaleResult & { good: string }) | null;
+  lastJudiciaryOutcome: JudiciaryActionOutcome | null;
+  lastConfirmationResult: ConfirmationVoteResult | null;
+  lastTechOutcome: TechActionOutcome | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -316,6 +333,14 @@ interface StatecraftStore {
   grantAutonomyAction: (provinceId: string) => void;
   callReferendumAction: (provinceId: string) => void;
   suppressMovementAction: (provinceId: string) => void;
+  nominateJusticeAction: (seatIndex: number) => void;
+  confirmJusticeAction: (seatIndex: number) => void;
+  investInResearchAction: (tier: ResearchInvestmentTier) => void;
+  unlockTechAction: (techId: string) => void;
+  setImmigrationPolicyAction: (policy: ImmigrationPolicyLevel) => void;
+  setHealthcareFundingAction: (tier: SocialFundingTier) => void;
+  setEducationFundingAction: (tier: SocialFundingTier) => void;
+  setWelfareFundingAction: (tier: SocialFundingTier) => void;
   buildMineAction: (depositId: string, ownership: FacilityOwnership) => void;
   upgradeMineAction: (mineId: string) => void;
   buildFactoryAction: (
@@ -359,6 +384,9 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastSummitOutcome: null,
   lastFacilityOutcome: null,
   lastSale: null,
+  lastJudiciaryOutcome: null,
+  lastConfirmationResult: null,
+  lastTechOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -1269,5 +1297,58 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { network, economyEffect } = investInLogistics(game.logisticsNetwork, tier);
     const economy = applyImmediateEffect(game.economy, economyEffect);
     set({ game: { ...game, logisticsNetwork: network, economy } });
+  },
+
+  nominateJusticeAction: (seatIndex) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineNominateJustice(game, seatIndex);
+    set({ game: state, lastJudiciaryOutcome: outcome });
+  },
+
+  confirmJusticeAction: (seatIndex) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome, result } = engineConfirmJustice(game, seatIndex);
+    set({ game: state, lastJudiciaryOutcome: outcome, lastConfirmationResult: result });
+  },
+
+  investInResearchAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    const { research, economyEffect } = investInResearch(game.research, tier);
+    const economy = applyImmediateEffect(game.economy, economyEffect);
+    set({ game: { ...game, research, economy } });
+  },
+
+  unlockTechAction: (techId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineUnlockTech(game, techId);
+    set({ game: state, lastTechOutcome: outcome });
+  },
+
+  setImmigrationPolicyAction: (policy) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, demographics: setImmigrationPolicy(game.demographics, policy) } });
+  },
+
+  setHealthcareFundingAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, socialPolicy: setHealthcareFunding(game.socialPolicy, tier) } });
+  },
+
+  setEducationFundingAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, socialPolicy: setEducationFunding(game.socialPolicy, tier) } });
+  },
+
+  setWelfareFundingAction: (tier) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: { ...game, socialPolicy: setWelfareFunding(game.socialPolicy, tier) } });
   },
 }));
