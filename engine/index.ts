@@ -222,12 +222,14 @@ import {
 } from './systems/electionNight';
 import {
   applyNpcStances,
-  computeAllPartyMomentum,
+  attemptSmearCampaign,
+  computeStrategicMomentum,
   decideNpcScandalResponse,
   selectNpcBillSponsor,
   selectNpcBillTemplate,
   selectNpcCampaigner,
   selectNpcCorruptionTier,
+  selectSmearCampaigner,
   updateRelationshipsAfterVote,
 } from './systems/npc';
 import { clamp, clampAxis } from './ideology';
@@ -624,6 +626,7 @@ function resolveGovernment(state: GameState, rng: SeededRng): GameState {
 const NPC_BILL_SPONSOR_CHANCE = 0.3;
 const NPC_CAMPAIGN_CHANCE = 0.35;
 const NPC_CORRUPTION_CHANCE = 0.2;
+const NPC_SMEAR_CHANCE = 0.4;
 
 /**
  * Runs one turn's worth of rule-based NPC behavior: existing NPC-sponsored
@@ -632,9 +635,10 @@ const NPC_CORRUPTION_CHANCE = 0.2;
  * any NPC bill that reaches the floor is resolved immediately (updating
  * relationships from how the floor lined up), a new bill might get
  * sponsored if none is in flight, a rival might front a press interview
- * or rally of their own, and a less scrupulous rival might risk a corrupt
- * act — resolved (and, if exposed, responded to) entirely on their own,
- * never as a player-facing choice.
+ * or rally of their own, an ideologically hostile rival might opportunistically
+ * smear the player while they have a live scandal to point to, and a less
+ * scrupulous rival might risk a corrupt act — resolved (and, if exposed,
+ * responded to) entirely on their own, never as a player-facing choice.
  */
 export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   const { politicians } = state;
@@ -707,6 +711,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   let nextPoliticians = politicians;
   let favorBank = state.favorBank;
   let scandals = state.scandals;
+  let eventLog = state.eventLog;
 
   if (rng.next() < NPC_CAMPAIGN_CHANCE) {
     const campaigner = selectNpcCampaigner(nextPoliticians, rng);
@@ -717,6 +722,37 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       nextPoliticians = nextPoliticians.map((p) =>
         p.id === campaigner.id ? pushApprovalEvent(p, audience, outcome.approvalImpact, 4) : p
       );
+    }
+  }
+
+  if (player) {
+    const playerHasActiveScandal = scandals.some((s) => s.politicianId === player.id && s.status === 'unresolved');
+    if (playerHasActiveScandal && rng.next() < NPC_SMEAR_CHANCE) {
+      const attacker = selectSmearCampaigner(nextPoliticians, player, relationships, true, rng);
+      if (attacker) {
+        const outcome = attemptSmearCampaign(attacker, rng);
+        nextPoliticians = nextPoliticians.map((p) => {
+          if (p.id === attacker.id) return pushApprovalEvent(p, 'public', outcome.attackerApprovalImpact, 4);
+          if (p.id === player.id) return pushApprovalEvent(p, 'public', outcome.targetApprovalImpact, 5);
+          return p;
+        });
+        eventLog = [
+          ...eventLog,
+          outcome.outcome === 'landed'
+            ? {
+                turn: state.turn,
+                category: 'scandal' as const,
+                title: `${attacker.name} goes on the attack`,
+                description: `${attacker.name} seizes on the ongoing scandal to publicly question ${player.name}'s fitness for office. The hit lands.`,
+              }
+            : {
+                turn: state.turn,
+                category: 'scandal' as const,
+                title: `${attacker.name}'s attack backfires`,
+                description: `${attacker.name} tries to make political hay out of ${player.name}'s scandal, but it reads as a cheap shot and draws sympathy the other way.`,
+              },
+        ];
+      }
     }
   }
 
@@ -773,6 +809,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     favorBank,
     scandals,
     interestGroups,
+    eventLog,
   };
 }
 
@@ -2341,6 +2378,27 @@ export function applyBillOutcomeToApproval(
   return { ...state, politicians };
 }
 
+/**
+ * Advances a bill from committee to the floor — and, exactly like an
+ * NPC-sponsored bill already does when runNpcTurn moves it along, locks in
+ * any NPC member's clear-cut stance immediately (strongly aligned allies,
+ * clearly hostile opponents, coalition-partner discipline, and coordinated
+ * opposition-party discipline against a player-sponsored bill). This makes
+ * the whip count the player sees reflect real strategic behavior the moment
+ * the bill hits the floor, instead of a wall of "undecided" that only
+ * resolves once the vote is actually called.
+ */
+export function advanceBillToFloor(state: GameState, billId: string): GameState {
+  const bill = state.bills.find((b) => b.id === billId);
+  if (!bill) return state;
+  const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
+  let nextBill = advanceToFloor(bill);
+  if (sponsor) {
+    nextBill = applyNpcStances(nextBill, state.politicians, sponsor, state.relationships, state.coalition);
+  }
+  return { ...state, bills: state.bills.map((b) => (b.id === billId ? nextBill : b)) };
+}
+
 const BILL_ENACTMENT_DELAY_TURNS = 3;
 
 /**
@@ -2456,10 +2514,11 @@ export interface ElectionOutcome {
 /**
  * Runs a legislative election using whichever system the country's
  * legislature is configured for, and updates each party's seat count from
- * the result. Every party's vote share is scaled by its own momentum —
- * the average public approval of its sitting members — so how each party
- * (not just the player's) governed feeds back into how it fares at the
- * ballot box.
+ * the result. Every party's vote share is scaled by its own strategic
+ * momentum — the average public approval of its sitting members, further
+ * nudged by whether it's actually in real contention for the lead — so how
+ * each party (not just the player's) governed and where it chose to fight
+ * both feed back into how it fares at the ballot box.
  */
 export function runLegislativeElection(
   state: GameState,
@@ -2467,7 +2526,7 @@ export function runLegislativeElection(
 ): { state: GameState; outcome: ElectionOutcome } {
   const rng = SeededRng.fromState(state.rngState);
   const { legislature } = state.country;
-  const momentum = computeAllPartyMomentum(state.politicians, state.parties);
+  const momentum = computeStrategicMomentum(state.politicians, state.parties);
   let outcome: ElectionOutcome;
 
   if (legislature.electoralSystem === 'FPTP') {
@@ -2509,7 +2568,7 @@ export function runLegislativeElection(
  */
 export function beginElectionNight(state: GameState, turnout = 500_000): GameState {
   const rng = SeededRng.fromState(state.rngState);
-  const momentum = computeAllPartyMomentum(state.politicians, state.parties);
+  const momentum = computeStrategicMomentum(state.politicians, state.parties);
   const electionNight = startElectionNight(state.country, state.parties, turnout, rng, momentum);
   return { ...state, electionNight, rngState: rng.getState() };
 }

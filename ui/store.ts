@@ -6,8 +6,8 @@ import {
   addBillProvision,
   adjustRelation,
   advanceCareerTurn,
+  advanceBillToFloor as engineAdvanceBillToFloor,
   advanceToCommittee,
-  advanceToFloor,
   advanceTurn,
   amendBillProvision,
   attemptCloture,
@@ -685,8 +685,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   sendToFloor: (billId) => {
     const game = get().game;
     if (!game) return;
-    const bills = game.bills.map((b) => (b.id === billId ? advanceToFloor(b) : b));
-    set({ game: { ...game, bills } });
+    set({ game: engineAdvanceBillToFloor(game, billId) });
   },
 
   setStance: (billId, politicianId, stance) => {

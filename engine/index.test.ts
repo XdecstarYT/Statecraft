@@ -48,6 +48,10 @@ import {
   runInfrastructureTurn,
   runSocialMediaTurn,
   postTweetAction,
+  advanceBillToFloor,
+  proposeBill,
+  advanceToCommittee,
+  relationshipKey,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -240,6 +244,35 @@ describe('runNpcTurn via advanceTurn', () => {
     }
 
     expect(sawNpcCampaignEvent).toBe(true);
+  });
+
+  it('eventually has a hostile rival smear the player over an active scandal, logged to the event log', () => {
+    let state = createNewGame(21);
+    const rawPlayer = state.politicians.find((p) => p.isPlayer)!;
+    const player = { ...rawPlayer, ideology: { economic: -100, social: -100 } };
+    const rival = {
+      id: 'hostile-rival',
+      name: 'Hostile Rival',
+      isPlayer: false,
+      ideology: { economic: 100, social: 100 },
+      attributes: { charisma: 10, intellect: 5, integrity: 5, network: 5, mediaSavvy: 10 },
+      partyId: 'hostile-rival-party',
+      approval: { public: 50, base: 50, partyElite: 50 },
+      approvalEvents: [],
+    };
+    state = {
+      ...state,
+      politicians: [...state.politicians.filter((p) => p.id !== player.id), player, rival],
+      relationships: { ...state.relationships, [relationshipKey(rival.id, player.id)]: -100 },
+      scandals: [{ id: 'test-scandal', politicianId: player.id, tier: 'medium', turn: state.turn, status: 'unresolved' as const }],
+    };
+
+    let sawSmear = false;
+    for (let i = 0; i < 20; i++) {
+      state = advanceTurn(state);
+      if (state.eventLog.some((e) => e.title.includes('Hostile Rival'))) sawSmear = true;
+    }
+    expect(sawSmear).toBe(true);
   });
 
   it('eventually has a rival risk a corrupt act, resolved without player input', () => {
@@ -1157,5 +1190,54 @@ describe('Chirp social feed', () => {
     const state = createNewGame(1);
     const { outcome } = postTweetAction(state, 'not-a-real-option');
     expect(outcome).toEqual({ success: false, reason: 'option_not_found' });
+  });
+});
+
+describe('advanceBillToFloor (strategic opposition whipping)', () => {
+  function withOpposedRival(base: GameState) {
+    const player = base.politicians.find((p) => p.isPlayer)!;
+    const rival = {
+      id: 'rival-opposition',
+      name: 'Rival',
+      isPlayer: false,
+      ideology: { economic: -80, social: -80 },
+      attributes: { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 },
+      partyId: 'rival-opposition-party',
+      approval: { public: 50, base: 50, partyElite: 50 },
+      approvalEvents: [],
+    };
+    const politicians = base.politicians.map((p) =>
+      p.id === player.id ? { ...p, ideology: { economic: 80, social: 80 } } : p
+    );
+    return { state: { ...base, politicians: [...politicians, rival] }, player, rival };
+  }
+
+  it('locks a distant rival in as "no" the moment a player-sponsored bill reaches the floor, even without a hostile relationship', () => {
+    const { state: base, player } = withOpposedRival(createNewGame(1));
+    let bill = proposeBill({ id: 'test-bill', title: 'Test', provisions: [], sponsorId: player.id });
+    bill = advanceToCommittee(bill);
+    const state = { ...base, bills: [bill] };
+
+    const next = advanceBillToFloor(state, 'test-bill');
+    const resultBill = next.bills.find((b) => b.id === 'test-bill')!;
+    expect(resultBill.status).toBe('floor');
+    expect(resultBill.whipCount['rival-opposition']).toBe('no');
+  });
+
+  it('leaves the same distant rival undecided against an NPC-sponsored bill (no coordinated-opposition boost)', () => {
+    const { state: base, rival } = withOpposedRival(createNewGame(1));
+    const npcSponsor = base.politicians.find((p) => !p.isPlayer && p.id !== rival.id)!;
+    let bill = proposeBill({ id: 'npc-bill', title: 'Test', provisions: [], sponsorId: npcSponsor.id });
+    bill = advanceToCommittee(bill);
+    const state = { ...base, bills: [bill] };
+
+    const next = advanceBillToFloor(state, 'npc-bill');
+    const resultBill = next.bills.find((b) => b.id === 'npc-bill')!;
+    expect(resultBill.whipCount['rival-opposition']).toBeUndefined();
+  });
+
+  it('is a no-op for an unknown bill id', () => {
+    const state = createNewGame(1);
+    expect(advanceBillToFloor(state, 'no-such-bill')).toBe(state);
   });
 });

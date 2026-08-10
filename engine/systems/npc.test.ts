@@ -1,16 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
-import type { Bill, Party, Politician } from '../models/types';
+import type { Bill, Coalition, Party, Politician } from '../models/types';
 import {
   applyNpcStances,
+  attemptSmearCampaign,
+  canSmearCampaign,
   computeAllPartyMomentum,
+  computeCoalitionDisciplineBonus,
   computePartyMomentum,
+  computeStrategicMomentum,
   decideNpcScandalResponse,
   decideNpcStance,
   selectNpcBillSponsor,
   selectNpcBillTemplate,
   selectNpcCampaigner,
   selectNpcCorruptionTier,
+  selectSmearCampaigner,
   updateRelationshipsAfterVote,
 } from './npc';
 
@@ -53,6 +58,69 @@ describe('decideNpcStance', () => {
     const rival = makePolitician({ id: 'rival', partyId: 'party-b', ideology: { economic: -80, social: -80 } });
     expect(decideNpcStance(rival, sponsor, 50)).toBe('undecided');
   });
+
+  it('leaves a moderately opposed member undecided when the sponsor is not the government', () => {
+    const moderate = makePolitician({ id: 'moderate', partyId: 'party-b', ideology: { economic: -20, social: -10 } });
+    expect(decideNpcStance(moderate, sponsor, -5)).toBe('undecided');
+  });
+
+  it('locks a moderately opposed member "no" via coordinated opposition when the sponsor is the player', () => {
+    const playerSponsor = makePolitician({ id: 'sponsor', isPlayer: true, partyId: 'party-a', ideology: { economic: 60, social: 60 } });
+    const moderate = makePolitician({ id: 'moderate', partyId: 'party-b', ideology: { economic: -50, social: -40 } });
+    expect(decideNpcStance(moderate, playerSponsor, -5, { coordinatedOpposition: true })).toBe('no');
+  });
+
+  it('coordinated opposition never flips a genuine ally into a "no"', () => {
+    const playerSponsor = makePolitician({ id: 'sponsor', isPlayer: true, partyId: 'party-a', ideology: { economic: 60, social: 60 } });
+    const ally = makePolitician({ id: 'ally', partyId: 'party-b', ideology: { economic: 55, social: 65 } });
+    expect(decideNpcStance(ally, playerSponsor, 10, { coordinatedOpposition: true })).not.toBe('no');
+  });
+
+  it('a coalition bonus can pull a mildly cross-party-distant member up to a "yes"', () => {
+    const nearAlly = makePolitician({ id: 'nearAlly', partyId: 'party-b', ideology: { economic: 45, social: 45 } });
+    expect(decideNpcStance(nearAlly, sponsor, 0)).toBe('undecided');
+    expect(decideNpcStance(nearAlly, sponsor, 0, { coalitionBonus: 0.15 })).toBe('yes');
+  });
+});
+
+function makeCoalition(overrides: Partial<Coalition> = {}): Coalition {
+  return {
+    id: 'coalition-1',
+    memberPartyIds: ['party-a', 'party-b'],
+    formateurPartyId: 'party-a',
+    primeMinisterId: 'sponsor',
+    seatsHeld: 10,
+    totalSeats: 20,
+    status: 'governing',
+    confidenceVotesFor: 0,
+    confidenceVotesAgainst: 0,
+    formedTurn: 1,
+    ...overrides,
+  };
+}
+
+describe('computeCoalitionDisciplineBonus', () => {
+  const sponsor = makePolitician({ id: 'sponsor', partyId: 'party-a' });
+
+  it('is zero with no active coalition', () => {
+    const member = makePolitician({ id: 'm', partyId: 'party-b' });
+    expect(computeCoalitionDisciplineBonus(member, sponsor, null)).toBe(0);
+  });
+
+  it('is zero when the member already shares the sponsor\'s party', () => {
+    const member = makePolitician({ id: 'm', partyId: 'party-a' });
+    expect(computeCoalitionDisciplineBonus(member, sponsor, makeCoalition())).toBe(0);
+  });
+
+  it('is positive when both parties are in the same coalition', () => {
+    const member = makePolitician({ id: 'm', partyId: 'party-b' });
+    expect(computeCoalitionDisciplineBonus(member, sponsor, makeCoalition())).toBeGreaterThan(0);
+  });
+
+  it('is zero when the member\'s party is outside the coalition', () => {
+    const member = makePolitician({ id: 'm', partyId: 'party-c' });
+    expect(computeCoalitionDisciplineBonus(member, sponsor, makeCoalition())).toBe(0);
+  });
 });
 
 describe('applyNpcStances', () => {
@@ -80,6 +148,22 @@ describe('applyNpcStances', () => {
     const preLocked: Bill = { ...floorBill(), whipCount: { ally: 'no' } };
     const bill = applyNpcStances(preLocked, [sponsor, ally, rival, player], sponsor, {});
     expect(bill.whipCount.ally).toBe('no');
+  });
+
+  it('whips a moderately-opposed rival "no" when the sponsor is the player, but not otherwise', () => {
+    const playerSponsor = makePolitician({ id: 'player', isPlayer: true, partyId: 'party-a', ideology: { economic: 60, social: 60 } });
+    const moderate = makePolitician({ id: 'moderate', partyId: 'party-b', ideology: { economic: -50, social: -40 } });
+
+    const npcBill = applyNpcStances(floorBill(), [sponsor, moderate], sponsor, { 'moderate:sponsor': -5 });
+    expect(npcBill.whipCount.moderate).toBeUndefined();
+
+    const playerBill = applyNpcStances(
+      { ...floorBill(), sponsorId: 'player' },
+      [playerSponsor, moderate],
+      playerSponsor,
+      { 'moderate:player': -5 }
+    );
+    expect(playerBill.whipCount.moderate).toBe('no');
   });
 });
 
@@ -223,6 +307,56 @@ describe('computeAllPartyMomentum', () => {
   });
 });
 
+describe('computeStrategicMomentum', () => {
+  it('boosts a party in real contention for the lead over its plain approval-driven momentum', () => {
+    const leader = makeParty({ id: 'leader', seats: 55 });
+    const contender = makeParty({ id: 'contender', seats: 45 });
+    const politicians = [
+      makePolitician({ id: 'l1', partyId: 'leader', approval: { public: 50, base: 50, partyElite: 50 } }),
+      makePolitician({ id: 'c1', partyId: 'contender', approval: { public: 50, base: 50, partyElite: 50 } }),
+    ];
+    const base = computeAllPartyMomentum(politicians, [leader, contender]);
+    const strategic = computeStrategicMomentum(politicians, [leader, contender]);
+    expect(strategic.leader).toBeGreaterThan(base.leader);
+    expect(strategic.contender).toBeGreaterThan(base.contender);
+  });
+
+  it('penalizes a clear also-ran relative to its plain approval-driven momentum', () => {
+    const leader = makeParty({ id: 'leader', seats: 90 });
+    const longshot = makeParty({ id: 'longshot', seats: 10 });
+    const politicians = [
+      makePolitician({ id: 'l1', partyId: 'leader', approval: { public: 50, base: 50, partyElite: 50 } }),
+      makePolitician({ id: 's1', partyId: 'longshot', approval: { public: 50, base: 50, partyElite: 50 } }),
+    ];
+    const base = computeAllPartyMomentum(politicians, [leader, longshot]);
+    const strategic = computeStrategicMomentum(politicians, [leader, longshot]);
+    expect(strategic.longshot).toBeLessThan(base.longshot);
+  });
+
+  it('never lets the strategic multiplier push momentum outside the 0.7..1.3 band', () => {
+    const leader = makeParty({ id: 'leader', seats: 100 });
+    const politicians = [makePolitician({ id: 'l1', partyId: 'leader', approval: { public: 100, base: 50, partyElite: 50 } })];
+    const strategic = computeStrategicMomentum(politicians, [leader]);
+    expect(strategic.leader).toBeLessThanOrEqual(1.3);
+    expect(strategic.leader).toBeGreaterThanOrEqual(0.7);
+  });
+
+  it('still ranks a popular party above an unpopular one at identical seat share', () => {
+    const partyA = makeParty({ id: 'a', seats: 50 });
+    const partyB = makeParty({ id: 'b', seats: 50 });
+    const popular = [makePolitician({ id: 'a1', partyId: 'a', approval: { public: 90, base: 50, partyElite: 50 } })];
+    const unpopular = [makePolitician({ id: 'b1', partyId: 'b', approval: { public: 10, base: 50, partyElite: 50 } })];
+    const strategic = computeStrategicMomentum([...popular, ...unpopular], [partyA, partyB]);
+    expect(strategic.a).toBeGreaterThan(strategic.b);
+  });
+
+  it('falls back to plain momentum when no party holds any seats yet', () => {
+    const party = makeParty({ id: 'p', seats: 0 });
+    const politicians = [makePolitician({ id: 'p1', partyId: 'p' })];
+    expect(computeStrategicMomentum(politicians, [party])).toEqual(computeAllPartyMomentum(politicians, [party]));
+  });
+});
+
 describe('selectNpcCampaigner', () => {
   it('never selects the player', () => {
     const player = makePolitician({ id: 'player', isPlayer: true });
@@ -285,6 +419,84 @@ describe('selectNpcCorruptionTier', () => {
     for (let i = 0; i < 200; i++) {
       const tier = selectNpcCorruptionTier(politician, rng);
       expect(tier === null || ['soft', 'medium', 'hard'].includes(tier)).toBe(true);
+    }
+  });
+});
+
+describe('canSmearCampaign', () => {
+  const target = makePolitician({ id: 'target', ideology: { economic: 60, social: 60 } });
+
+  it('requires the target to have an active scandal', () => {
+    const rival = makePolitician({ id: 'rival', ideology: { economic: -60, social: -60 } });
+    expect(canSmearCampaign(rival, target, -50, false)).toBe(false);
+  });
+
+  it('requires ideological opposition and a hostile relationship', () => {
+    const closeAlly = makePolitician({ id: 'ally', ideology: { economic: 65, social: 55 } });
+    expect(canSmearCampaign(closeAlly, target, -50, true)).toBe(false);
+
+    const opponentButFriendly = makePolitician({ id: 'friendly-opponent', ideology: { economic: -60, social: -60 } });
+    expect(canSmearCampaign(opponentButFriendly, target, 50, true)).toBe(false);
+  });
+
+  it('allows a hostile ideological opponent to smear a target with an active scandal', () => {
+    const rival = makePolitician({ id: 'rival', ideology: { economic: -60, social: -60 } });
+    expect(canSmearCampaign(rival, target, -50, true)).toBe(true);
+  });
+
+  it('never allows smearing yourself', () => {
+    expect(canSmearCampaign(target, target, -100, true)).toBe(false);
+  });
+});
+
+describe('selectSmearCampaigner', () => {
+  const target = makePolitician({ id: 'target', ideology: { economic: 60, social: 60 } });
+
+  it('returns null when nobody is eligible', () => {
+    const ally = makePolitician({ id: 'ally', ideology: { economic: 65, social: 55 } });
+    const rng = new SeededRng(1);
+    expect(selectSmearCampaigner([ally, target], target, {}, true, rng)).toBeNull();
+  });
+
+  it('never picks the player or the target', () => {
+    const player = makePolitician({ id: 'player', isPlayer: true, ideology: { economic: -60, social: -60 } });
+    const rival = makePolitician({ id: 'rival', ideology: { economic: -60, social: -60 } });
+    const relationships = { 'player:target': -50, 'rival:target': -50 };
+    const rng = new SeededRng(2);
+    for (let i = 0; i < 20; i++) {
+      const picked = selectSmearCampaigner([player, rival, target], target, relationships, true, rng);
+      expect(picked?.id).toBe('rival');
+    }
+  });
+});
+
+describe('attemptSmearCampaign', () => {
+  it('lands far more often than it backfires for a skilled attacker', () => {
+    const skilled = makePolitician({
+      id: 'skilled',
+      attributes: { charisma: 10, intellect: 5, integrity: 5, network: 5, mediaSavvy: 10 },
+    });
+    const rng = new SeededRng(3);
+    let landed = 0;
+    const trials = 500;
+    for (let i = 0; i < trials; i++) {
+      if (attemptSmearCampaign(skilled, rng).outcome === 'landed') landed++;
+    }
+    expect(landed / trials).toBeGreaterThan(0.8);
+  });
+
+  it('a landed smear hurts the target and helps the attacker; a backfire does the reverse', () => {
+    const attacker = makePolitician({ id: 'a' });
+    const rng = new SeededRng(4);
+    for (let i = 0; i < 50; i++) {
+      const outcome = attemptSmearCampaign(attacker, rng);
+      if (outcome.outcome === 'landed') {
+        expect(outcome.targetApprovalImpact).toBeLessThan(0);
+        expect(outcome.attackerApprovalImpact).toBeGreaterThan(0);
+      } else {
+        expect(outcome.targetApprovalImpact).toBeLessThanOrEqual(0);
+        expect(outcome.attackerApprovalImpact).toBeLessThan(0);
+      }
     }
   });
 });

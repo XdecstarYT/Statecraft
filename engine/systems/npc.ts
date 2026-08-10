@@ -1,7 +1,8 @@
 import type { SeededRng } from '../rng';
 import { clamp, ideologicalAlignment } from '../ideology';
 import { relationshipKey } from './legislative';
-import type { Bill, CorruptionTier, Party, Politician, ScandalResponse, WhipStance } from '../models/types';
+import { computeMediaSkill } from './campaign';
+import type { Bill, Coalition, CorruptionTier, Party, Politician, ScandalResponse, WhipStance } from '../models/types';
 
 /**
  * Rule-based NPC decision-making — no LLM calls, just the same kind of
@@ -16,37 +17,89 @@ const ALIGNED_THRESHOLD = 0.6;
 const OPPOSED_THRESHOLD = 0.4;
 const HOSTILE_RELATIONSHIP = -20;
 
+/**
+ * A rival party opposing the government (the player) whips its members
+ * harder than it would against a fellow backbencher's bill — real party
+ * discipline, not independent judgment. Both the alignment bar and the
+ * relationship bar are looser than the ordinary opposed-vote case.
+ */
+const OPPOSITION_ALIGNMENT_THRESHOLD = 0.5;
+const OPPOSITION_RELATIONSHIP_THRESHOLD = 0;
+
+/**
+ * Coalition partners lean toward the government's bills even across party
+ * lines — this bonus nudges their effective alignment up without ever
+ * fully overriding deep ideological distance.
+ */
+const COALITION_DISCIPLINE_BONUS = 0.15;
+
+export interface NpcStanceOptions {
+  /** Added to the member's ideological alignment with the sponsor — coalition partners get a boost. */
+  coalitionBonus?: number;
+  /** Whether the sponsor is the player (government) — opposition parties whip harder against government bills. */
+  coordinatedOpposition?: boolean;
+}
+
 export function decideNpcStance(
   member: Politician,
   sponsor: Politician,
-  relationshipScore: number
+  relationshipScore: number,
+  options: NpcStanceOptions = {}
 ): WhipStance {
   if (member.id === sponsor.id) return 'yes';
 
-  const alignment = ideologicalAlignment(member.ideology, sponsor.ideology);
+  const alignment = clamp(ideologicalAlignment(member.ideology, sponsor.ideology) + (options.coalitionBonus ?? 0), 0, 1);
   const sameParty = member.partyId === sponsor.partyId;
+  const isCoalitionAlly = !sameParty && (options.coalitionBonus ?? 0) > 0;
 
-  if (sameParty && alignment >= ALIGNED_THRESHOLD) return 'yes';
+  if ((sameParty || isCoalitionAlly) && alignment >= ALIGNED_THRESHOLD) return 'yes';
+  if (!sameParty && options.coordinatedOpposition) {
+    if (alignment <= OPPOSITION_ALIGNMENT_THRESHOLD && relationshipScore <= OPPOSITION_RELATIONSHIP_THRESHOLD) return 'no';
+  }
   if (!sameParty && alignment <= OPPOSED_THRESHOLD && relationshipScore <= HOSTILE_RELATIONSHIP) return 'no';
   return 'undecided';
 }
 
 /**
+ * How much a coalition partnership should nudge a cross-party member's
+ * effective alignment with the sponsor — 0 outside of an active coalition,
+ * or when the member and sponsor already share a party (that path is
+ * already covered by same-party alignment).
+ */
+export function computeCoalitionDisciplineBonus(
+  member: Politician,
+  sponsor: Politician,
+  coalition: Coalition | null
+): number {
+  if (!coalition || member.partyId === sponsor.partyId) return 0;
+  const bothInCoalition =
+    coalition.memberPartyIds.includes(member.partyId) && coalition.memberPartyIds.includes(sponsor.partyId);
+  return bothInCoalition ? COALITION_DISCIPLINE_BONUS : 0;
+}
+
+/**
  * Applies decideNpcStance for every NPC member who doesn't already have a
  * locked stance on the bill (a player-locked stance is never overwritten).
+ * Coalition partners get a discipline bonus toward the sponsor's line, and
+ * when the sponsor is the player, opposition parties whip harder against
+ * the government than they would against one of their own peers.
  */
 export function applyNpcStances(
   bill: Bill,
   politicians: Politician[],
   sponsor: Politician,
-  relationships: Record<string, number>
+  relationships: Record<string, number>,
+  coalition: Coalition | null = null
 ): Bill {
   let next = bill;
   for (const member of politicians) {
     if (member.isPlayer) continue;
     if (next.whipCount[member.id] === 'yes' || next.whipCount[member.id] === 'no') continue;
     const relationshipScore = relationships[relationshipKey(sponsor.id, member.id)] ?? 0;
-    const stance = decideNpcStance(member, sponsor, relationshipScore);
+    const stance = decideNpcStance(member, sponsor, relationshipScore, {
+      coalitionBonus: computeCoalitionDisciplineBonus(member, sponsor, coalition),
+      coordinatedOpposition: sponsor.isPlayer,
+    });
     if (stance !== 'undecided') {
       next = { ...next, whipCount: { ...next.whipCount, [member.id]: stance } };
     }
@@ -142,6 +195,40 @@ export function computeAllPartyMomentum(
   return momentum;
 }
 
+const STRATEGIC_LEADER_BOOST = 1.05;
+const STRATEGIC_LONGSHOT_PENALTY = 0.95;
+/** Within this many points of seat share of the leader still counts as "in real contention". */
+const COMPETITIVE_SEAT_SHARE_GAP = 0.15;
+
+/**
+ * Layers a strategic-targeting multiplier on top of computeAllPartyMomentum:
+ * parties within real contention for the lead pour resources in and get a
+ * small edge, while clear also-rans hold back and get a small penalty —
+ * real parties don't campaign as hard for seats they have no shot at. This
+ * only ever nudges the existing approval-driven momentum, never overrides
+ * it: a party's ordering by momentum among equally-competitive rivals is
+ * always governed by how well it's actually governing.
+ */
+export function computeStrategicMomentum(
+  politicians: Politician[],
+  parties: Party[]
+): Record<string, number> {
+  const baseMomentum = computeAllPartyMomentum(politicians, parties);
+  const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
+  if (totalSeats <= 0) return baseMomentum;
+
+  const shares = new Map(parties.map((p) => [p.id, p.seats / totalSeats]));
+  const leaderShare = Math.max(...shares.values());
+
+  const strategic: Record<string, number> = {};
+  for (const [partyId, base] of Object.entries(baseMomentum)) {
+    const gap = leaderShare - (shares.get(partyId) ?? 0);
+    const multiplier = gap <= COMPETITIVE_SEAT_SHARE_GAP ? STRATEGIC_LEADER_BOOST : STRATEGIC_LONGSHOT_PENALTY;
+    strategic[partyId] = clamp(base * multiplier, MIN_MOMENTUM, MAX_MOMENTUM);
+  }
+  return strategic;
+}
+
 /**
  * Picks who fronts the next NPC campaign action — weighted toward
  * politicians who are actually good at it (charisma/media savvy/network),
@@ -155,6 +242,90 @@ export function selectNpcCampaigner(politicians: Politician[], rng: SeededRng): 
     weight: p.attributes.charisma + p.attributes.mediaSavvy + p.attributes.network,
   }));
   return rng.pickWeighted(weighted);
+}
+
+const SMEAR_ALIGNMENT_THRESHOLD = 0.45;
+const SMEAR_HOSTILE_RELATIONSHIP = -10;
+
+/**
+ * Whether `attacker` is positioned to run a smear campaign against
+ * `target` this turn — an opportunistic rival move, not something just
+ * anyone attempts: the target needs a live scandal to point to, and the
+ * attacker needs to actually be a real ideological and personal rival,
+ * not just any NPC in the chamber.
+ */
+export function canSmearCampaign(
+  attacker: Politician,
+  target: Politician,
+  relationshipScore: number,
+  targetHasActiveScandal: boolean
+): boolean {
+  if (!targetHasActiveScandal || attacker.id === target.id) return false;
+  const alignment = ideologicalAlignment(attacker.ideology, target.ideology);
+  return alignment <= SMEAR_ALIGNMENT_THRESHOLD && relationshipScore <= SMEAR_HOSTILE_RELATIONSHIP;
+}
+
+/**
+ * Picks who among the rivals eligible per canSmearCampaign actually
+ * launches the attack this turn — weighted toward whoever has the
+ * strongest media chops, same spirit as selectNpcCampaigner. Returns null
+ * when nobody currently qualifies.
+ */
+export function selectSmearCampaigner(
+  politicians: Politician[],
+  target: Politician,
+  relationships: Record<string, number>,
+  targetHasActiveScandal: boolean,
+  rng: SeededRng
+): Politician | null {
+  const eligible = politicians.filter((p) => {
+    if (p.isPlayer || p.id === target.id) return false;
+    const relationshipScore = relationships[relationshipKey(p.id, target.id)] ?? 0;
+    return canSmearCampaign(p, target, relationshipScore, targetHasActiveScandal);
+  });
+  if (eligible.length === 0) return null;
+  const weighted = eligible.map((p) => ({ item: p, weight: p.attributes.charisma + p.attributes.mediaSavvy }));
+  return rng.pickWeighted(weighted);
+}
+
+export interface SmearCampaignOutcome {
+  outcome: 'landed' | 'backfired';
+  targetApprovalImpact: number;
+  attackerApprovalImpact: number;
+}
+
+const SMEAR_LANDED_TARGET_IMPACT = -8;
+const SMEAR_BACKFIRE_TARGET_IMPACT = -1;
+const SMEAR_LANDED_ATTACKER_IMPACT = 2;
+const SMEAR_BACKFIRE_ATTACKER_IMPACT = -6;
+const SMEAR_MIN_BACKFIRE_CHANCE = 0.1;
+const SMEAR_MAX_BACKFIRE_CHANCE = 0.35;
+
+/**
+ * Rolls the outcome of a smear campaign: a skilled attacker (high
+ * charisma/media savvy) lands the hit far more often than they backfire,
+ * but the tail risk of a "low blow" backlash never fully disappears —
+ * same shape as the campaign.ts skill-vs-gaffe rolls.
+ */
+export function attemptSmearCampaign(attacker: Politician, rng: SeededRng): SmearCampaignOutcome {
+  const skill = computeMediaSkill(attacker);
+  const backfireChance = clamp(
+    SMEAR_MAX_BACKFIRE_CHANCE - skill * (SMEAR_MAX_BACKFIRE_CHANCE - SMEAR_MIN_BACKFIRE_CHANCE),
+    SMEAR_MIN_BACKFIRE_CHANCE,
+    SMEAR_MAX_BACKFIRE_CHANCE
+  );
+  if (rng.next() < backfireChance) {
+    return {
+      outcome: 'backfired',
+      targetApprovalImpact: SMEAR_BACKFIRE_TARGET_IMPACT,
+      attackerApprovalImpact: SMEAR_BACKFIRE_ATTACKER_IMPACT,
+    };
+  }
+  return {
+    outcome: 'landed',
+    targetApprovalImpact: SMEAR_LANDED_TARGET_IMPACT,
+    attackerApprovalImpact: SMEAR_LANDED_ATTACKER_IMPACT,
+  };
 }
 
 /**
