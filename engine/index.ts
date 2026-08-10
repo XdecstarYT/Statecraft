@@ -184,6 +184,25 @@ import {
   advanceCompanyTurn,
 } from './systems/enterprise';
 import {
+  advanceCrimeRate,
+  advanceIncarcerationRate,
+  advanceOrganizedCrimeInfluence,
+  computeCrimeApprovalImpact,
+  computeOrganizedCrimeEconomyEffect,
+  computePolicingBudgetEffect,
+} from './systems/publicSafety';
+import {
+  advancePollutionIndex,
+  advanceRenewableShare,
+  computeIndustrialEmissions,
+  computePollutionEconomyEffect,
+} from './systems/environment';
+import {
+  advanceInfrastructureDecay,
+  computeInfrastructureApprovalImpact,
+  computeInfrastructureEconomyEffect,
+} from './systems/infrastructure';
+import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
   getProvinces,
@@ -259,6 +278,9 @@ export * from './systems/research';
 export * from './systems/demographics';
 export * from './systems/socialPolicy';
 export * from './systems/enterprise';
+export * from './systems/publicSafety';
+export * from './systems/environment';
+export * from './systems/infrastructure';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -463,6 +485,9 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
       povertyRate: 14,
     },
     companies: [],
+    crime: { crimeRate: 25, incarcerationRate: 12, policingFunding: 'standard', organizedCrimeInfluence: 5 },
+    environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
+    infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -1098,6 +1123,67 @@ export function runEnterpriseTurn(state: GameState, rng: SeededRng): GameState {
   return { ...state, companies, personalWealth };
 }
 
+const CRIME_APPROVAL_DECAY_TURNS = 6;
+
+/**
+ * Resolves one turn of crime and public safety: the crime rate drifts
+ * toward what real poverty and unemployment (plus the funded policing
+ * tier) imply, incarceration follows crime, organized crime entrenches or
+ * retreats, policing's ongoing cost and any organized-crime budget drag
+ * both hit the budget, and the net change in public safety feeds back to
+ * approval.
+ */
+export function runPublicSafetyTurn(state: GameState): GameState {
+  const unresolvedScandalCount = state.scandals.filter((s) => s.status === 'unresolved').length;
+  let crime = advanceCrimeRate(state.crime, state.socialPolicy.povertyRate, state.economy.unemployment);
+  crime = advanceIncarcerationRate(crime);
+  crime = advanceOrganizedCrimeInfluence(crime, unresolvedScandalCount);
+
+  let economy = applyImmediateEffect(state.economy, computePolicingBudgetEffect(crime.policingFunding));
+  economy = applyImmediateEffect(economy, computeOrganizedCrimeEconomyEffect(crime.organizedCrimeInfluence));
+
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) =>
+        p.id === player.id ? pushApprovalEvent(p, 'public', computeCrimeApprovalImpact(crime), CRIME_APPROVAL_DECAY_TURNS) : p
+      )
+    : state.politicians;
+
+  return { ...state, crime, economy, politicians };
+}
+
+/**
+ * Resolves one turn of environment and climate: real emissions from the
+ * mines and factories actually built push pollution up (offset by
+ * renewable share and natural absorption), renewable share drifts toward
+ * whatever the energy policy implies, and pollution taxes growth directly
+ * — its effect on disaster odds lives in events.ts's computeEventWeight.
+ */
+export function runEnvironmentTurn(state: GameState): GameState {
+  const emissions = computeIndustrialEmissions(state.mines, state.factories);
+  let environment = advancePollutionIndex(state.environment, emissions);
+  environment = advanceRenewableShare(environment);
+  const economy = applyImmediateEffect(state.economy, computePollutionEconomyEffect(environment.pollutionIndex));
+  return { ...state, environment, economy };
+}
+
+const INFRASTRUCTURE_APPROVAL_DECAY_TURNS = 6;
+
+/** Resolves one turn of infrastructure: every category decays a little without fresh investment, and average quality feeds both economic productivity and public approval. */
+export function runInfrastructureTurn(state: GameState): GameState {
+  const infrastructure = advanceInfrastructureDecay(state.infrastructure);
+  const economy = applyImmediateEffect(state.economy, computeInfrastructureEconomyEffect(infrastructure));
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) =>
+        p.id === player.id
+          ? pushApprovalEvent(p, 'public', computeInfrastructureApprovalImpact(infrastructure), INFRASTRUCTURE_APPROVAL_DECAY_TURNS)
+          : p
+      )
+    : state.politicians;
+  return { ...state, infrastructure, economy, politicians };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -1124,6 +1210,9 @@ export function advanceTurn(state: GameState): GameState {
   next = runDemographicsTurn(next);
   next = runSocialPolicyTurn(next);
   next = runEnterpriseTurn(next, rng);
+  next = runPublicSafetyTurn(next);
+  next = runEnvironmentTurn(next);
+  next = runInfrastructureTurn(next);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);

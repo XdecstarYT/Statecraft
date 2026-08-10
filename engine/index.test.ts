@@ -43,6 +43,9 @@ import {
   sellSharesAction,
   DEFAULT_COURT_SIZE,
   COMPANY_FOUNDING_COST,
+  runPublicSafetyTurn,
+  runEnvironmentTurn,
+  runInfrastructureTurn,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -1062,5 +1065,46 @@ describe('stock market and private enterprise', () => {
     const rng = new SeededRng(state.rngState);
     const next = runEnterpriseTurn(state, rng);
     expect(next).toBe(state);
+  });
+});
+
+describe('crime, environment, and infrastructure', () => {
+  it('createNewGame seeds real defaults for all three systems', () => {
+    const state = createNewGame(1);
+    expect(state.crime.policingFunding).toBe('standard');
+    expect(state.environment.energyPolicy).toBe('balanced');
+    expect(state.infrastructure.transport).toBeGreaterThan(0);
+  });
+
+  it('runPublicSafetyTurn drifts crime, bills the budget, and pushes an approval event', () => {
+    let state = createNewGame(1);
+    state = { ...state, crime: { ...state.crime, policingFunding: 'minimal' }, socialPolicy: { ...state.socialPolicy, povertyRate: 60 } };
+    const next = runPublicSafetyTurn(state);
+    const player = next.politicians.find((p) => p.isPlayer)!;
+    expect(next.crime.crimeRate).toBeGreaterThan(state.crime.crimeRate);
+    expect(player.approvalEvents.length).toBeGreaterThan(0);
+  });
+
+  it('runEnvironmentTurn generates real emissions from built industry and taxes growth when pollution is high', () => {
+    let state = createNewGame(1);
+    const deposit = state.resourceDeposits.find((d) => d.locationType === 'domestic')!;
+    const { state: withMine } = buildMineAction(state, deposit.id, 'state');
+    state = { ...withMine, environment: { ...withMine.environment, pollutionIndex: 90 } };
+    const next = runEnvironmentTurn(state);
+    expect(next.economy.gdpGrowth).toBeLessThan(state.economy.gdpGrowth);
+  });
+
+  it('runEnvironmentTurn produces zero emissions with no mines or factories built', () => {
+    const state = createNewGame(1);
+    const next = runEnvironmentTurn(state);
+    expect(next.environment.pollutionIndex).toBeLessThanOrEqual(state.environment.pollutionIndex);
+  });
+
+  it('runInfrastructureTurn decays infrastructure and feeds the economy and approval', () => {
+    const state = createNewGame(1);
+    const next = runInfrastructureTurn(state);
+    const player = next.politicians.find((p) => p.isPlayer)!;
+    expect(next.infrastructure.transport).toBeLessThan(state.infrastructure.transport);
+    expect(player.approvalEvents.length).toBeGreaterThan(0);
   });
 });

@@ -2,6 +2,7 @@ import type { SeededRng } from '../rng';
 import { applyImmediateEffect } from './economy';
 import { pushApprovalEvent } from './opinion';
 import { adjustRelation } from './diplomacy';
+import { computeDisasterRiskMultiplier } from './environment';
 import type {
   CrisisCategory,
   EconomyDelta,
@@ -46,13 +47,15 @@ export function getPlayerApproval(state: GameState): number {
 /**
  * Weights an event table entry against the current state: a fragile
  * economy raises economic-shock odds, an unresolved scandal raises
- * follow-up-investigation odds, and low approval raises unrest odds.
+ * follow-up-investigation odds, low approval raises unrest odds, and real
+ * accumulated pollution (see environment.ts) raises natural-disaster odds.
  */
 export function computeEventWeight(def: CrisisEventDef, state: GameState): number {
   let weight = def.baseWeight;
   if (def.category === 'economic_shock' && isEconomyFragile(state.economy)) weight *= 2.5;
   if (def.category === 'scandal' && hasActiveScandal(state)) weight *= 2;
   if (def.category === 'civil_unrest' && getPlayerApproval(state) < LOW_APPROVAL_THRESHOLD) weight *= 2;
+  if (def.category === 'natural_disaster') weight *= computeDisasterRiskMultiplier(state.environment.pollutionIndex);
   return weight;
 }
 

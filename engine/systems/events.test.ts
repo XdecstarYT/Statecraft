@@ -92,6 +92,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
       povertyRate: 14,
     },
     companies: [],
+    crime: { crimeRate: 25, incarcerationRate: 12, policingFunding: 'standard', organizedCrimeInfluence: 5 },
+    environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
+    infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: { gdpGrowth: 2, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] },
@@ -175,6 +178,13 @@ describe('computeEventWeight', () => {
   it('leaves unrelated categories at their base weight', () => {
     const fragile = makeState({ economy: { gdpGrowth: -1, inflation: 3, unemployment: 5, debtToGdp: 60, budgetBalance: -2, pendingEffects: [] } });
     expect(computeEventWeight(unrest, fragile)).toBe(unrest.baseWeight);
+  });
+
+  it('weights natural-disaster events higher with more accumulated pollution', () => {
+    const disaster: CrisisEventDef = { id: 'flood', category: 'natural_disaster', title: 'Flood', description: 'desc', baseWeight: 10 };
+    const clean = makeState({ environment: { pollutionIndex: 0, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 } });
+    const polluted = makeState({ environment: { pollutionIndex: 100, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 } });
+    expect(computeEventWeight(disaster, polluted)).toBeGreaterThan(computeEventWeight(disaster, clean));
   });
 });
 
