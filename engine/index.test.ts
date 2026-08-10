@@ -36,7 +36,13 @@ import {
   runResearchTurn,
   runDemographicsTurn,
   runSocialPolicyTurn,
+  runEnterpriseTurn,
+  foundCompanyAction,
+  ipoCompanyAction,
+  buySharesAction,
+  sellSharesAction,
   DEFAULT_COURT_SIZE,
+  COMPANY_FOUNDING_COST,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -977,5 +983,84 @@ describe('judiciary, research, demographics, and social policy', () => {
     expect(next.socialPolicy.lifeExpectancy).toBeGreaterThan(state.socialPolicy.lifeExpectancy);
     expect(next.economy.budgetBalance).toBeLessThan(state.economy.budgetBalance);
     expect(player.approvalEvents.length).toBeGreaterThan(0);
+  });
+});
+
+describe('stock market and private enterprise', () => {
+  it('foundCompanyAction debits personal wealth and creates a fully player-owned private company', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const funded: GameState = { ...state, personalWealth: { ...state.personalWealth, [player.id]: 500 } };
+    const { state: after, outcome, company } = foundCompanyAction(funded, 'Acme Corp', 'technology');
+    expect(outcome.success).toBe(true);
+    expect(company).not.toBeNull();
+    expect(company!.isPublic).toBe(false);
+    expect(company!.playerShares).toBe(company!.totalShares);
+    expect(after.personalWealth[player.id]).toBe(500 - COMPANY_FOUNDING_COST);
+    expect(after.companies).toHaveLength(1);
+  });
+
+  it('foundCompanyAction refuses when the player cannot afford it', () => {
+    const state = createNewGame(1);
+    const { outcome, company } = foundCompanyAction(state, 'Acme Corp', 'technology');
+    expect(outcome).toEqual({ success: false, reason: 'insufficient_wealth' });
+    expect(company).toBeNull();
+  });
+
+  it('ipoCompanyAction takes a company public and pays the founder real proceeds', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const funded: GameState = { ...state, personalWealth: { ...state.personalWealth, [player.id]: 500 } };
+    const { state: founded, company } = foundCompanyAction(funded, 'Acme Corp', 'technology');
+    const { state: after, outcome, proceeds } = ipoCompanyAction(founded, company!.id);
+    expect(outcome.success).toBe(true);
+    expect(proceeds).toBeGreaterThan(0);
+    expect(after.companies[0].isPublic).toBe(true);
+    expect(after.personalWealth[player.id]).toBe(founded.personalWealth[player.id] + proceeds);
+
+    const alreadyPublic = ipoCompanyAction(after, company!.id);
+    expect(alreadyPublic.outcome).toEqual({ success: false, reason: 'already_public' });
+  });
+
+  it('buySharesAction and sellSharesAction only work once a company is public, and move real cash', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const funded: GameState = { ...state, personalWealth: { ...state.personalWealth, [player.id]: 500 } };
+    const { state: founded, company } = foundCompanyAction(funded, 'Acme Corp', 'technology');
+
+    const buyBeforeIpo = buySharesAction(founded, company!.id, 50);
+    expect(buyBeforeIpo.outcome).toEqual({ success: false, reason: 'not_public' });
+
+    const { state: public_ } = ipoCompanyAction(founded, company!.id);
+    const wealthBeforeBuy = public_.personalWealth[player.id];
+    const { state: afterBuy, outcome: buyOutcome } = buySharesAction(public_, company!.id, 50);
+    expect(buyOutcome.success).toBe(true);
+    expect(afterBuy.personalWealth[player.id]).toBe(wealthBeforeBuy - 50);
+    expect(afterBuy.companies[0].playerShares).toBeGreaterThan(public_.companies[0].playerShares);
+
+    const { state: afterSell, outcome: sellOutcome } = sellSharesAction(afterBuy, company!.id, 1_000_000_000);
+    expect(sellOutcome.success).toBe(true);
+    expect(afterSell.companies[0].playerShares).toBe(0);
+    expect(afterSell.personalWealth[player.id]).toBeGreaterThan(afterBuy.personalWealth[player.id]);
+  });
+
+  it('runEnterpriseTurn advances price/fundamentals and pays dividends on public holdings', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const funded: GameState = { ...state, personalWealth: { ...state.personalWealth, [player.id]: 500 } };
+    const { state: founded, company } = foundCompanyAction(funded, 'Acme Corp', 'technology');
+    const { state: public_ } = ipoCompanyAction(founded, company!.id);
+
+    const rng = new SeededRng(public_.rngState);
+    const next = runEnterpriseTurn(public_, rng);
+    expect(next.companies[0].fundamentals).not.toBe(public_.companies[0].fundamentals);
+    expect(next.personalWealth[player.id]).toBeGreaterThan(public_.personalWealth[player.id]);
+  });
+
+  it('runEnterpriseTurn is a no-op with no companies founded', () => {
+    const state = createNewGame(1);
+    const rng = new SeededRng(state.rngState);
+    const next = runEnterpriseTurn(state, rng);
+    expect(next).toBe(state);
   });
 });

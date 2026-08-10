@@ -769,6 +769,30 @@ export interface SocialPolicyState {
   povertyRate: number;
 }
 
+/**
+ * STOCK MARKET & PRIVATE ENTERPRISE — the player can found a private
+ * company, grow it, and take it public; once public its shares trade on a
+ * real (if abstracted) market, drifting with both the company's own
+ * underlying fundamentals and the wider economy, and paying the player a
+ * dividend each turn they hold shares. See engine/systems/enterprise.ts.
+ */
+export type CompanySector = 'industrial' | 'technology' | 'finance' | 'energy' | 'consumer' | 'agriculture';
+
+export interface Company {
+  id: string;
+  name: string;
+  sector: CompanySector;
+  founderId: string;
+  turnFounded: number;
+  isPublic: boolean;
+  totalShares: number;
+  sharePrice: number;
+  /** Shares the player personally holds — once public, the remaining float is assumed held by the wider market, not simulated per-holder. */
+  playerShares: number;
+  /** 0..100 — underlying business health/quality; drives price drift and dividend size. */
+  fundamentals: number;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -842,6 +866,7 @@ export interface GameState {
   research: ResearchState;
   demographics: DemographicsState;
   socialPolicy: SocialPolicyState;
+  companies: Company[];
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

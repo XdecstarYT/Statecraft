@@ -102,6 +102,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
       literacyRate: 88,
       povertyRate: 14,
     },
+    companies: [],
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,

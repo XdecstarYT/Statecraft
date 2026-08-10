@@ -29,6 +29,8 @@ import type {
   Mine,
   ProcessedGoodType,
   RawResourceType,
+  Company,
+  CompanySector,
 } from './models/types';
 import { DEFAULT_HOUSE_RULES } from './models/types';
 import type { Difficulty } from './difficulty';
@@ -173,6 +175,15 @@ import {
 } from './systems/demographics';
 import { advanceSocialIndicators, computeSocialPolicyApprovalImpact, computeSocialPolicyBudgetEffect } from './systems/socialPolicy';
 import {
+  COMPANY_FOUNDING_COST,
+  buyShares,
+  computeDividendPayout,
+  foundCompany,
+  ipoCompany,
+  sellShares,
+  advanceCompanyTurn,
+} from './systems/enterprise';
+import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
   getProvinces,
@@ -247,6 +258,7 @@ export * from './systems/judiciary';
 export * from './systems/research';
 export * from './systems/demographics';
 export * from './systems/socialPolicy';
+export * from './systems/enterprise';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -450,6 +462,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
       literacyRate: 88,
       povertyRate: 14,
     },
+    companies: [],
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -1060,6 +1073,31 @@ export function runSocialPolicyTurn(state: GameState): GameState {
   return { ...state, socialPolicy, economy, politicians };
 }
 
+/**
+ * Resolves one turn for every founded company: fundamentals take a bounded
+ * random walk and (once public) share price follows, then any public
+ * company the player holds shares in pays out a real per-turn dividend
+ * straight to personal wealth.
+ */
+export function runEnterpriseTurn(state: GameState, rng: SeededRng): GameState {
+  if (state.companies.length === 0) return state;
+
+  const player = state.politicians.find((p) => p.isPlayer);
+  const playerId = player?.id ?? '';
+  let personalWealth = state.personalWealth;
+
+  const companies = state.companies.map((company) => {
+    const advanced = advanceCompanyTurn(company, state.economy.gdpGrowth, rng);
+    const dividend = computeDividendPayout(advanced);
+    if (dividend > 0) {
+      personalWealth = { ...personalWealth, [playerId]: (personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) + dividend };
+    }
+    return advanced;
+  });
+
+  return { ...state, companies, personalWealth };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -1085,6 +1123,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runResearchTurn(next);
   next = runDemographicsTurn(next);
   next = runSocialPolicyTurn(next);
+  next = runEnterpriseTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1573,6 +1612,84 @@ export function unlockTechAction(state: GameState, techId: string): { state: Gam
   const { research, economyEffect } = unlockTech(state.research, tech);
   const economy = applyImmediateEffect(state.economy, economyEffect);
   return { state: { ...state, research, economy }, outcome: { success: true } };
+}
+
+export type EnterpriseActionFailureReason = 'company_not_found' | 'already_public' | 'not_public' | 'insufficient_wealth';
+
+export interface EnterpriseActionOutcome {
+  success: boolean;
+  reason?: EnterpriseActionFailureReason;
+}
+
+/** Founds a new, fully player-owned private company — always personally funded, never state-owned (this is entrepreneurship, not industrial policy; compare buildMineAction/buildFactoryAction). */
+export function foundCompanyAction(
+  state: GameState,
+  name: string,
+  sector: CompanySector
+): { state: GameState; outcome: EnterpriseActionOutcome; company: Company | null } {
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if ((state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) < COMPANY_FOUNDING_COST) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' }, company: null };
+  }
+
+  const rng = SeededRng.fromState(state.rngState);
+  const company = foundCompany(`company-${state.companies.length}-${state.turn}`, name, sector, playerId, state.turn, rng);
+  const personalWealth = { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - COMPANY_FOUNDING_COST };
+  return {
+    state: { ...state, companies: [...state.companies, company], personalWealth, rngState: rng.getState() },
+    outcome: { success: true },
+    company,
+  };
+}
+
+/** Takes a private company public — a real IPO, cashing out a slice of the founder's own stake for immediate proceeds. */
+export function ipoCompanyAction(state: GameState, companyId: string): { state: GameState; outcome: EnterpriseActionOutcome; proceeds: number } {
+  const company = state.companies.find((c) => c.id === companyId);
+  if (!company) return { state, outcome: { success: false, reason: 'company_not_found' }, proceeds: 0 };
+  if (company.isPublic) return { state, outcome: { success: false, reason: 'already_public' }, proceeds: 0 };
+
+  const { company: updated, proceeds } = ipoCompany(company);
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const companies = state.companies.map((c) => (c.id === companyId ? updated : c));
+  const personalWealth = { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) + proceeds };
+  return { state: { ...state, companies, personalWealth }, outcome: { success: true }, proceeds };
+}
+
+/** Buys shares on the open market — only possible once a company is public. */
+export function buySharesAction(
+  state: GameState,
+  companyId: string,
+  budgetToSpend: number
+): { state: GameState; outcome: EnterpriseActionOutcome } {
+  const company = state.companies.find((c) => c.id === companyId);
+  if (!company) return { state, outcome: { success: false, reason: 'company_not_found' } };
+  if (!company.isPublic) return { state, outcome: { success: false, reason: 'not_public' } };
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if ((state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) < budgetToSpend) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+  }
+
+  const { company: updated, cashDelta } = buyShares(company, budgetToSpend);
+  const companies = state.companies.map((c) => (c.id === companyId ? updated : c));
+  const personalWealth = { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cashDelta };
+  return { state: { ...state, companies, personalWealth }, outcome: { success: true } };
+}
+
+/** Sells shares on the open market, capped at whatever is actually held. */
+export function sellSharesAction(
+  state: GameState,
+  companyId: string,
+  shares: number
+): { state: GameState; outcome: EnterpriseActionOutcome } {
+  const company = state.companies.find((c) => c.id === companyId);
+  if (!company) return { state, outcome: { success: false, reason: 'company_not_found' } };
+  if (!company.isPublic) return { state, outcome: { success: false, reason: 'not_public' } };
+
+  const { company: updated, cashDelta } = sellShares(company, shares);
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const companies = state.companies.map((c) => (c.id === companyId ? updated : c));
+  const personalWealth = { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cashDelta };
+  return { state: { ...state, companies, personalWealth }, outcome: { success: true } };
 }
 
 /**
