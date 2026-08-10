@@ -41,6 +41,10 @@ import {
   setHealthcareFunding,
   setEducationFunding,
   setWelfareFunding,
+  foundCompanyAction as engineFoundCompany,
+  ipoCompanyAction as engineIpoCompany,
+  buySharesAction as engineBuyShares,
+  sellSharesAction as engineSellShares,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -156,6 +160,8 @@ import {
   type SaleResult,
   type SocialFundingTier,
   type TechActionOutcome,
+  type CompanySector,
+  type EnterpriseActionOutcome,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -241,6 +247,8 @@ interface StatecraftStore {
   lastJudiciaryOutcome: JudiciaryActionOutcome | null;
   lastConfirmationResult: ConfirmationVoteResult | null;
   lastTechOutcome: TechActionOutcome | null;
+  lastEnterpriseOutcome: EnterpriseActionOutcome | null;
+  lastIpoProceeds: number | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -341,6 +349,10 @@ interface StatecraftStore {
   setHealthcareFundingAction: (tier: SocialFundingTier) => void;
   setEducationFundingAction: (tier: SocialFundingTier) => void;
   setWelfareFundingAction: (tier: SocialFundingTier) => void;
+  foundCompanyAction: (name: string, sector: CompanySector) => void;
+  ipoCompanyAction: (companyId: string) => void;
+  buySharesAction: (companyId: string, budgetToSpend: number) => void;
+  sellSharesAction: (companyId: string, shares: number) => void;
   buildMineAction: (depositId: string, ownership: FacilityOwnership) => void;
   upgradeMineAction: (mineId: string) => void;
   buildFactoryAction: (
@@ -387,6 +399,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastJudiciaryOutcome: null,
   lastConfirmationResult: null,
   lastTechOutcome: null,
+  lastEnterpriseOutcome: null,
+  lastIpoProceeds: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -1350,5 +1364,33 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: { ...game, socialPolicy: setWelfareFunding(game.socialPolicy, tier) } });
+  },
+
+  foundCompanyAction: (name, sector) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundCompany(game, name, sector);
+    set({ game: state, lastEnterpriseOutcome: outcome });
+  },
+
+  ipoCompanyAction: (companyId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome, proceeds } = engineIpoCompany(game, companyId);
+    set({ game: state, lastEnterpriseOutcome: outcome, lastIpoProceeds: outcome.success ? proceeds : null });
+  },
+
+  buySharesAction: (companyId, budgetToSpend) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineBuyShares(game, companyId, budgetToSpend);
+    set({ game: state, lastEnterpriseOutcome: outcome });
+  },
+
+  sellSharesAction: (companyId, shares) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineSellShares(game, companyId, shares);
+    set({ game: state, lastEnterpriseOutcome: outcome });
   },
 }));

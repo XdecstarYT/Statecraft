@@ -31,6 +31,7 @@ import { JudiciaryPanel } from './components/JudiciaryPanel';
 import { ResearchPanel } from './components/ResearchPanel';
 import { DemographicsPanel } from './components/DemographicsPanel';
 import { SocialPolicyPanel } from './components/SocialPolicyPanel';
+import { MarketsPanel } from './components/MarketsPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -38,6 +39,7 @@ const TABS = [
   { id: 'power', label: 'Power' },
   { id: 'world', label: 'World' },
   { id: 'industry', label: 'Industry' },
+  { id: 'markets', label: 'Markets' },
   { id: 'governance', label: 'Governance' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
@@ -320,6 +322,8 @@ export default function App() {
       )}
 
       {activeTab === 'industry' && <IndustryPanel />}
+
+      {activeTab === 'markets' && <MarketsPanel />}
 
       {activeTab === 'governance' && (
         <>
