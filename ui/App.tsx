@@ -35,6 +35,7 @@ import { MarketsPanel } from './components/MarketsPanel';
 import { CrimePanel } from './components/CrimePanel';
 import { EnvironmentPanel } from './components/EnvironmentPanel';
 import { InfrastructurePanel } from './components/InfrastructurePanel';
+import { ChirpPanel } from './components/ChirpPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature' },
@@ -45,6 +46,7 @@ const TABS = [
   { id: 'markets', label: 'Markets' },
   { id: 'governance', label: 'Governance' },
   { id: 'society', label: 'Society' },
+  { id: 'chirp', label: 'Chirp' },
   { id: 'events', label: 'Events' },
   { id: 'lab', label: 'Electoral Lab' },
   { id: 'legacy', label: 'Legacy' },
@@ -351,6 +353,8 @@ export default function App() {
           <InfrastructurePanel />
         </>
       )}
+
+      {activeTab === 'chirp' && <ChirpPanel />}
 
       {activeTab === 'events' && <EventLogPanel />}
       {activeTab === 'lab' && (

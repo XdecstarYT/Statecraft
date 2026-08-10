@@ -49,6 +49,7 @@ import {
   setEnergyPolicy,
   investInGreenInfrastructure,
   investInInfrastructure,
+  postTweetAction as enginePostTweet,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
   attemptLocalRace,
@@ -171,6 +172,7 @@ import {
   type GreenInvestmentTier,
   type InfrastructureCategory,
   type InfrastructureInvestmentTier,
+  type TweetActionOutcome,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -256,6 +258,7 @@ interface StatecraftStore {
   lastJudiciaryOutcome: JudiciaryActionOutcome | null;
   lastConfirmationResult: ConfirmationVoteResult | null;
   lastTechOutcome: TechActionOutcome | null;
+  lastTweetOutcome: TweetActionOutcome | null;
   lastEnterpriseOutcome: EnterpriseActionOutcome | null;
   lastIpoProceeds: number | null;
 
@@ -366,6 +369,7 @@ interface StatecraftStore {
   setEnergyPolicyAction: (policy: EnergyPolicyLevel) => void;
   investInGreenInfrastructureAction: (tier: GreenInvestmentTier) => void;
   investInInfrastructureAction: (category: InfrastructureCategory, tier: InfrastructureInvestmentTier) => void;
+  postTweetAction: (optionId: string) => void;
   buildMineAction: (depositId: string, ownership: FacilityOwnership) => void;
   upgradeMineAction: (mineId: string) => void;
   buildFactoryAction: (
@@ -412,6 +416,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastJudiciaryOutcome: null,
   lastConfirmationResult: null,
   lastTechOutcome: null,
+  lastTweetOutcome: null,
   lastEnterpriseOutcome: null,
   lastIpoProceeds: null,
 
@@ -1433,5 +1438,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { infrastructure, economyEffect } = investInInfrastructure(game.infrastructure, category, tier);
     const economy = applyImmediateEffect(game.economy, economyEffect);
     set({ game: { ...game, infrastructure, economy } });
+  },
+
+  postTweetAction: (optionId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = enginePostTweet(game, optionId);
+    set({ game: state, lastTweetOutcome: outcome });
   },
 }));
