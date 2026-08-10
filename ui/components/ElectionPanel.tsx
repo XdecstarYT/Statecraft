@@ -11,7 +11,6 @@ const PORTFOLIO_LABELS: Record<CabinetPortfolio, string> = {
 
 export function ElectionPanel() {
   const game = useStatecraftStore((s) => s.game);
-  const lastElection = useStatecraftStore((s) => s.lastElection);
   const runElection = useStatecraftStore((s) => s.runElection);
   const startElectionNightAction = useStatecraftStore((s) => s.startElectionNightAction);
   const reportNextProvinceAction = useStatecraftStore((s) => s.reportNextProvinceAction);
@@ -126,12 +125,6 @@ export function ElectionPanel() {
           <button onClick={startElectionNightAction}>Start Election Night</button>
         </div>
       </div>
-
-      {lastElection && (
-        <p className="muted">
-          Last election ({lastElection.system}) allocated {Object.values(lastElection.seatsWon).reduce((a, b) => a + b, 0)} seats.
-        </p>
-      )}
 
       <div className="whip-table-wrap">
         <table className="whip-table">

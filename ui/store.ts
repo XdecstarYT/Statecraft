@@ -237,6 +237,8 @@ interface StatecraftStore {
   lastSuppressionOutcome: (SuppressionOutcome & { provinceId: string }) | null;
   economyHistory: EconomySnapshot[];
   lastElection: ElectionOutcome | null;
+  /** Each party's seat count immediately before lastElection was run, so the UI can show seat deltas. */
+  lastElectionPreviousSeats: Record<string, number> | null;
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
   lastCoverage: CoverageEvent[];
   labResult: LabResult | null;
@@ -395,6 +397,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastSuppressionOutcome: null,
   economyHistory: [],
   lastElection: null,
+  lastElectionPreviousSeats: null,
   lastFloorResult: null,
   lastCoverage: [],
   labResult: null,
@@ -430,6 +433,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
@@ -457,6 +461,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
@@ -481,6 +486,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
@@ -510,6 +516,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         career: null,
         economyHistory: save.economyHistory,
         lastElection: null,
+        lastElectionPreviousSeats: null,
         lastFloorResult: null,
         lastCoverage: [],
         labResult: null,
@@ -942,10 +949,11 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   runElection: () => {
     const game = get().game;
     if (!game) return;
+    const previousSeats = Object.fromEntries(game.parties.map((p) => [p.id, p.seats]));
     const { state, outcome } = runLegislativeElection(game);
     const player = state.politicians.find((p) => p.isPlayer);
     if (!player) {
-      set({ game: state, lastElection: outcome });
+      set({ game: state, lastElection: outcome, lastElectionPreviousSeats: previousSeats });
       return;
     }
     const { state: coveredState, coverage } = generateEventCoverage(
@@ -954,7 +962,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       player.name,
       player.ideology
     );
-    set({ game: coveredState, lastElection: outcome, lastCoverage: coverage });
+    set({
+      game: coveredState,
+      lastElection: outcome,
+      lastElectionPreviousSeats: previousSeats,
+      lastCoverage: coverage,
+    });
   },
 
   runElectoralLab: (system) => {
