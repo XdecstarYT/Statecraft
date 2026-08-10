@@ -761,7 +761,8 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--bg-elevated-2);
+  background: radial-gradient(ellipse at 50% 40%, #10151f 0%, #05070c 100%);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -773,11 +774,14 @@ button:disabled {
 
 .country-map-hex {
   cursor: pointer;
-  transition: filter 0.12s ease;
+  transition: filter 0.15s ease, transform 0.15s ease;
+  transform-box: fill-box;
+  transform-origin: center;
 }
 
 .country-map-hex:hover {
-  filter: brightness(1.25);
+  filter: brightness(1.3);
+  transform: scale(1.08);
 }
 
 .country-map-empty {
@@ -790,6 +794,30 @@ button:disabled {
   padding: 1rem;
   background: var(--bg-elevated-2);
   border-radius: var(--radius-md);
+}
+
+.country-map-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.country-map-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+}
+
+.country-map-legend-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 900px) {
