@@ -203,6 +203,17 @@ import {
   computeInfrastructureEconomyEffect,
 } from './systems/infrastructure';
 import {
+  MAX_FEED_POSTS,
+  computeFollowerGrowth,
+  computePassiveFollowerGrowth,
+  computeTweetApprovalImpact,
+  createPlayerPost,
+  generateFeedPosts,
+} from './systems/socialMedia';
+import { PERSONAS } from '../content/socialMedia/personas';
+import { POST_TEMPLATES } from '../content/socialMedia/postTemplates';
+import { PLAYER_TWEET_OPTIONS } from '../content/socialMedia/playerTweetOptions';
+import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
   getProvinces,
@@ -281,6 +292,7 @@ export * from './systems/enterprise';
 export * from './systems/publicSafety';
 export * from './systems/environment';
 export * from './systems/infrastructure';
+export * from './systems/socialMedia';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -488,6 +500,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     crime: { crimeRate: 25, incarcerationRate: 12, policingFunding: 'standard', organizedCrimeInfluence: 5 },
     environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
     infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
+    socialMedia: { posts: [], followerCount: 1000 },
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -1184,6 +1197,21 @@ export function runInfrastructureTurn(state: GameState): GameState {
   return { ...state, infrastructure, economy, politicians };
 }
 
+/**
+ * Resolves one turn of Chirp: this turn's crisis events, fresh scandals,
+ * newly-declared wars, judicial rulings just resolved, an approval-trend
+ * reaction, and a little ambient chatter all generate real posts, and the
+ * player passively gains (or stops gaining) followers depending on how
+ * popular they currently are.
+ */
+export function runSocialMediaTurn(state: GameState, rng: SeededRng): GameState {
+  const newPosts = generateFeedPosts(state, rng, PERSONAS, POST_TEMPLATES);
+  const posts = [...state.socialMedia.posts, ...newPosts].slice(-MAX_FEED_POSTS);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const passiveGrowth = player ? computePassiveFollowerGrowth(player.approval.public) : 0;
+  return { ...state, socialMedia: { posts, followerCount: state.socialMedia.followerCount + passiveGrowth } };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -1213,6 +1241,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runPublicSafetyTurn(next);
   next = runEnvironmentTurn(next);
   next = runInfrastructureTurn(next);
+  next = runSocialMediaTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1779,6 +1808,42 @@ export function sellSharesAction(
   const companies = state.companies.map((c) => (c.id === companyId ? updated : c));
   const personalWealth = { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cashDelta };
   return { state: { ...state, companies, personalWealth }, outcome: { success: true } };
+}
+
+export interface TweetActionOutcome {
+  success: boolean;
+  reason?: 'option_not_found';
+}
+
+const TWEET_APPROVAL_DECAY_TURNS = 5;
+
+/**
+ * Posts one of the player's pre-written Chirp options — scored against
+ * voter blocs for a real, bounded approval impact (see
+ * socialMedia.ts's computeTweetApprovalImpact), with a real chance of a
+ * genuine follower spike when it lands especially well.
+ */
+export function postTweetAction(state: GameState, optionId: string): { state: GameState; outcome: TweetActionOutcome } {
+  const option = PLAYER_TWEET_OPTIONS.find((o) => o.id === optionId);
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!option || !player) return { state, outcome: { success: false, reason: 'option_not_found' } };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const handle = `@${player.name.toLowerCase().replace(/[^a-z0-9]+/g, '')}`;
+  const post = createPlayerPost(option, player.name, handle, state.turn, rng);
+  const approvalImpact = computeTweetApprovalImpact(option.stance, state.voterBlocs);
+  const followerGrowth = computeFollowerGrowth(approvalImpact, rng);
+
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', approvalImpact, TWEET_APPROVAL_DECAY_TURNS) : p
+  );
+  const posts = [...state.socialMedia.posts, post].slice(-MAX_FEED_POSTS);
+  const socialMedia = { posts, followerCount: state.socialMedia.followerCount + followerGrowth };
+
+  return {
+    state: { ...state, politicians, socialMedia, rngState: rng.getState() },
+    outcome: { success: true },
+  };
 }
 
 /**

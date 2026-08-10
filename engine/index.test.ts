@@ -46,6 +46,8 @@ import {
   runPublicSafetyTurn,
   runEnvironmentTurn,
   runInfrastructureTurn,
+  runSocialMediaTurn,
+  postTweetAction,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -1106,5 +1108,54 @@ describe('crime, environment, and infrastructure', () => {
     const player = next.politicians.find((p) => p.isPlayer)!;
     expect(next.infrastructure.transport).toBeLessThan(state.infrastructure.transport);
     expect(player.approvalEvents.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Chirp social feed', () => {
+  it('createNewGame seeds an empty feed with a starting follower count', () => {
+    const state = createNewGame(1);
+    expect(state.socialMedia.posts).toEqual([]);
+    expect(state.socialMedia.followerCount).toBeGreaterThan(0);
+  });
+
+  it('runSocialMediaTurn always adds at least the ambient chatter posts', () => {
+    const state = createNewGame(1);
+    const rng = new SeededRng(state.rngState);
+    const next = runSocialMediaTurn(state, rng);
+    expect(next.socialMedia.posts.length).toBeGreaterThan(0);
+  });
+
+  it('runSocialMediaTurn reacts to a crisis event logged this turn', () => {
+    let state = createNewGame(1);
+    state = { ...state, eventLog: [{ turn: state.turn, category: 'economic_shock', title: 'Recession Fears', description: 'desc' }] };
+    const rng = new SeededRng(state.rngState);
+    const next = runSocialMediaTurn(state, rng);
+    expect(next.socialMedia.posts.some((p) => p.content.includes('Recession Fears'))).toBe(true);
+  });
+
+  it('runSocialMediaTurn caps the feed at MAX_FEED_POSTS', () => {
+    let state = createNewGame(1);
+    for (let i = 0; i < 30; i++) {
+      const rng = new SeededRng(state.rngState);
+      state = runSocialMediaTurn(state, rng);
+      state = { ...state, rngState: rng.getState(), turn: state.turn + 1 };
+    }
+    expect(state.socialMedia.posts.length).toBeLessThanOrEqual(80);
+  });
+
+  it('postTweetAction posts to the feed and pushes a real approval event', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: after, outcome } = postTweetAction(state, 'statesman');
+    expect(outcome.success).toBe(true);
+    expect(after.socialMedia.posts.some((p) => p.authorType === 'player')).toBe(true);
+    const nextPlayer = after.politicians.find((p) => p.id === player.id)!;
+    expect(nextPlayer.approvalEvents.length).toBeGreaterThan(0);
+  });
+
+  it('postTweetAction refuses an unknown option id', () => {
+    const state = createNewGame(1);
+    const { outcome } = postTweetAction(state, 'not-a-real-option');
+    expect(outcome).toEqual({ success: false, reason: 'option_not_found' });
   });
 });

@@ -848,6 +848,36 @@ export interface InfrastructureState {
   digital: number;
 }
 
+/**
+ * CHIRP — a fictional in-game social platform that reacts to what's
+ * actually happening in the run: crises, scandals, wars, court rulings,
+ * and the player's own approval trend all generate real posts from a pool
+ * of pre-authored personas, and the player can post their own (a real,
+ * consequence-bearing action — see engine/systems/socialMedia.ts).
+ */
+export type SocialPostAuthorType = 'player' | 'pundit' | 'citizen' | 'journalist' | 'rival' | 'meme';
+
+export interface SocialPost {
+  id: string;
+  turn: number;
+  authorType: SocialPostAuthorType;
+  authorName: string;
+  handle: string;
+  /** A single emoji standing in for an avatar. */
+  avatar: string;
+  content: string;
+  /** Abstracted engagement counts — cosmetic flavor, not simulated per-viewer. */
+  likes: number;
+  reposts: number;
+  topic: string;
+}
+
+export interface SocialMediaState {
+  posts: SocialPost[];
+  /** A vanity number for the player specifically — grows passively with approval and jumps when a tweet lands well. */
+  followerCount: number;
+}
+
 export interface GameState {
   seed: number;
   /** Current mulberry32 state, so play is resumable and replay-exact. */
@@ -925,6 +955,7 @@ export interface GameState {
   crime: CrimeState;
   environment: EnvironmentState;
   infrastructure: InfrastructureState;
+  socialMedia: SocialMediaState;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

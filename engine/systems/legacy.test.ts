@@ -106,6 +106,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     crime: { crimeRate: 25, incarcerationRate: 12, policingFunding: 'standard', organizedCrimeInfluence: 5 },
     environment: { pollutionIndex: 15, renewableShare: 20, energyPolicy: 'balanced', greenInvestmentCapability: 20 },
     infrastructure: { transport: 55, power: 60, water: 65, digital: 45 },
+    socialMedia: { posts: [], followerCount: 1000 },
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,
