@@ -6,7 +6,7 @@ import { computeDistrictLayout, axialToPixel } from './hexLayout';
 import { useStatecraftStore } from '../store';
 
 const HEX_SIZE = 1;
-const HEX_GAP = 0.06;
+const HEX_GAP = 0.035;
 const BASE_HEIGHT = 0.35;
 const WATER_LEVEL = -0.4;
 
@@ -65,10 +65,10 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x060a12);
-    scene.fog = new THREE.Fog(0x060a12, 14, 34);
+    scene.fog = new THREE.Fog(0x060a12, 9, 22);
 
     const camera = new THREE.PerspectiveCamera(42, width / height, 0.1, 200);
-    camera.position.set(0, 11, 10);
+    camera.position.set(0, 7, 6.5);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(width, height);
@@ -81,8 +81,8 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
     controls.dampingFactor = 0.08;
-    controls.minDistance = 6;
-    controls.maxDistance = 24;
+    controls.minDistance = 3.5;
+    controls.maxDistance = 15;
     controls.maxPolarAngle = Math.PI / 2.15;
     controls.target.set(0, 0, 0);
 
@@ -91,10 +91,10 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
     sun.position.set(10, 16, 8);
     sun.castShadow = true;
     sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.left = -14;
-    sun.shadow.camera.right = 14;
-    sun.shadow.camera.top = 14;
-    sun.shadow.camera.bottom = -14;
+    sun.shadow.camera.left = -8;
+    sun.shadow.camera.right = 8;
+    sun.shadow.camera.top = 8;
+    sun.shadow.camera.bottom = -8;
     scene.add(sun);
     const fill = new THREE.DirectionalLight(0x9fc7ff, 0.35);
     fill.position.set(-10, 6, -8);
@@ -103,7 +103,7 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
     // A dark water plane beneath and around the island of hex tiles, so the
     // map reads as a landmass rather than tiles floating in a void.
     const water = new THREE.Mesh(
-      new THREE.CircleGeometry(20, 48),
+      new THREE.CircleGeometry(12, 48),
       new THREE.MeshPhongMaterial({ color: 0x0b2a4a, shininess: 60, specular: 0x2a5a8a })
     );
     water.rotation.x = -Math.PI / 2;
@@ -114,7 +114,7 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
     tilesRef.current.clear();
 
     for (const cell of layout) {
-      const { x, y: z } = axialToPixel(cell.q, cell.r, HEX_SIZE * 2 + HEX_GAP);
+      const { x, y: z } = axialToPixel(cell.q, cell.r, HEX_SIZE + HEX_GAP);
       const jitter = cosmeticHash01(cell.districtId);
       const tileHeight = BASE_HEIGHT + jitter * 0.25;
       const mesh = new THREE.Mesh(
