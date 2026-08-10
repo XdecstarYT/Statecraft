@@ -23,6 +23,12 @@ import type {
   ScandalResponse,
   SecessionistMovement,
   VoterBloc,
+  Factory,
+  FacilityLocationType,
+  FacilityOwnership,
+  Mine,
+  ProcessedGoodType,
+  RawResourceType,
 } from './models/types';
 import { DEFAULT_HOUSE_RULES } from './models/types';
 import type { Difficulty } from './difficulty';
@@ -121,6 +127,31 @@ import {
 } from './systems/military';
 import { computeCabinetEffects } from './systems/cabinet';
 import {
+  MAX_MINE_TIER,
+  MINE_BUILD_COST,
+  MINE_UPGRADE_COST,
+  buildMine,
+  computeMineOperatingCost,
+  extractFromMine,
+  generateResourceDeposits,
+  isDepositExhausted,
+  upgradeMine,
+} from './systems/mining';
+import { computeShipmentEfficiency, shipResource } from './systems/logistics';
+import {
+  FACTORY_BUILD_COST,
+  FACTORY_UPGRADE_COST,
+  MAX_FACTORY_TIER,
+  buildFactory,
+  computeFactoryOperatingCost,
+  processFactoryTurn,
+  upgradeFactory,
+} from './systems/manufacturing';
+import { sellFromStockpile, updateAllMarketPrices, type SaleResult } from './systems/market';
+import { RAW_RESOURCES } from '../content/resources/resourceTypes';
+import { MANUFACTURING_RECIPES } from '../content/resources/recipes';
+import { RAW_RESOURCE_BASE_PRICES, PROCESSED_GOOD_BASE_PRICES } from '../content/resources/market';
+import {
   computeVictoryMarginFraction,
   concludeElectionNight as concludeElectionNightState,
   getProvinces,
@@ -187,6 +218,10 @@ export * from './systems/polling';
 export * from './systems/wealth';
 export * from './systems/summit';
 export * from './systems/achievements';
+export * from './systems/mining';
+export * from './systems/logistics';
+export * from './systems/manufacturing';
+export * from './systems/market';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -302,6 +337,24 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
 
   const startingEconomy: EconomyState = { ...STARTING_ECONOMY, ...options.startingEconomy, pendingEffects: [] };
 
+  const foreignCounterparts = options.foreignCounterparts ?? nationsExcluding(country.id);
+  const resourceDeposits = generateResourceDeposits(
+    getProvinces(country).map((p) => p.id),
+    foreignCounterparts.map((c) => c.id),
+    RAW_RESOURCES,
+    rng
+  );
+  const rawResourceStockpile = Object.fromEntries(
+    Object.keys(RAW_RESOURCE_BASE_PRICES).map((r) => [r, 0])
+  ) as GameState['rawResourceStockpile'];
+  const stateGoodsStockpile = Object.fromEntries(
+    Object.keys(PROCESSED_GOOD_BASE_PRICES).map((g) => [g, 0])
+  ) as GameState['stateGoodsStockpile'];
+  const privateGoodsStockpile = Object.fromEntries(
+    Object.keys(PROCESSED_GOOD_BASE_PRICES).map((g) => [g, 0])
+  ) as GameState['privateGoodsStockpile'];
+  const marketPrices = { ...RAW_RESOURCE_BASE_PRICES, ...PROCESSED_GOOD_BASE_PRICES } as GameState['marketPrices'];
+
   const partyLeaderId: Record<string, string> = {};
   for (const party of parties) {
     partyLeaderId[party.id] =
@@ -322,7 +375,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     voterBlocs: options.voterBlocs ?? STARTER_VOTER_BLOCS,
     mediaOutlets: options.mediaOutlets ?? STARTER_MEDIA_OUTLETS,
     scandals: [],
-    foreignCounterparts: options.foreignCounterparts ?? nationsExcluding(country.id),
+    foreignCounterparts,
     foreignRelations: {},
     playerMilitary: options.playerMilitary ?? startingMilitaryProfile(country.id),
     treaties: [],
@@ -349,6 +402,14 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     activeSummit: null,
     milestones: [],
     houseRules: { ...DEFAULT_HOUSE_RULES, ...options.houseRules },
+    resourceDeposits,
+    mines: [],
+    factories: [],
+    logisticsNetwork: { capability: 20 },
+    rawResourceStockpile,
+    stateGoodsStockpile,
+    privateGoodsStockpile,
+    marketPrices,
     eventLog: [],
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
@@ -780,6 +841,105 @@ export function runSummitTurn(state: GameState, rng: SeededRng): GameState {
   return summit ? { ...state, activeSummit: summit } : state;
 }
 
+/** Converts mining.ts/manufacturing.ts's wealth-scale facility costs into the small budgetBalance deltas the rest of the engine uses for one-time state spending (see military.ts/logistics.ts's investment tiers). */
+const INDUSTRY_BUDGET_COST_SCALE = 100;
+
+/**
+ * Resolves one turn of the resource economy: every mine extracts from its
+ * deposit and ships what survives transit into the shared national raw
+ * stockpile (foreign shipments degrading with relations and cutting out
+ * entirely during an active war with the source nation — see
+ * logistics.ts); every factory then draws against that same stockpile in
+ * array order, so earlier-built factories get first claim on a scarce
+ * input; every facility's upkeep is billed to its owner (the budget for
+ * state facilities, the player's personal wealth for private ones); and
+ * market prices settle against the fresh stockpile levels. A no-op when
+ * the player hasn't built anything yet — most turns of most games, since
+ * industry is opt-in — so it costs nothing on the shared rng stream until
+ * there's actually a mine or factory to resolve.
+ */
+export function runIndustryTurn(state: GameState, rng: SeededRng): GameState {
+  if (state.mines.length === 0 && state.factories.length === 0) return state;
+
+  const player = state.politicians.find((p) => p.isPlayer);
+  const playerId = player?.id ?? '';
+
+  let deposits = state.resourceDeposits;
+  const rawResourceStockpile = { ...state.rawResourceStockpile };
+  let economy = state.economy;
+  let personalWealth = state.personalWealth;
+
+  const atWarWith = (counterpartId: string) =>
+    state.wars.some((w) => w.counterpartId === counterpartId && w.status === 'active');
+
+  for (const mine of state.mines) {
+    const depositIndex = deposits.findIndex((d) => d.id === mine.depositId);
+    if (depositIndex === -1) continue;
+    const deposit = deposits[depositIndex];
+    if (isDepositExhausted(deposit)) continue;
+
+    const { extracted, deposit: updatedDeposit } = extractFromMine(mine, deposit);
+    deposits = deposits.map((d, i) => (i === depositIndex ? updatedDeposit : d));
+
+    const efficiency = computeShipmentEfficiency(
+      deposit.locationType,
+      state.logisticsNetwork,
+      state.foreignRelations[deposit.locationId] ?? 0,
+      atWarWith(deposit.locationId)
+    );
+    const shipped = shipResource(extracted, efficiency);
+    rawResourceStockpile[deposit.resource] = (rawResourceStockpile[deposit.resource] ?? 0) + shipped;
+
+    const cost = computeMineOperatingCost(mine);
+    if (mine.ownership === 'state') {
+      economy = applyImmediateEffect(economy, { budgetBalance: -cost / INDUSTRY_BUDGET_COST_SCALE });
+    } else {
+      personalWealth = { ...personalWealth, [playerId]: (personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cost };
+    }
+  }
+
+  const stateGoodsStockpile = { ...state.stateGoodsStockpile };
+  const privateGoodsStockpile = { ...state.privateGoodsStockpile };
+
+  for (const factory of state.factories) {
+    const recipe = MANUFACTURING_RECIPES.find((r) => r.id === factory.recipeId);
+    if (!recipe) continue;
+    const result = processFactoryTurn(factory, recipe, rawResourceStockpile);
+    for (const [resource, amount] of Object.entries(result.consumed) as [RawResourceType, number | undefined][]) {
+      rawResourceStockpile[resource] = (rawResourceStockpile[resource] ?? 0) - (amount ?? 0);
+    }
+    const goodsStockpile = factory.ownership === 'state' ? stateGoodsStockpile : privateGoodsStockpile;
+    goodsStockpile[recipe.outputGood] = (goodsStockpile[recipe.outputGood] ?? 0) + result.outputProduced;
+
+    const cost = computeFactoryOperatingCost(factory);
+    if (factory.ownership === 'state') {
+      economy = applyImmediateEffect(economy, { budgetBalance: -cost / INDUSTRY_BUDGET_COST_SCALE });
+    } else {
+      personalWealth = { ...personalWealth, [playerId]: (personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cost };
+    }
+  }
+
+  const combinedStockpileLevels: Partial<Record<RawResourceType | ProcessedGoodType, number>> = { ...rawResourceStockpile };
+  for (const good of Object.keys(state.marketPrices) as (RawResourceType | ProcessedGoodType)[]) {
+    if (good in stateGoodsStockpile || good in privateGoodsStockpile) {
+      combinedStockpileLevels[good] =
+        (stateGoodsStockpile[good as ProcessedGoodType] ?? 0) + (privateGoodsStockpile[good as ProcessedGoodType] ?? 0);
+    }
+  }
+  const marketPrices = updateAllMarketPrices(state.marketPrices, combinedStockpileLevels, rng);
+
+  return {
+    ...state,
+    resourceDeposits: deposits,
+    rawResourceStockpile,
+    stateGoodsStockpile,
+    privateGoodsStockpile,
+    marketPrices,
+    economy,
+    personalWealth,
+  };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -800,6 +960,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runUnrestTurn(next, rng);
   next = runWealthScandalTurn(next, rng);
   next = runSummitTurn(next, rng);
+  next = runIndustryTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1013,6 +1174,202 @@ export function commissionPartyPollAction(
   const rng = SeededRng.fromState(state.rngState);
   const poll = commissionPartyPoll(firm, party, state.parties, state.turn, rng);
   return { state: { ...state, polls: [...state.polls, poll], rngState: rng.getState() }, outcome: poll };
+}
+
+export type FacilityActionFailureReason =
+  | 'deposit_not_found'
+  | 'deposit_claimed'
+  | 'deposit_exhausted'
+  | 'factory_not_found'
+  | 'mine_not_found'
+  | 'recipe_not_found'
+  | 'max_tier'
+  | 'insufficient_wealth';
+
+export interface FacilityActionOutcome {
+  success: boolean;
+  reason?: FacilityActionFailureReason;
+}
+
+function debitFacilityCost(state: GameState, ownership: FacilityOwnership, cost: number, playerId: string): GameState {
+  if (ownership === 'state') {
+    return { ...state, economy: applyImmediateEffect(state.economy, { budgetBalance: -cost / INDUSTRY_BUDGET_COST_SCALE }) };
+  }
+  return {
+    ...state,
+    personalWealth: { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) - cost },
+  };
+}
+
+function hasSufficientWealth(state: GameState, ownership: FacilityOwnership, cost: number, playerId: string): boolean {
+  return ownership !== 'private' || (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) >= cost;
+}
+
+/**
+ * Claims an undeveloped deposit with a fresh tier-1 mine. Fails if the
+ * deposit doesn't exist, is already exhausted, already has a mine on it
+ * (one mine per deposit), or — for a privately-funded mine — the player
+ * can't yet afford it out of personal wealth (a state-funded mine has no
+ * such gate, matching how every other one-time state investment in this
+ * engine works: it costs a budgetBalance hit, never an affordability check).
+ */
+export function buildMineAction(
+  state: GameState,
+  depositId: string,
+  ownership: FacilityOwnership
+): { state: GameState; outcome: FacilityActionOutcome; mine: Mine | null } {
+  const deposit = state.resourceDeposits.find((d) => d.id === depositId);
+  if (!deposit) return { state, outcome: { success: false, reason: 'deposit_not_found' }, mine: null };
+  if (isDepositExhausted(deposit)) return { state, outcome: { success: false, reason: 'deposit_exhausted' }, mine: null };
+  if (state.mines.some((m) => m.depositId === depositId)) {
+    return { state, outcome: { success: false, reason: 'deposit_claimed' }, mine: null };
+  }
+
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if (!hasSufficientWealth(state, ownership, MINE_BUILD_COST, playerId)) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' }, mine: null };
+  }
+
+  const mine = buildMine(`mine-${depositId}`, depositId, ownership, state.turn);
+  const nextState = debitFacilityCost(
+    { ...state, mines: [...state.mines, mine] },
+    ownership,
+    MINE_BUILD_COST,
+    playerId
+  );
+  return { state: nextState, outcome: { success: true }, mine };
+}
+
+/** Upgrades an existing mine one tier, billed to whichever pool funds it (see buildMineAction). */
+export function upgradeMineAction(state: GameState, mineId: string): { state: GameState; outcome: FacilityActionOutcome } {
+  const mine = state.mines.find((m) => m.id === mineId);
+  if (!mine) return { state, outcome: { success: false, reason: 'mine_not_found' } };
+  if (mine.tier >= MAX_MINE_TIER) return { state, outcome: { success: false, reason: 'max_tier' } };
+
+  const cost = MINE_UPGRADE_COST[mine.tier + 1];
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if (!hasSufficientWealth(state, mine.ownership, cost, playerId)) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+  }
+
+  const mines = state.mines.map((m) => (m.id === mineId ? upgradeMine(m) : m));
+  const nextState = debitFacilityCost({ ...state, mines }, mine.ownership, cost, playerId);
+  return { state: nextState, outcome: { success: true } };
+}
+
+/** Builds a fresh tier-1 factory at a location running the given recipe. See buildMineAction for the ownership/affordability rules this mirrors. */
+export function buildFactoryAction(
+  state: GameState,
+  locationId: string,
+  locationType: FacilityLocationType,
+  recipeId: string,
+  ownership: FacilityOwnership
+): { state: GameState; outcome: FacilityActionOutcome; factory: Factory | null } {
+  if (!MANUFACTURING_RECIPES.some((r) => r.id === recipeId)) {
+    return { state, outcome: { success: false, reason: 'recipe_not_found' }, factory: null };
+  }
+
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if (!hasSufficientWealth(state, ownership, FACTORY_BUILD_COST, playerId)) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' }, factory: null };
+  }
+
+  const factory = buildFactory(`factory-${state.factories.length}-${state.turn}`, locationId, locationType, recipeId, ownership, state.turn);
+  const nextState = debitFacilityCost(
+    { ...state, factories: [...state.factories, factory] },
+    ownership,
+    FACTORY_BUILD_COST,
+    playerId
+  );
+  return { state: nextState, outcome: { success: true }, factory };
+}
+
+/** Upgrades an existing factory one tier, billed to whichever pool funds it (see buildFactoryAction). */
+export function upgradeFactoryAction(state: GameState, factoryId: string): { state: GameState; outcome: FacilityActionOutcome } {
+  const factory = state.factories.find((f) => f.id === factoryId);
+  if (!factory) return { state, outcome: { success: false, reason: 'factory_not_found' } };
+  if (factory.tier >= MAX_FACTORY_TIER) return { state, outcome: { success: false, reason: 'max_tier' } };
+
+  const cost = FACTORY_UPGRADE_COST[factory.tier + 1];
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if (!hasSufficientWealth(state, factory.ownership, cost, playerId)) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+  }
+
+  const factories = state.factories.map((f) => (f.id === factoryId ? upgradeFactory(f) : f));
+  const nextState = debitFacilityCost({ ...state, factories }, factory.ownership, cost, playerId);
+  return { state: nextState, outcome: { success: true } };
+}
+
+/**
+ * Sells raw resources straight off the shared national stockpile — since
+ * that stockpile isn't itself split by ownership (any mine, state or
+ * private, feeds the same pool), the seller explicitly chooses who profits
+ * from this particular sale: the national budget or their own pocket.
+ */
+export function sellRawResourceAction(
+  state: GameState,
+  resource: RawResourceType,
+  units: number,
+  sellAs: FacilityOwnership
+): { state: GameState; sale: SaleResult } {
+  const available = state.rawResourceStockpile[resource] ?? 0;
+  const price = state.marketPrices[resource] ?? 0;
+  const sale = sellFromStockpile(units, available, price);
+  if (sale.unitsSold <= 0) return { state, sale };
+
+  const rawResourceStockpile = { ...state.rawResourceStockpile, [resource]: available - sale.unitsSold };
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const withStockpile: GameState = { ...state, rawResourceStockpile };
+
+  const nextState =
+    sellAs === 'state'
+      ? { ...withStockpile, economy: applyImmediateEffect(withStockpile.economy, { budgetBalance: sale.revenue / INDUSTRY_BUDGET_COST_SCALE }) }
+      : {
+          ...withStockpile,
+          personalWealth: {
+            ...withStockpile.personalWealth,
+            [playerId]: (withStockpile.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) + sale.revenue,
+          },
+        };
+
+  return { state: nextState, sale };
+}
+
+/** Sells finished goods from whichever ownership's stockpile they're sitting in — unambiguous, since state and private goods are already tracked separately. */
+export function sellProcessedGoodAction(
+  state: GameState,
+  good: ProcessedGoodType,
+  units: number,
+  ownership: FacilityOwnership
+): { state: GameState; sale: SaleResult } {
+  const stockpile = ownership === 'state' ? state.stateGoodsStockpile : state.privateGoodsStockpile;
+  const available = stockpile[good] ?? 0;
+  const price = state.marketPrices[good] ?? 0;
+  const sale = sellFromStockpile(units, available, price);
+  if (sale.unitsSold <= 0) return { state, sale };
+
+  const updatedStockpile = { ...stockpile, [good]: available - sale.unitsSold };
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+
+  if (ownership === 'state') {
+    return {
+      state: {
+        ...state,
+        stateGoodsStockpile: updatedStockpile,
+        economy: applyImmediateEffect(state.economy, { budgetBalance: sale.revenue / INDUSTRY_BUDGET_COST_SCALE }),
+      },
+      sale,
+    };
+  }
+  return {
+    state: {
+      ...state,
+      privateGoodsStockpile: updatedStockpile,
+      personalWealth: { ...state.personalWealth, [playerId]: (state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH) + sale.revenue },
+    },
+    sale,
+  };
 }
 
 /**

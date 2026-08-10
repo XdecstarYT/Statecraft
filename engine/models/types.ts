@@ -294,6 +294,112 @@ export interface War {
   endTurn?: number;
 }
 
+/**
+ * INDUSTRY: MINING, MANUFACTURING, LOGISTICS & MARKET — a real production
+ * chain layered on top of the abstract macro trade system above: named raw
+ * resources are extracted from deposits (domestic provinces or foreign
+ * nations you have relations with), shipped through the national logistics
+ * network into factories, converted into named finished goods by recipe,
+ * and sold on the market. See engine/systems/mining.ts, logistics.ts,
+ * manufacturing.ts, market.ts.
+ */
+
+export type RawResourceType =
+  | 'iron_ore'
+  | 'coal'
+  | 'crude_oil'
+  | 'copper_ore'
+  | 'timber'
+  | 'bauxite'
+  | 'natural_gas'
+  | 'gold_ore'
+  | 'grain'
+  | 'rare_earth_minerals'
+  | 'stone';
+
+export type ProcessedGoodType =
+  | 'steel'
+  | 'refined_fuel'
+  | 'copper_wire'
+  | 'lumber'
+  | 'aluminum'
+  | 'electronics'
+  | 'processed_food'
+  | 'jewelry'
+  | 'machinery'
+  | 'chemicals';
+
+/** Who funds and profits from a facility: the national budget, or the player's personal wealth. */
+export type FacilityOwnership = 'state' | 'private';
+
+/** Whether a facility's location is one of your own provinces, or a foreign nation you have relations with. */
+export type FacilityLocationType = 'domestic' | 'foreign';
+
+/**
+ * A real, finite deposit of one raw resource at a specific location —
+ * richness scales how much a mine there can extract per turn, and
+ * remainingReserves depletes with extraction until the deposit runs dry.
+ */
+export interface ResourceDeposit {
+  id: string;
+  resource: RawResourceType;
+  /** A provinceId (domestic) or a ForeignCounterpart id (foreign). */
+  locationId: string;
+  locationType: FacilityLocationType;
+  /** 0..100 — scales extraction rate per mine tier. */
+  richness: number;
+  remainingReserves: number;
+}
+
+export interface Mine {
+  id: string;
+  depositId: string;
+  ownership: FacilityOwnership;
+  /** 1..3 — higher tiers extract faster but cost more to build and run. */
+  tier: number;
+  turnBuilt: number;
+}
+
+export interface ManufacturingRecipeInput {
+  resource: RawResourceType;
+  unitsPerBatch: number;
+}
+
+/** A pre-authored conversion recipe: raw resources in, one finished good out. See content/resources/recipes.ts. */
+export interface ManufacturingRecipe {
+  id: string;
+  outputGood: ProcessedGoodType;
+  outputUnitsPerBatch: number;
+  inputs: ManufacturingRecipeInput[];
+  /** Batches/turn a tier-1 factory running this recipe can process at full input supply. */
+  batchesPerTurnAtTier1: number;
+}
+
+export interface Factory {
+  id: string;
+  /** A provinceId (domestic) or a ForeignCounterpart id (foreign). */
+  locationId: string;
+  locationType: FacilityLocationType;
+  recipeId: string;
+  ownership: FacilityOwnership;
+  /** 1..3 — higher tiers process more batches/turn but cost more to build and run. */
+  tier: number;
+  turnBuilt: number;
+}
+
+/**
+ * The national logistics network — a single investable capability (like
+ * military or intelligence) that determines what fraction of extracted
+ * resources actually reach factories instead of being lost in transit.
+ * Foreign shipments are always less efficient than domestic ones, and are
+ * further degraded by poor relations or an active war with the source
+ * nation. See engine/systems/logistics.ts.
+ */
+export interface LogisticsNetwork {
+  /** 0..100 — invested national logistics capability. */
+  capability: number;
+}
+
 /** One FPTP district's vote tally. See engine/systems/elections.ts. */
 export interface DistrictResult {
   districtId: string;
@@ -612,6 +718,18 @@ export interface GameState {
   /** One-time milestone achievement ids recorded the moment they happen (can't be reconstructed from a state snapshot alone). See engine/systems/achievements.ts. */
   milestones: string[];
   houseRules: HouseRules;
+  resourceDeposits: ResourceDeposit[];
+  mines: Mine[];
+  factories: Factory[];
+  logisticsNetwork: LogisticsNetwork;
+  /** National stockpile of extracted-and-shipped raw resources awaiting processing or direct export. */
+  rawResourceStockpile: Record<RawResourceType, number>;
+  /** Finished goods produced by state-owned factories, sellable for budget revenue. */
+  stateGoodsStockpile: Record<ProcessedGoodType, number>;
+  /** Finished goods produced by privately-owned factories, sellable for personal wealth. */
+  privateGoodsStockpile: Record<ProcessedGoodType, number>;
+  /** Current market price for every raw resource and processed good. See engine/systems/market.ts. */
+  marketPrices: Record<RawResourceType | ProcessedGoodType, number>;
   eventLog: EventLogEntry[];
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */

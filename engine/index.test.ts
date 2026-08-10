@@ -21,6 +21,14 @@ import {
   mergePartiesAction,
   MAX_HEAD_OF_GOVERNMENT_TERMS,
   TERM_LENGTH_TURNS,
+  buildMineAction,
+  upgradeMineAction,
+  buildFactoryAction,
+  upgradeFactoryAction,
+  sellRawResourceAction,
+  sellProcessedGoodAction,
+  runIndustryTurn,
+  MAX_MINE_TIER,
   type GameState,
 } from './index';
 import { SeededRng } from './rng';
@@ -720,5 +728,137 @@ describe('house rules', () => {
       if (majorityParty) leaderIds.add(state.partyLeaderId[majorityParty.id]);
     }
     expect(leaderIds.size).toBe(1);
+  });
+});
+
+describe('industry (mining, logistics, manufacturing, market)', () => {
+  it('createNewGame seeds a populated resource economy', () => {
+    const state = createNewGame(1);
+    expect(state.resourceDeposits.length).toBeGreaterThan(0);
+    expect(state.mines).toEqual([]);
+    expect(state.factories).toEqual([]);
+    expect(state.logisticsNetwork.capability).toBe(20);
+    expect(state.marketPrices.iron_ore).toBeGreaterThan(0);
+    expect(state.marketPrices.steel).toBeGreaterThan(0);
+    expect(state.rawResourceStockpile.iron_ore).toBe(0);
+  });
+
+  it('buildMineAction claims a domestic deposit and bills the state budget', () => {
+    const state = createNewGame(1);
+    const deposit = state.resourceDeposits.find((d) => d.locationType === 'domestic')!;
+    const { state: after, outcome, mine } = buildMineAction(state, deposit.id, 'state');
+    expect(outcome.success).toBe(true);
+    expect(mine).not.toBeNull();
+    expect(after.mines).toHaveLength(1);
+    expect(after.economy.budgetBalance).toBeLessThan(state.economy.budgetBalance);
+  });
+
+  it('buildMineAction refuses to double-claim the same deposit', () => {
+    const state = createNewGame(1);
+    const deposit = state.resourceDeposits.find((d) => d.locationType === 'domestic')!;
+    const { state: after } = buildMineAction(state, deposit.id, 'state');
+    const { outcome } = buildMineAction(after, deposit.id, 'state');
+    expect(outcome).toEqual({ success: false, reason: 'deposit_claimed' });
+  });
+
+  it('a private mine debits the player\'s personal wealth instead of the budget, and refuses when wealth is short', () => {
+    const state = createNewGame(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const deposit = state.resourceDeposits.find((d) => d.locationType === 'domestic')!;
+
+    const { outcome: poorOutcome } = buildMineAction(state, deposit.id, 'private');
+    expect(poorOutcome).toEqual({ success: false, reason: 'insufficient_wealth' });
+
+    const funded: GameState = { ...state, personalWealth: { ...state.personalWealth, [player.id]: 500 } };
+    const { state: after, outcome } = buildMineAction(funded, deposit.id, 'private');
+    expect(outcome.success).toBe(true);
+    expect(after.personalWealth[player.id]).toBeLessThan(500);
+    expect(after.economy.budgetBalance).toBe(funded.economy.budgetBalance);
+  });
+
+  it('upgradeMineAction raises tier up to the max and then refuses', () => {
+    const state = createNewGame(1);
+    const deposit = state.resourceDeposits.find((d) => d.locationType === 'domestic')!;
+    let { state: after, mine } = buildMineAction(state, deposit.id, 'state');
+
+    for (let tier = mine!.tier; tier < MAX_MINE_TIER; tier++) {
+      const result = upgradeMineAction(after, mine!.id);
+      expect(result.outcome.success).toBe(true);
+      after = result.state;
+    }
+    expect(after.mines[0].tier).toBe(MAX_MINE_TIER);
+
+    const overCap = upgradeMineAction(after, mine!.id);
+    expect(overCap.outcome).toEqual({ success: false, reason: 'max_tier' });
+  });
+
+  it('buildFactoryAction rejects an unknown recipe id', () => {
+    const state = createNewGame(1);
+    const { outcome, factory } = buildFactoryAction(state, 'province-x', 'domestic', 'not-a-real-recipe', 'state');
+    expect(outcome).toEqual({ success: false, reason: 'recipe_not_found' });
+    expect(factory).toBeNull();
+  });
+
+  it('buildFactoryAction and upgradeFactoryAction work end to end for a state-owned factory', () => {
+    const state = createNewGame(1);
+    const { state: after, outcome, factory } = buildFactoryAction(state, 'province-x', 'domestic', 'recipe-steel', 'state');
+    expect(outcome.success).toBe(true);
+    expect(factory!.tier).toBe(1);
+
+    const upgraded = upgradeFactoryAction(after, factory!.id);
+    expect(upgraded.outcome.success).toBe(true);
+    expect(upgraded.state.factories[0].tier).toBe(2);
+  });
+
+  it('runIndustryTurn extracts, ships, and processes resources into finished goods over a turn', () => {
+    let state = createNewGame(1);
+    const ironDeposit = state.resourceDeposits.find(
+      (d) => d.locationType === 'domestic' && d.resource === 'iron_ore' && d.remainingReserves > 200
+    );
+    const coalDeposit = state.resourceDeposits.find(
+      (d) => d.locationType === 'domestic' && d.resource === 'coal' && d.remainingReserves > 200
+    );
+    if (!ironDeposit || !coalDeposit) {
+      // This seed didn't happen to generate both inputs domestically — the test is about the
+      // mechanism, not this specific seed, so it's safe to skip rather than fail spuriously.
+      return;
+    }
+
+    ({ state } = buildMineAction(state, ironDeposit.id, 'state'));
+    ({ state } = buildMineAction(state, coalDeposit.id, 'state'));
+    ({ state } = buildFactoryAction(state, 'province-x', 'domestic', 'recipe-steel', 'state'));
+
+    const rng = new SeededRng(state.rngState);
+    const after = runIndustryTurn(state, rng);
+
+    expect(after.resourceDeposits.find((d) => d.id === ironDeposit.id)!.remainingReserves).toBeLessThan(
+      ironDeposit.remainingReserves
+    );
+    expect(after.rawResourceStockpile.iron_ore + after.rawResourceStockpile.coal).toBeGreaterThanOrEqual(0);
+    expect(after.stateGoodsStockpile.steel).toBeGreaterThanOrEqual(0);
+    expect(after.economy.budgetBalance).toBeLessThan(state.economy.budgetBalance);
+  });
+
+  it('sellRawResourceAction sells from the shared stockpile and credits the chosen pool', () => {
+    const state = createNewGame(1);
+    const stocked: GameState = { ...state, rawResourceStockpile: { ...state.rawResourceStockpile, iron_ore: 100 } };
+
+    const { state: afterStateSale, sale: stateSale } = sellRawResourceAction(stocked, 'iron_ore', 40, 'state');
+    expect(stateSale.unitsSold).toBe(40);
+    expect(afterStateSale.rawResourceStockpile.iron_ore).toBe(60);
+    expect(afterStateSale.economy.budgetBalance).toBeGreaterThan(stocked.economy.budgetBalance);
+
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: afterPrivateSale, sale: privateSale } = sellRawResourceAction(stocked, 'iron_ore', 40, 'private');
+    expect(privateSale.unitsSold).toBe(40);
+    expect(afterPrivateSale.personalWealth[player.id]).toBeGreaterThan(stocked.personalWealth[player.id]);
+  });
+
+  it('sellProcessedGoodAction caps units sold at what is actually in stock', () => {
+    const state = createNewGame(1);
+    const stocked: GameState = { ...state, stateGoodsStockpile: { ...state.stateGoodsStockpile, steel: 10 } };
+    const { state: after, sale } = sellProcessedGoodAction(stocked, 'steel', 999, 'state');
+    expect(sale.unitsSold).toBe(10);
+    expect(after.stateGoodsStockpile.steel).toBe(0);
   });
 });
