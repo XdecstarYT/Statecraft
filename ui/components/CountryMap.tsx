@@ -1,5 +1,6 @@
 import { Suspense, lazy } from 'react';
 import { computeDistrictLean, computeIdeologicalVoteShares, type District, type Party, type VoterBloc } from '../../engine';
+import { partyColor } from '../partyColor';
 import { useStatecraftStore } from '../store';
 
 // three.js is a large dependency — code-split so it only loads when a tab
@@ -8,14 +9,6 @@ import { useStatecraftStore } from '../store';
 const CountryMapScene = lazy(() =>
   import('./CountryMapScene').then((m) => ({ default: m.CountryMapScene }))
 );
-
-/** A stable, vivid color per party, hashed from its id — kept in sync with the same hash CountryMapScene uses for the 3D tiles, just rendered as a flat CSS color for the 2D legend swatch. */
-function partyColor(partyId: string): string {
-  let hash = 0;
-  for (let i = 0; i < partyId.length; i++) hash = (hash * 31 + partyId.charCodeAt(i)) >>> 0;
-  const hue = hash % 360;
-  return `hsl(${hue}, 62%, 48%)`;
-}
 
 interface CountryMapProps {
   onSelectDistrict?: (districtId: string) => void;

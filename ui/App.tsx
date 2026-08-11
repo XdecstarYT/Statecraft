@@ -40,6 +40,7 @@ import { ChirpPanel } from './components/ChirpPanel';
 import { MovementsPanel } from './components/MovementsPanel';
 import { CountryMap } from './components/CountryMap';
 import { ElectionResultsDrawer } from './components/ElectionResultsDrawer';
+import { ParliamentHemicycle } from './components/ParliamentHemicycle';
 import { TopHud } from './components/TopHud';
 import { TimelineScrubber } from './components/TimelineScrubber';
 import { AchievementsOverlay } from './components/AchievementsOverlay';
@@ -314,6 +315,7 @@ export default function App() {
         <>
           <CountryMap onSelectDistrict={setSelectedDistrictId} selectedDistrictId={selectedDistrictId} />
           <ElectionResultsDrawer />
+          <ParliamentHemicycle />
           <div className="panel-columns">
             <BillPanel />
             <ElectionPanel />

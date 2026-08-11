@@ -1041,6 +1041,97 @@ button:disabled {
   font-weight: 600;
 }
 
+.parliament-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 1fr);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.parliament-hemicycle {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.parliament-hemicycle circle {
+  stroke: var(--bg-elevated);
+  stroke-width: 0.06;
+  transition: opacity 0.15s ease;
+}
+
+.parliament-info-list {
+  margin: 0 0 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.parliament-info-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+
+.parliament-info-list dt {
+  color: var(--text-secondary);
+}
+
+.parliament-info-list dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-weight: 600;
+  text-align: right;
+}
+
+.parliament-party-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.parliament-party-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+  cursor: default;
+}
+
+.parliament-party-swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.parliament-party-name {
+  flex: 1;
+  color: var(--text-primary);
+}
+
+.parliament-party-seats {
+  color: var(--text-secondary);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .parliament-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ---------- Bottom timeline scrubber ---------- */
 
 .timeline-scrubber {
