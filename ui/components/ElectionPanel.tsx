@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CABINET_PORTFOLIOS, computeRunningTally, getProvinces, type CabinetPortfolio } from '../../engine';
+import { CABINET_PORTFOLIOS, computeRunningTally, getProvinces, type CabinetPortfolio, type CabinetRank } from '../../engine';
 import { useStatecraftStore } from '../store';
 
 const PORTFOLIO_LABELS: Record<CabinetPortfolio, string> = {
@@ -9,6 +9,9 @@ const PORTFOLIO_LABELS: Record<CabinetPortfolio, string> = {
   justice: 'Justice',
 };
 
+const RANKS: CabinetRank[] = ['senior', 'junior'];
+const RANK_LABELS: Record<CabinetRank, string> = { senior: 'Minister', junior: 'Junior Minister' };
+
 export function ElectionPanel() {
   const game = useStatecraftStore((s) => s.game);
   const runElection = useStatecraftStore((s) => s.runElection);
@@ -16,8 +19,10 @@ export function ElectionPanel() {
   const reportNextProvinceAction = useStatecraftStore((s) => s.reportNextProvinceAction);
   const concludeElectionNightAction = useStatecraftStore((s) => s.concludeElectionNightAction);
   const dismissElectionNightAction = useStatecraftStore((s) => s.dismissElectionNightAction);
-  const appointToCabinetAction = useStatecraftStore((s) => s.appointToCabinetAction);
+  const reshuffleCabinetAction = useStatecraftStore((s) => s.reshuffleCabinetAction);
   const removeFromCabinetAction = useStatecraftStore((s) => s.removeFromCabinetAction);
+  const attemptMinisterNoConfidenceAction = useStatecraftStore((s) => s.attemptMinisterNoConfidenceAction);
+  const lastMinisterNoConfidenceOutcome = useStatecraftStore((s) => s.lastMinisterNoConfidenceOutcome);
 
   const [selectedAppointee, setSelectedAppointee] = useState<Record<string, string>>({});
 
@@ -168,37 +173,66 @@ export function ElectionPanel() {
               </tr>
             </thead>
             <tbody>
-              {CABINET_PORTFOLIOS.map((portfolio) => {
-                const appointment = game.cabinet.find((c) => c.portfolio === portfolio);
-                const minister = appointment
-                  ? game.politicians.find((p) => p.id === appointment.politicianId)
-                  : null;
-                const selected = selectedAppointee[portfolio] ?? cabinetCandidates[0]?.id ?? '';
-                return (
-                  <tr key={portfolio}>
-                    <td>{PORTFOLIO_LABELS[portfolio]}</td>
-                    <td>{minister ? minister.name : <span className="muted">Vacant</span>}</td>
-                    <td className="row-actions">
-                      <select
-                        value={selected}
-                        onChange={(e) =>
-                          setSelectedAppointee((s) => ({ ...s, [portfolio]: e.target.value }))
-                        }
-                      >
-                        {cabinetCandidates.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button onClick={() => appointToCabinetAction(portfolio, selected)}>Appoint</button>
-                      {minister && (
-                        <button onClick={() => removeFromCabinetAction(portfolio)}>Remove</button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {CABINET_PORTFOLIOS.flatMap((portfolio) =>
+                RANKS.map((rank) => {
+                  const seatKey = `${portfolio}:${rank}`;
+                  const appointment = game.cabinet.find((c) => c.portfolio === portfolio && c.rank === rank);
+                  const minister = appointment
+                    ? game.politicians.find((p) => p.id === appointment.politicianId)
+                    : null;
+                  const selected = selectedAppointee[seatKey] ?? cabinetCandidates[0]?.id ?? '';
+                  const outcome =
+                    minister && lastMinisterNoConfidenceOutcome?.targetId === minister.id
+                      ? lastMinisterNoConfidenceOutcome
+                      : null;
+                  return (
+                    <tr key={seatKey}>
+                      <td>
+                        {PORTFOLIO_LABELS[portfolio]}
+                        <span className="muted"> ({RANK_LABELS[rank]})</span>
+                      </td>
+                      <td>
+                        {minister ? minister.name : <span className="muted">Vacant</span>}
+                        {outcome && (
+                          <div className={outcome.removed ? 'result-pass' : 'result-fail'}>
+                            {outcome.removed
+                              ? `No confidence carried (${outcome.result.votesFor}/${outcome.result.totalCount})`
+                              : `No confidence failed (${outcome.result.votesFor}/${outcome.result.totalCount})`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="row-actions">
+                        <select
+                          value={selected}
+                          onChange={(e) =>
+                            setSelectedAppointee((s) => ({ ...s, [seatKey]: e.target.value }))
+                          }
+                        >
+                          {cabinetCandidates.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button onClick={() => reshuffleCabinetAction(portfolio, rank, selected)}>
+                          {minister ? 'Reshuffle' : 'Appoint'}
+                        </button>
+                        {minister && (
+                          <button onClick={() => removeFromCabinetAction(portfolio, rank)}>Remove</button>
+                        )}
+                        {minister && !minister.isPlayer && (
+                          <button
+                            className="danger-button"
+                            onClick={() => attemptMinisterNoConfidenceAction(minister.id)}
+                          >
+                            Move No Confidence
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>

@@ -1,5 +1,13 @@
 import { useState } from 'react';
-import { computeFactionTerms, computeLobbyingPressure, pollWhipCount, type Bill, type BillCategory } from '../../engine';
+import {
+  computeFactionTerms,
+  computeLobbyingPressure,
+  findCommitteeForBill,
+  findMemberFaction,
+  pollWhipCount,
+  type Bill,
+  type BillCategory,
+} from '../../engine';
 import { useStatecraftStore } from '../store';
 
 const CATEGORY_LABELS: Record<BillCategory, string> = {
@@ -234,6 +242,7 @@ function BillRow({
 
   const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
   const isPlayerBill = sponsor?.isPlayer ?? false;
+  const committee = findCommitteeForBill(game.committees, bill);
 
   const projections =
     expanded && sponsor
@@ -265,6 +274,15 @@ function BillRow({
 
       {expanded && (
         <div className="bill-detail">
+          {committee && (
+            <p className="muted">
+              Committee of jurisdiction: {committee.name}
+              {bill.committeeResult &&
+                (bill.committeeResult.passed
+                  ? ` — cleared ${bill.committeeResult.yes}-${bill.committeeResult.no}`
+                  : ` — killed in committee ${bill.committeeResult.no}-${bill.committeeResult.yes}`)}
+            </p>
+          )}
           <ul className="provision-list">
             {bill.provisions.map((p) => (
               <li key={p.id}>
@@ -354,6 +372,7 @@ function BillRow({
                 <tr>
                   <th>Member</th>
                   <th>Party</th>
+                  <th>Faction</th>
                   <th>Stance</th>
                   <th>Projected Yes %</th>
                   <th>Actions</th>
@@ -363,10 +382,18 @@ function BillRow({
                 {projections.map((proj) => {
                   const politician = game.politicians.find((p) => p.id === proj.politicianId)!;
                   const party = game.parties.find((p) => p.id === politician.partyId);
+                  const faction = party ? findMemberFaction(politician, party) : undefined;
+                  const isFactionLeader = faction
+                    ? game.factionLeaderId[`${party!.id}:${faction.name}`] === politician.id
+                    : false;
                   return (
                     <tr key={proj.politicianId}>
                       <td>{politician.name}</td>
                       <td>{party?.name ?? politician.partyId}</td>
+                      <td>
+                        {faction ? faction.name : <span className="muted">—</span>}
+                        {isFactionLeader && <span className="muted"> (leader)</span>}
+                      </td>
                       <td className={`stance-${proj.stance}`}>{proj.stance}</td>
                       <td>{(proj.projectedProbability * 100).toFixed(0)}%</td>
                       <td className="row-actions">
