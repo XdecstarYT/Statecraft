@@ -1,64 +1,13 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance, type ForeignCounterpart, type GameState } from '../../engine';
 import { useStatecraftStore } from '../store';
-import { getWorldLandTexture } from './worldLandTexture';
+import type { GlobeFilter } from '../worldFilterAppearance';
+import { buildWorldPoliticalTexture } from './worldPoliticalTexture';
+
+export { GLOBE_FILTER_LABELS, type GlobeFilter } from '../worldFilterAppearance';
 
 const GLOBE_RADIUS = 5;
-
-/**
- * Every filter is driven by data the engine actually tracks — no
- * placeholder numbers. "military" is the original default; the other
- * three reuse foreignRelations, each nation's own trade.production, and
- * ideological distance from the player's own politician respectively.
- */
-export type GlobeFilter = 'military' | 'relations' | 'trade' | 'ideology';
-
-export const GLOBE_FILTER_LABELS: Record<GlobeFilter, string> = {
-  military: 'Military Strength',
-  relations: 'Foreign Relations',
-  trade: 'Economic Activity',
-  ideology: 'Ideological Alignment',
-};
-
-interface MarkerAppearance {
-  hue: number;
-  /** A scale multiplier on the marker's fixed base geometry, not an absolute radius — cheap to update without rebuilding meshes. */
-  scale: number;
-}
-
-function sumProduction(nation: ForeignCounterpart): number {
-  return Object.values(nation.trade.production).reduce((a, b) => a + b, 0);
-}
-
-const MIN_SCALE = 0.55;
-const MAX_SCALE = 1.85;
-
-function computeMarkerAppearance(
-  filter: GlobeFilter,
-  nation: ForeignCounterpart,
-  game: GameState | null,
-  maxProduction: number
-): MarkerAppearance {
-  if (filter === 'relations') {
-    const relation = game?.foreignRelations[nation.id] ?? 0; // -100..100
-    const normalized = (relation + 100) / 200; // 0 (hostile) .. 1 (friendly)
-    return { hue: normalized * 0.35, scale: MIN_SCALE + (Math.abs(relation) / 100) * (MAX_SCALE - MIN_SCALE) };
-  }
-  if (filter === 'trade') {
-    const normalized = maxProduction > 0 ? sumProduction(nation) / maxProduction : 0;
-    return { hue: 0.13 - normalized * 0.13, scale: MIN_SCALE + normalized * (MAX_SCALE - MIN_SCALE) }; // gold (high) -> dim red (low)
-  }
-  if (filter === 'ideology') {
-    const player = game?.politicians.find((p) => p.isPlayer);
-    const distance = player ? ideologicalDistance(nation.ideology, player.ideology) : MAX_IDEOLOGICAL_DISTANCE / 2;
-    const normalized = 1 - distance / MAX_IDEOLOGICAL_DISTANCE; // 1 (aligned) .. 0 (opposed)
-    return { hue: normalized * 0.35, scale: MIN_SCALE + normalized * (MAX_SCALE - MIN_SCALE) };
-  }
-  const strength = nation.military.strength;
-  return { hue: 0.58 - (strength / 100) * 0.58, scale: MIN_SCALE + (strength / 100) * (MAX_SCALE - MIN_SCALE) };
-}
 
 function latLngToVector3(lat: number, lng: number, radius: number): THREE.Vector3 {
   const phi = (90 - lat) * (Math.PI / 180);
@@ -77,20 +26,28 @@ interface GlobeProps {
 }
 
 /**
- * A self-contained three.js globe — no textures/network assets, so it works
- * fully offline: a shaded sphere plus one marker per nation, sized and
- * color-graded (blue -> red) by military strength, positioned from real
- * approximate capital coordinates. A pulsing red ring flags any nation
- * currently at active war with the player, independent of whichever filter
- * is selected — real state.wars data, not a placeholder effect. Click a
- * marker to select that nation; drag to orbit, scroll to zoom.
+ * A self-contained three.js globe, built from the real country-boundary
+ * data already bundled for the land texture (world-atlas countries-110m):
+ * every country the roster has data for is shaded by whichever filter is
+ * active (military/relations/trade/ideology), with visible political
+ * borders, instead of a flat landmass blob with colored dots. A small
+ * marker still sits at each capital as a click target; a pulsing red ring
+ * flags any nation currently at active war with the player, independent of
+ * whichever filter is selected — real state.wars data, not a placeholder
+ * effect. Click a marker to select that nation; drag to orbit, scroll to
+ * zoom.
  */
 export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const globeMeshRef = useRef<THREE.Mesh | null>(null);
   const markersRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const warRingsRef = useRef<Map<string, THREE.Mesh>>(new Map());
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
+  const filterRef = useRef(filter);
+  filterRef.current = filter;
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
 
   const game = useStatecraftStore((s) => s.game);
   const seed = game?.seed;
@@ -134,11 +91,13 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     fillLight.position.set(-14, -6, -10);
     scene.add(fillLight);
 
+    const initialTexture = buildWorldPoliticalTexture(nations, game ?? null, filterRef.current, selectedIdRef.current);
     const globe = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64),
-      new THREE.MeshPhongMaterial({ map: getWorldLandTexture(), shininess: 10, specular: 0x1a2a3a })
+      new THREE.MeshPhongMaterial({ map: initialTexture, shininess: 10, specular: 0x1a2a3a })
     );
     scene.add(globe);
+    globeMeshRef.current = globe;
 
     const atmosphere = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS * 1.02, 48, 48),
@@ -146,10 +105,10 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     );
     scene.add(atmosphere);
 
-    const BASE_MARKER_RADIUS = 0.11;
-    // Sized to clear the largest possible marker (BASE_MARKER_RADIUS * MAX_SCALE
-    // * the 1.9x selection bump) with room to spare, so the ring is never
-    // occluded by a big, selected, high-value marker underneath it.
+    // Markers are now just capital-city click targets, sized fixed and dim —
+    // the country shading itself carries the filter's data signal, so a
+    // marker no longer needs to be individually sized/colored by it.
+    const BASE_MARKER_RADIUS = 0.06;
     const WAR_RING_RADIUS = 0.5;
     markersRef.current.clear();
     warRingsRef.current.clear();
@@ -157,11 +116,10 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
       const position = latLngToVector3(nation.location.lat, nation.location.lng, GLOBE_RADIUS + 0.05);
       const marker = new THREE.Mesh(
         new THREE.SphereGeometry(BASE_MARKER_RADIUS, 10, 10),
-        new THREE.MeshBasicMaterial({ color: 0xffffff })
+        new THREE.MeshBasicMaterial({ color: 0xf4f6fb, transparent: true, opacity: 0.85 })
       );
       marker.position.copy(position);
       marker.userData.nationId = nation.id;
-      marker.userData.baseScale = 1;
       scene.add(marker);
       markersRef.current.set(nation.id, marker);
 
@@ -239,11 +197,15 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
       scene.traverse((obj) => {
         if (obj instanceof THREE.Mesh) {
           obj.geometry.dispose();
-          if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
-          else obj.material.dispose();
+          const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+          for (const m of materials) {
+            if ('map' in m && m.map) (m.map as THREE.Texture).dispose();
+            m.dispose();
+          }
         }
       });
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);
+      globeMeshRef.current = null;
     };
     // Rebuilt only when the game itself changes (new game) — the roster's
     // military numbers are static within a session, so there's no need to
@@ -251,25 +213,32 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [seed]);
 
-  // Recolors and rescales markers per the active filter — cheap (material
-  // color + mesh scale only, no geometry rebuild), so this can safely run
-  // on every filter switch, selection change, or live game-state update
-  // (relations shift from diplomacy, trade deals, etc.) without touching
-  // the WebGL scene itself.
+  // Rebuilds the political texture (the primary data signal now) and
+  // updates marker/war-ring state per the active filter and selection —
+  // cheap enough (one canvas redraw, no geometry rebuild) to run on every
+  // filter switch, selection change, or live game-state update (relations
+  // shift from diplomacy, trade deals, etc.) without touching the rest of
+  // the WebGL scene.
   useEffect(() => {
     if (!game) return;
     const nations = game.foreignCounterparts;
-    const maxProduction = Math.max(1, ...nations.map(sumProduction));
     const activeWarCounterpartIds = new Set(
       game.wars.filter((w) => w.status === 'active').map((w) => w.counterpartId)
     );
+
+    const globeMesh = globeMeshRef.current;
+    if (globeMesh) {
+      const material = globeMesh.material as THREE.MeshPhongMaterial;
+      const oldTexture = material.map;
+      material.map = buildWorldPoliticalTexture(nations, game, filter, selectedId);
+      material.needsUpdate = true;
+      oldTexture?.dispose();
+    }
+
     markersRef.current.forEach((mesh, id) => {
-      const nation = nations.find((n) => n.id === id);
-      if (!nation) return;
-      const appearance = computeMarkerAppearance(filter, nation, game, maxProduction);
-      (mesh.material as THREE.MeshBasicMaterial).color.setHSL(appearance.hue, 0.8, 0.55);
-      mesh.userData.baseScale = appearance.scale;
-      mesh.scale.setScalar(appearance.scale * (id === selectedId ? 1.9 : 1));
+      const isSelected = id === selectedId;
+      mesh.scale.setScalar(isSelected ? 2.4 : 1);
+      (mesh.material as THREE.MeshBasicMaterial).color.set(isSelected ? 0xffe27a : 0xf4f6fb);
     });
     warRingsRef.current.forEach((ring, id) => {
       ring.visible = activeWarCounterpartIds.has(id);
