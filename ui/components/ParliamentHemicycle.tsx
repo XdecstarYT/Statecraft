@@ -99,6 +99,7 @@ export function ParliamentHemicycle() {
   const rankedParties = [...game.parties].filter((p) => p.seats > 0).sort((a, b) => b.seats - a.seats);
   const presidingOfficer = findPresidingOfficer(game);
   const coalition = game.coalition && game.coalition.status === 'governing' ? game.coalition : null;
+  const weeksUntilElection = Math.max(0, game.nextElectionTurn - game.turn);
 
   return (
     <section className="panel parliament-panel">
@@ -154,7 +155,11 @@ export function ParliamentHemicycle() {
             )}
             <div>
               <dt>Next election</dt>
-              <dd>Turn {game.nextElectionTurn}</dd>
+              <dd>
+                {weeksUntilElection === 0
+                  ? 'This week'
+                  : `In ${weeksUntilElection} week${weeksUntilElection === 1 ? '' : 's'}`}
+              </dd>
             </div>
           </dl>
 
