@@ -1221,9 +1221,12 @@ describe('advanceBillToFloor (strategic opposition whipping)', () => {
     const { state: base, player } = withOpposedRival(createNewGame(1));
     let bill = proposeBill({ id: 'test-bill', title: 'Test', provisions: [], sponsorId: player.id });
     bill = advanceToCommittee(bill);
-    const state = { ...base, bills: [bill] };
+    const committees = [
+      { id: 'ways-and-means', name: 'Ways & Means Committee', areas: ['economic' as const], memberIds: [player.id], chairId: player.id },
+    ];
+    const state = { ...base, bills: [bill], committees };
 
-    const next = advanceBillToFloor(state, 'test-bill');
+    const next = advanceBillToFloor(state, 'test-bill', new SeededRng(1));
     const resultBill = next.bills.find((b) => b.id === 'test-bill')!;
     expect(resultBill.status).toBe('floor');
     expect(resultBill.whipCount['rival-opposition']).toBe('no');
@@ -1234,16 +1237,19 @@ describe('advanceBillToFloor (strategic opposition whipping)', () => {
     const npcSponsor = base.politicians.find((p) => !p.isPlayer && p.id !== rival.id)!;
     let bill = proposeBill({ id: 'npc-bill', title: 'Test', provisions: [], sponsorId: npcSponsor.id });
     bill = advanceToCommittee(bill);
-    const state = { ...base, bills: [bill] };
+    const committees = [
+      { id: 'ways-and-means', name: 'Ways & Means Committee', areas: ['economic' as const], memberIds: [npcSponsor.id], chairId: npcSponsor.id },
+    ];
+    const state = { ...base, bills: [bill], committees };
 
-    const next = advanceBillToFloor(state, 'npc-bill');
+    const next = advanceBillToFloor(state, 'npc-bill', new SeededRng(1));
     const resultBill = next.bills.find((b) => b.id === 'npc-bill')!;
     expect(resultBill.whipCount['rival-opposition']).toBeUndefined();
   });
 
   it('is a no-op for an unknown bill id', () => {
     const state = createNewGame(1);
-    expect(advanceBillToFloor(state, 'no-such-bill')).toBe(state);
+    expect(advanceBillToFloor(state, 'no-such-bill', new SeededRng(1))).toBe(state);
   });
 });
 

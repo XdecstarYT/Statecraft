@@ -58,6 +58,7 @@ import {
   relationshipKey,
   resolveFloorVote,
 } from './systems/legislative';
+import { applyCommitteeVoteResult, assignCommittees, findCommitteeForBill, resolveCommitteeVote } from './systems/committees';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
 import {
   applyBillOutcomeToGroups,
@@ -312,6 +313,7 @@ export * from './systems/movements';
 export * from './systems/dilemmas';
 export * from './systems/statistics';
 export * from './systems/promises';
+export * from './systems/committees';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -454,6 +456,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
       party.id === playerPartyId ? player.id : (politicians.find((p) => p.partyId === party.id)?.id ?? player.id);
   }
 
+  const committees = assignCommittees(politicians, parties, rng);
+
   const baseState: GameState = {
     seed,
     rngState: rng.getState(),
@@ -526,6 +530,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     difficulty: options.difficulty ?? 'standard',
     startingEconomy,
     playerPromises: [],
+    committees,
   };
 
   return resolveGovernment(baseState, rng);
@@ -672,7 +677,23 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   let bills = state.bills.map((bill) => {
     if (!isNpcBill(bill)) return bill;
     if (bill.status === 'drafting') return advanceToCommittee(bill);
-    if (bill.status === 'committee') return advanceToFloor(bill);
+    if (bill.status === 'committee') {
+      const committee = findCommitteeForBill(state.committees, bill);
+      if (!committee) return advanceToFloor(bill);
+      const sponsor = politicians.find((p) => p.id === bill.sponsorId);
+      const lobbyingPressure = sponsor ? computeLobbyingPressure(state.interestGroups, bill, sponsor) : 0;
+      const result = resolveCommitteeVote(
+        bill,
+        committee,
+        politicians,
+        state.relationships,
+        state.favorBank,
+        rng,
+        DEFAULT_WHIP_WEIGHTS,
+        lobbyingPressure
+      );
+      return applyCommitteeVoteResult(bill, result);
+    }
     return bill;
   });
 
@@ -2491,24 +2512,48 @@ export function applyBillOutcomeToApproval(
 }
 
 /**
- * Advances a bill from committee to the floor — and, exactly like an
+ * Puts a bill in committee to a real vote — real RNG-consuming support
+ * math (see committees.ts's resolveCommitteeVote) restricted to that
+ * committee's own membership, not a formality every bill automatically
+ * clears. A pass advances the bill to the floor and, exactly like an
  * NPC-sponsored bill already does when runNpcTurn moves it along, locks in
  * any NPC member's clear-cut stance immediately (strongly aligned allies,
  * clearly hostile opponents, coalition-partner discipline, and coordinated
- * opposition-party discipline against a player-sponsored bill). This makes
- * the whip count the player sees reflect real strategic behavior the moment
- * the bill hits the floor, instead of a wall of "undecided" that only
- * resolves once the vote is actually called.
+ * opposition-party discipline against a player-sponsored bill) — so the
+ * whip count the player sees reflects real strategic behavior the moment
+ * the bill hits the floor. A fail kills the bill in committee outright.
  */
-export function advanceBillToFloor(state: GameState, billId: string): GameState {
+export function advanceBillToFloor(state: GameState, billId: string, rng: SeededRng): GameState {
   const bill = state.bills.find((b) => b.id === billId);
   if (!bill) return state;
   const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
-  let nextBill = advanceToFloor(bill);
-  if (sponsor) {
+
+  const committee = findCommitteeForBill(state.committees, bill);
+  let nextBill: Bill;
+  if (!committee) {
+    // No matching standing committee exists (e.g. a save predating this
+    // system) — fall back to the old free pass rather than stranding the
+    // bill forever.
+    nextBill = advanceToFloor(bill);
+  } else {
+    const lobbyingPressure = sponsor ? computeLobbyingPressure(state.interestGroups, bill, sponsor) : 0;
+    const result = resolveCommitteeVote(
+      bill,
+      committee,
+      state.politicians,
+      state.relationships,
+      state.favorBank,
+      rng,
+      DEFAULT_WHIP_WEIGHTS,
+      lobbyingPressure
+    );
+    nextBill = applyCommitteeVoteResult(bill, result);
+  }
+
+  if (nextBill.status === 'floor' && sponsor) {
     nextBill = applyNpcStances(nextBill, state.politicians, sponsor, state.relationships, state.coalition);
   }
-  return { ...state, bills: state.bills.map((b) => (b.id === billId ? nextBill : b)) };
+  return { ...state, bills: state.bills.map((b) => (b.id === billId ? nextBill : b)), rngState: rng.getState() };
 }
 
 const BILL_ENACTMENT_DELAY_TURNS = 3;

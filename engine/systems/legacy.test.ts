@@ -113,6 +113,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,
     playerPromises: [],
+    committees: [],
     ...overrides,
   };
 }

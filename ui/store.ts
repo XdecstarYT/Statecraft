@@ -704,7 +704,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   sendToFloor: (billId) => {
     const game = get().game;
     if (!game) return;
-    set({ game: engineAdvanceBillToFloor(game, billId) });
+    const rng = SeededRng.fromState(game.rngState);
+    set({ game: engineAdvanceBillToFloor(game, billId, rng) });
   },
 
   setStance: (billId, politicianId, stance) => {

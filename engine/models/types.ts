@@ -129,6 +129,33 @@ export interface Bill {
   whipCount: Record<string, WhipStance>;
   /** A minority bloc is holding the floor vote hostage — see engine/systems/legislative.ts's invokeFilibuster/attemptCloture. Floor votes cannot resolve while true. */
   filibustered?: boolean;
+  /** Set once the bill clears (or dies in) committee — see engine/systems/committees.ts. Optional for saves predating this field. */
+  committeeResult?: CommitteeVoteResult;
+}
+
+/**
+ * A standing committee with real jurisdiction and real members — bills
+ * must clear a committee vote (see engine/systems/committees.ts) before
+ * reaching the floor, using the same whip-count math as a floor vote but
+ * restricted to the committee's own membership.
+ */
+export interface Committee {
+  id: string;
+  name: string;
+  /** Which bill categories fall under this committee's jurisdiction. */
+  areas: BillCategory[];
+  /** politicianIds assigned to this committee. */
+  memberIds: string[];
+  /** politicianId of the presiding chair — always one of memberIds. */
+  chairId: string;
+}
+
+export interface CommitteeVoteResult {
+  committeeId: string;
+  committeeName: string;
+  yes: number;
+  no: number;
+  passed: boolean;
 }
 
 /**
@@ -1046,6 +1073,8 @@ export interface GameState {
   startingEconomy: EconomyState;
   /** Campaign promises the player has made against a real, already-tracked stat. See engine/systems/promises.ts. */
   playerPromises: PlayerPromise[];
+  /** Standing committees every bill must clear before reaching the floor. See engine/systems/committees.ts. */
+  committees: Committee[];
 }
 
 /**
