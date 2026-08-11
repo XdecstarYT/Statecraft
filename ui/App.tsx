@@ -24,6 +24,7 @@ import { SummitPanel } from './components/SummitPanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
+import { StatisticsPanel } from './components/StatisticsPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
 import { AccessibilityPanel } from './components/AccessibilityPanel';
 import { IndustryPanel } from './components/IndustryPanel';
@@ -56,6 +57,7 @@ const TABS = [
   { id: 'chirp', label: 'Chirp', icon: '🐦' },
   { id: 'events', label: 'Events', icon: '📰' },
   { id: 'lab', label: 'Electoral Lab', icon: '🗳️' },
+  { id: 'statistics', label: 'Statistics', icon: '📈' },
   { id: 'legacy', label: 'Legacy', icon: '🏆' },
 ] as const;
 
@@ -384,6 +386,7 @@ export default function App() {
           <PollingPanel />
         </>
       )}
+      {activeTab === 'statistics' && <StatisticsPanel />}
       {activeTab === 'legacy' && <LegacyPanel />}
       </main>
 

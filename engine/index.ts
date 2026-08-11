@@ -310,6 +310,7 @@ export * from './systems/infrastructure';
 export * from './systems/socialMedia';
 export * from './systems/movements';
 export * from './systems/dilemmas';
+export * from './systems/statistics';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
