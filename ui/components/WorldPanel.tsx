@@ -52,6 +52,7 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
   if (!game) return null;
 
   const selected = game.foreignCounterparts.find((c) => c.id === selectedId) ?? null;
+  const selectedGovernment = selected ? game.worldGovernments.find((g) => g.counterpartId === selected.id) : null;
   const relation = selected ? game.foreignRelations[selected.id] ?? 0 : 0;
   const activeWar = selected
     ? game.wars.find((w) => w.counterpartId === selected.id && w.status === 'active')
@@ -127,6 +128,17 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
             {selected.region} — Relations: {relation}
             {activeWar && <span className="status-floor bill-status"> AT WAR</span>}
           </p>
+
+          {selectedGovernment && (
+            <p className="muted">
+              Governed by the {selectedGovernment.rulingPartyName}, led by {selectedGovernment.leaderName} (
+              {selectedGovernment.approval.toFixed(0)}% approval, {selectedGovernment.termsServed} term
+              {selectedGovernment.termsServed === 1 ? '' : 's'} served) — next election{' '}
+              {selectedGovernment.nextElectionTurn - game.turn <= 0
+                ? 'due this week'
+                : `in ${selectedGovernment.nextElectionTurn - game.turn} week${selectedGovernment.nextElectionTurn - game.turn === 1 ? '' : 's'}`}
+            </p>
+          )}
 
           <div className="indicator-grid">
             <div className="indicator">
@@ -295,6 +307,68 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
           </li>
         ))}
       </ul>
+
+      <h3 className="subheading">Upcoming World Elections</h3>
+      <div className="whip-table-wrap">
+        <table className="whip-table">
+          <thead>
+            <tr>
+              <th>Nation</th>
+              <th>Ruling Party</th>
+              <th>Approval</th>
+              <th>Next Election</th>
+            </tr>
+          </thead>
+          <tbody>
+            {[...game.worldGovernments]
+              .sort((a, b) => a.nextElectionTurn - b.nextElectionTurn)
+              .slice(0, 10)
+              .map((gov) => {
+                const counterpart = game.foreignCounterparts.find((c) => c.id === gov.counterpartId);
+                const weeksUntil = gov.nextElectionTurn - game.turn;
+                return (
+                  <tr key={gov.counterpartId}>
+                    <td>
+                      <button className="ghost-button" onClick={() => onSelect(gov.counterpartId)}>
+                        {counterpart?.name ?? gov.counterpartId}
+                      </button>
+                    </td>
+                    <td>{gov.rulingPartyName}</td>
+                    <td>{gov.approval.toFixed(0)}%</td>
+                    <td>{weeksUntil <= 0 ? 'Due this week' : `In ${weeksUntil} week${weeksUntil === 1 ? '' : 's'}`}</td>
+                  </tr>
+                );
+              })}
+          </tbody>
+        </table>
+      </div>
+
+      {game.worldElectionHistory.length > 0 && (
+        <>
+          <h3 className="subheading">Recent World Elections</h3>
+          <ul className="scandal-list">
+            {[...game.worldElectionHistory]
+              .reverse()
+              .slice(0, 12)
+              .map((result, i) => {
+                const counterpart = game.foreignCounterparts.find((c) => c.id === result.counterpartId);
+                return (
+                  <li
+                    key={`${result.counterpartId}-${result.turn}-${i}`}
+                    className={`scandal-item status-${result.incumbentReturned ? 'resolved' : 'unresolved'}`}
+                  >
+                    <span>
+                      Turn {result.turn} — {counterpart?.name ?? result.counterpartId}:{' '}
+                      {result.incumbentReturned
+                        ? `${result.previousPartyName} re-elected`
+                        : `${result.previousPartyName} ousted — ${result.newPartyName} takes power under ${result.newLeaderName}`}
+                    </span>
+                  </li>
+                );
+              })}
+          </ul>
+        </>
+      )}
 
       {game.wars.length > 0 && (
         <>
