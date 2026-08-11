@@ -1048,16 +1048,36 @@ button:disabled {
   align-items: start;
 }
 
-.parliament-hemicycle {
+.parliament-scene-3d-container {
   width: 100%;
-  height: auto;
-  display: block;
+  height: 420px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  cursor: grab;
 }
 
-.parliament-hemicycle circle {
-  stroke: var(--bg-elevated);
-  stroke-width: 0.06;
-  transition: opacity 0.15s ease;
+.parliament-scene-3d-container:active {
+  cursor: grabbing;
+}
+
+@media (max-width: 900px) {
+  .parliament-scene-3d-container {
+    height: 300px;
+  }
+}
+
+.trophy-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 0.9rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.trophy-bar .score-bar-label {
+  font-size: 0.75rem;
 }
 
 .parliament-info-list {
@@ -1130,6 +1150,35 @@ button:disabled {
   .parliament-layout {
     grid-template-columns: 1fr;
   }
+}
+
+.promise-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.promise-item {
+  background: var(--bg-elevated-2);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.65rem;
+}
+
+.promise-item-header {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  margin-bottom: 0.3rem;
+  color: var(--text-primary);
+}
+
+.promise-item-values {
+  display: block;
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
 }
 
 /* ---------- Bottom timeline scrubber ---------- */

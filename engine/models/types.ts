@@ -1044,6 +1044,33 @@ export interface GameState {
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
   startingEconomy: EconomyState;
+  /** Campaign promises the player has made against a real, already-tracked stat. See engine/systems/promises.ts. */
+  playerPromises: PlayerPromise[];
+}
+
+/**
+ * A campaign promise tied to one real, continuously-tracked stat (GDP
+ * growth, crime rate, etc.) rather than free text — progress is derived
+ * purely from how far that stat has moved in the promised direction since
+ * the promise was made, never a fabricated number. See
+ * engine/systems/promises.ts.
+ */
+export type PromiseMetric =
+  | 'gdpGrowth'
+  | 'unemployment'
+  | 'inflation'
+  | 'debtToGdp'
+  | 'budgetBalance'
+  | 'crimeRate'
+  | 'pollutionIndex'
+  | 'publicApproval';
+
+export interface PlayerPromise {
+  id: string;
+  metric: PromiseMetric;
+  madeTurn: number;
+  /** The metric's real value at the moment the promise was made — progress is measured against this. */
+  baselineValue: number;
 }
 
 /**

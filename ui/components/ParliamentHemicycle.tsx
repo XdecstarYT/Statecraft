@@ -1,7 +1,11 @@
-import { useState } from 'react';
-import type { GameState, Party } from '../../engine';
+import { Suspense, lazy, useState } from 'react';
+import { computeLegacySummary, type GameState, type Party } from '../../engine';
 import { partyColor } from '../partyColor';
 import { useStatecraftStore } from '../store';
+
+// three.js is a large dependency — code-split so it only loads when the
+// Legislature tab is actually open, same treatment CountryMapScene gets.
+const ParliamentScene = lazy(() => import('./ParliamentScene').then((m) => ({ default: m.ParliamentScene })));
 
 // Concentric-arc hemicycle layout — the same style real parliament seat
 // charts use. Rows fan out from a minimum radius, each row's seat count
@@ -9,18 +13,19 @@ import { useStatecraftStore } from '../store';
 // across rows; seats are then assigned by sweeping all rows' positions
 // left-to-right by angle and handing them out to parties ordered by
 // economic ideology, so each party forms one contiguous wedge rather than
-// being scattered across the chamber.
-const ROW_STEP = 1;
-const MIN_RADIUS = 4;
-const SEAT_RADIUS = 0.4;
+// being scattered across the chamber. Shared with ParliamentScene.tsx (the
+// 3D rendering) so both views agree on exactly which seat is whose.
+export const ROW_STEP = 1;
+export const MIN_RADIUS = 4;
+export const SEAT_RADIUS = 0.4;
 
-interface HemicycleSeat {
+export interface HemicycleSeat {
   x: number;
   y: number;
   partyId: string;
 }
 
-function layoutHemicycleSeats(parties: Party[]): HemicycleSeat[] {
+export function layoutHemicycleSeats(parties: Party[]): HemicycleSeat[] {
   const totalSeats = parties.reduce((sum, p) => sum + Math.max(0, p.seats), 0);
   if (totalSeats <= 0) return [];
 
@@ -88,18 +93,12 @@ export function ParliamentHemicycle() {
   const totalSeats = game.parties.reduce((sum, p) => sum + Math.max(0, p.seats), 0);
   if (totalSeats <= 0) return null;
 
-  const seats = layoutHemicycleSeats(game.parties);
-  const maxRadius = seats.reduce((max, s) => Math.max(max, Math.hypot(s.x, s.y)), MIN_RADIUS) + SEAT_RADIUS;
-  const viewMinX = -maxRadius;
-  const viewMinY = -maxRadius;
-  const viewWidth = maxRadius * 2;
-  const viewHeight = maxRadius + SEAT_RADIUS * 2;
-
   const partyById = new Map(game.parties.map((p) => [p.id, p]));
   const rankedParties = [...game.parties].filter((p) => p.seats > 0).sort((a, b) => b.seats - a.seats);
   const presidingOfficer = findPresidingOfficer(game);
   const coalition = game.coalition && game.coalition.status === 'governing' ? game.coalition : null;
   const weeksUntilElection = Math.max(0, game.nextElectionTurn - game.turn);
+  const legacy = computeLegacySummary(game);
 
   return (
     <section className="panel parliament-panel">
@@ -111,25 +110,17 @@ export function ParliamentHemicycle() {
       </div>
 
       <div className="parliament-layout">
-        <svg
-          className="parliament-hemicycle"
-          viewBox={`${viewMinX} ${viewMinY} ${viewWidth} ${viewHeight}`}
-          role="img"
-          aria-label={`Seat chart for the ${game.country.legislature.name}`}
-        >
-          {seats.map((seat, i) => (
-            <circle
-              key={i}
-              cx={seat.x}
-              cy={seat.y}
-              r={SEAT_RADIUS}
-              fill={seat.partyId ? partyColor(seat.partyId) : '#3a4358'}
-              opacity={hoveredPartyId && hoveredPartyId !== seat.partyId ? 0.22 : 1}
-            />
-          ))}
-        </svg>
+        <Suspense fallback={<div className="parliament-scene-3d-container" />}>
+          <ParliamentScene parties={game.parties} hoveredPartyId={hoveredPartyId} />
+        </Suspense>
 
         <div className="parliament-info">
+          <div className="trophy-meters">
+            <TrophyBar label="National Prestige" value={legacy.nationalPrestige} icon="🏆" />
+            <TrophyBar label="Party Influence" value={legacy.partyDominance} icon="👑" />
+            <TrophyBar label="Personal Power" value={legacy.personalPower} icon="🎗️" />
+          </div>
+
           <dl className="parliament-info-list">
             <div>
               <dt>Electoral system</dt>
@@ -181,5 +172,22 @@ export function ParliamentHemicycle() {
         </div>
       </div>
     </section>
+  );
+}
+
+/** A trophy-styled readout of a real 0-100 legacy score — see engine/systems/legacy.ts. */
+function TrophyBar({ label, value, icon }: { label: string; value: number; icon: string }) {
+  return (
+    <div className="score-bar trophy-bar">
+      <div className="score-bar-label">
+        <span>
+          {icon} {label}
+        </span>
+        <span>{value.toFixed(0)}/100</span>
+      </div>
+      <div className="score-bar-track">
+        <div className="score-bar-fill" style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+      </div>
+    </div>
   );
 }

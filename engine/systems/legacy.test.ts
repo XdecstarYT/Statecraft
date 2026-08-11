@@ -112,6 +112,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     eventLog: [],
     difficulty: 'standard',
     startingEconomy: BASELINE_ECONOMY,
+    playerPromises: [],
     ...overrides,
   };
 }

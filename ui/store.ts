@@ -27,6 +27,7 @@ import {
   rebrandPartyAction as engineRebrandParty,
   castSummitVoteAction as engineCastSummitVote,
   resolveDilemmaChoice,
+  makePromise,
   buildMineAction as engineBuildMine,
   upgradeMineAction as engineUpgradeMine,
   buildFactoryAction as engineBuildFactory,
@@ -139,6 +140,7 @@ import {
   type CorruptionAttemptOutcome,
   type CorruptionTier,
   type BillCategory,
+  type PromiseMetric,
   type CourtGroupOutcome,
   type CoverageEvent,
   type CovertOperationOutcome,
@@ -325,6 +327,7 @@ interface StatecraftStore {
   rebrandPartyAction: (partyId: string, newName: string, newIdeology?: { economic: number; social: number }) => void;
   castSummitVoteAction: (vote: 'yes' | 'no') => void;
   resolveDilemmaAction: (choiceId: string) => void;
+  makePromiseAction: (metric: PromiseMetric) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -952,6 +955,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: resolveDilemmaChoice(game, choiceId) });
+  },
+
+  makePromiseAction: (metric) => {
+    const game = get().game;
+    if (!game) return;
+    if (game.playerPromises.some((p) => p.metric === metric)) return;
+    const promise = makePromise(game, metric);
+    set({ game: { ...game, playerPromises: [...game.playerPromises, promise] } });
   },
 
   nextTurn: () => {
