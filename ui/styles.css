@@ -1012,6 +1012,35 @@ button:disabled {
   flex-shrink: 0;
 }
 
+.district-profile {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border-soft);
+}
+
+.district-profile-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.district-profile-list li {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated-2);
+}
+
+.district-profile-list li:first-child {
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
 /* ---------- Bottom timeline scrubber ---------- */
 
 .timeline-scrubber {

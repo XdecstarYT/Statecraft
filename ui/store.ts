@@ -1003,20 +1003,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       const { districts } = game.country.legislature;
       const perDistrictTurnout = Math.round(LAB_TURNOUT / districts.length);
       const districtResults = districts.map((d) =>
-        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng)
+        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng, {}, game.voterBlocs)
       );
-      const listVotes = generateNationalVotes(game.parties, LAB_TURNOUT, rng);
+      const listVotes = generateNationalVotes(game.parties, LAB_TURNOUT, rng, {}, game.voterBlocs);
       const result = resolveMMP(districtResults, listVotes, districts.length);
       labResult = { system: 'MMP', result };
     } else if (system === 'RUNOFF') {
-      const firstRound = generateNationalVotes(game.parties, LAB_TURNOUT, rng);
+      const firstRound = generateNationalVotes(game.parties, LAB_TURNOUT, rng, {}, game.voterBlocs);
       const wonOutright = getMajorityWinner(firstRound);
       if (wonOutright) {
         labResult = { system: 'RUNOFF', firstRound, wonOutright, winner: wonOutright };
       } else {
         const pair = getRunoffPair(firstRound)!;
         const runoffParties = game.parties.filter((p) => pair.includes(p.id));
-        const secondRound = generateNationalVotes(runoffParties, LAB_TURNOUT, rng);
+        const secondRound = generateNationalVotes(runoffParties, LAB_TURNOUT, rng, {}, game.voterBlocs);
         const winner = resolveRunoffRound(secondRound);
         labResult = { system: 'RUNOFF', firstRound, wonOutright: null, secondRound, winner };
       }

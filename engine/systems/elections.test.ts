@@ -2,6 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import {
   allocateSeatsDHondt,
+  computeBlocPartyShares,
+  computeDistrictLean,
+  computeIdeologicalVoteShares,
   droopQuota,
   generateDistrictVotes,
   generateNationalVotes,
@@ -19,7 +22,7 @@ import {
   type PartyVoteShare,
   type RankedBallot,
 } from './elections';
-import type { Party } from '../models/types';
+import type { Party, VoterBloc } from '../models/types';
 
 const party = (id: string, seats: number): Party => ({
   id,
@@ -179,6 +182,133 @@ describe('generateDistrictVotes / generateNationalVotes', () => {
     const neutral = generateDistrictVotes(district, parties, 10000, new SeededRng(22));
     const dampened = generateDistrictVotes(district, parties, 10000, new SeededRng(22), { A: 0.7 });
     expect(dampened.votesByParty.A).toBeLessThan(neutral.votesByParty.A);
+  });
+});
+
+const bloc = (id: string, size: number, economic: number, social: number): VoterBloc => ({
+  id,
+  name: id,
+  size,
+  ideology: { economic, social },
+  persuadability: 0.5,
+  issueSalience: [],
+});
+
+describe('computeDistrictLean', () => {
+  it('is deterministic for the same district id', () => {
+    expect(computeDistrictLean('district-7')).toEqual(computeDistrictLean('district-7'));
+  });
+
+  it('differs between distinct district ids (not a constant)', () => {
+    const leanA = computeDistrictLean('district-1');
+    const leanB = computeDistrictLean('district-2');
+    expect(leanA).not.toEqual(leanB);
+  });
+
+  it('stays within the documented bound on both axes', () => {
+    for (const id of ['a', 'b', 'district-99', 'northgate', 'rivermouth']) {
+      const lean = computeDistrictLean(id);
+      expect(Math.abs(lean.economic)).toBeLessThanOrEqual(22);
+      expect(Math.abs(lean.social)).toBeLessThanOrEqual(22);
+    }
+  });
+});
+
+describe('computeBlocPartyShares', () => {
+  it('gives the ideologically closest party the largest share', () => {
+    const parties = [party('left', 0), party('right', 0)];
+    parties[0].ideology = { economic: -70, social: -70 };
+    parties[1].ideology = { economic: 70, social: 70 };
+    const shares = computeBlocPartyShares(parties, { economic: -80, social: -80 });
+    expect(shares.left).toBeGreaterThan(shares.right);
+  });
+
+  it('shares always sum to ~1 across the given parties', () => {
+    const parties = [party('a', 0), party('b', 0), party('c', 0)];
+    parties[0].ideology = { economic: -50, social: 0 };
+    parties[1].ideology = { economic: 0, social: 0 };
+    parties[2].ideology = { economic: 50, social: 0 };
+    const shares = computeBlocPartyShares(parties, { economic: 20, social: -10 });
+    const total = Object.values(shares).reduce((a, b) => a + b, 0);
+    expect(total).toBeCloseTo(1, 5);
+  });
+
+  it('every party gets a nonzero floor share, even a maximally opposed one', () => {
+    const parties = [party('close', 0), party('far', 0)];
+    parties[0].ideology = { economic: 0, social: 0 };
+    parties[1].ideology = { economic: 100, social: 100 };
+    const shares = computeBlocPartyShares(parties, { economic: -100, social: -100 });
+    expect(shares.far).toBeGreaterThan(0);
+  });
+});
+
+describe('computeIdeologicalVoteShares', () => {
+  it('returns all zeros when there are no voter blocs to weight by', () => {
+    const parties = [party('a', 5), party('b', 5)];
+    const shares = computeIdeologicalVoteShares(parties, []);
+    expect(shares.a).toBe(0);
+    expect(shares.b).toBe(0);
+  });
+
+  it('rewards the party whose ideology actually matches the bloc mix', () => {
+    const left = party('left', 5);
+    left.ideology = { economic: -60, social: -40 };
+    const right = party('right', 5);
+    right.ideology = { economic: 60, social: 40 };
+    const blocs = [bloc('progressives', 0.7, -55, -35), bloc('conservatives', 0.3, 55, 35)];
+    const shares = computeIdeologicalVoteShares([left, right], blocs);
+    expect(shares.left).toBeGreaterThan(shares.right);
+  });
+
+  it('a district lean shifts the outcome toward the party it favors', () => {
+    const left = party('left', 5);
+    left.ideology = { economic: -50, social: -50 };
+    const right = party('right', 5);
+    right.ideology = { economic: 50, social: 50 };
+    const blocs = [bloc('centrists', 1, 0, 0)];
+    const neutral = computeIdeologicalVoteShares([left, right], blocs);
+    const rightLean = computeIdeologicalVoteShares([left, right], blocs, { economic: 40, social: 40 });
+    expect(rightLean.right).toBeGreaterThan(neutral.right);
+    expect(rightLean.left).toBeLessThan(neutral.left);
+  });
+});
+
+describe('ideological blending in generateDistrictVotes / generateNationalVotes', () => {
+  it('an ideologically-aligned party outpolls a misaligned one with identical seats and momentum', () => {
+    const aligned = party('aligned', 5);
+    aligned.ideology = { economic: -55, social: -55 };
+    const misaligned = party('misaligned', 5);
+    misaligned.ideology = { economic: 80, social: 80 };
+    const blocs = [bloc('base', 1, -60, -60)];
+
+    const votes = generateNationalVotes([aligned, misaligned], 200_000, new SeededRng(42), {}, blocs);
+    const alignedVotes = votes.find((v) => v.partyId === 'aligned')!.votes;
+    const misalignedVotes = votes.find((v) => v.partyId === 'misaligned')!.votes;
+    expect(alignedVotes).toBeGreaterThan(misalignedVotes);
+  });
+
+  it('stays fully deterministic for the same rng state and blocs', () => {
+    const parties = [party('a', 5), party('b', 5)];
+    parties[0].ideology = { economic: -30, social: 10 };
+    parties[1].ideology = { economic: 30, social: -10 };
+    const blocs = [bloc('mixed', 1, 0, 0)];
+    const district = { id: 'district-3', name: 'District 3' };
+
+    const runA = generateDistrictVotes(district, parties, 10_000, new SeededRng(99), {}, blocs);
+    const runB = generateDistrictVotes(district, parties, 10_000, new SeededRng(99), {}, blocs);
+    expect(runA).toEqual(runB);
+  });
+
+  it('two districts with different ids can produce different results from the same inputs, via their distinct lean', () => {
+    const parties = [party('a', 5), party('b', 5)];
+    parties[0].ideology = { economic: -60, social: -60 };
+    parties[1].ideology = { economic: 60, social: 60 };
+    const blocs = [bloc('mixed', 1, 0, 0)];
+
+    const resultA = generateDistrictVotes({ id: 'alpha', name: 'Alpha' }, parties, 10_000, new SeededRng(7), {}, blocs);
+    const resultB = generateDistrictVotes({ id: 'beta', name: 'Beta' }, parties, 10_000, new SeededRng(7), {}, blocs);
+    // Same rng draw, same parties/turnout — any difference must come from the district-specific lean.
+    expect(resultA.votesByParty.a).not.toBe(resultB.votesByParty.a);
   });
 });
 

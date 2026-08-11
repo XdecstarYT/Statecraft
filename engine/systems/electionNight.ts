@@ -8,6 +8,7 @@ import type {
   Party,
   PartyVoteShare,
   Province,
+  VoterBloc,
 } from '../models/types';
 
 const DEFAULT_DISTRICTS_PER_PROVINCE = 6;
@@ -74,7 +75,8 @@ export function startElectionNight(
   parties: Party[],
   turnout: number,
   rng: SeededRng,
-  momentum: Record<string, number> = {}
+  momentum: Record<string, number> = {},
+  voterBlocs: VoterBloc[] = []
 ): ElectionNightState {
   const provinces = getProvinces(country);
   const system = country.legislature.electoralSystem;
@@ -86,14 +88,14 @@ export function startElectionNight(
   if (system === 'FPTP') {
     const perDistrictTurnout = Math.round(turnout / Math.max(1, country.legislature.districts.length));
     districtResults = country.legislature.districts.map((d) =>
-      generateDistrictVotes(d, parties, perDistrictTurnout, rng, momentum)
+      generateDistrictVotes(d, parties, perDistrictTurnout, rng, momentum, voterBlocs)
     );
   } else {
     const totalWeight = provinces.reduce((sum, p) => sum + p.weight, 0) || 1;
     for (const province of provinces) {
       const provinceTurnout = Math.round((province.weight / totalWeight) * turnout);
       const pseudoDistrict: District = { id: province.id, name: province.name };
-      const result = generateDistrictVotes(pseudoDistrict, parties, provinceTurnout, rng, momentum);
+      const result = generateDistrictVotes(pseudoDistrict, parties, provinceTurnout, rng, momentum, voterBlocs);
       provinceVotes[province.id] = Object.entries(result.votesByParty).map(([partyId, votes]) => ({
         partyId,
         votes,

@@ -85,6 +85,7 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [bootstrapped, setBootstrapped] = useState(false);
   const [forceStartScreen, setForceStartScreen] = useState(false);
+  const [selectedDistrictId, setSelectedDistrictId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!bootstrapped) {
@@ -311,7 +312,7 @@ export default function App() {
 
       {activeTab === 'legislature' && (
         <>
-          <CountryMap />
+          <CountryMap onSelectDistrict={setSelectedDistrictId} selectedDistrictId={selectedDistrictId} />
           <ElectionResultsDrawer />
           <div className="panel-columns">
             <BillPanel />

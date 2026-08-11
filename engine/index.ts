@@ -2740,12 +2740,12 @@ export function runLegislativeElection(
   if (legislature.electoralSystem === 'FPTP') {
     const perDistrictTurnout = Math.round(turnout / legislature.districts.length);
     const districtResults = legislature.districts.map((district) =>
-      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng, momentum)
+      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng, momentum, state.voterBlocs)
     );
     const seatsWon = resolveFPTPElection(districtResults);
     outcome = { system: 'FPTP', seatsWon, districtResults };
   } else {
-    const nationalVotes = generateNationalVotes(state.parties, turnout, rng, momentum);
+    const nationalVotes = generateNationalVotes(state.parties, turnout, rng, momentum, state.voterBlocs);
     const seatsWon = allocateSeatsDHondt(
       nationalVotes,
       legislature.totalSeats,
@@ -2777,7 +2777,7 @@ export function runLegislativeElection(
 export function beginElectionNight(state: GameState, turnout = 500_000): GameState {
   const rng = SeededRng.fromState(state.rngState);
   const momentum = computeStrategicMomentum(state.politicians, state.parties);
-  const electionNight = startElectionNight(state.country, state.parties, turnout, rng, momentum);
+  const electionNight = startElectionNight(state.country, state.parties, turnout, rng, momentum, state.voterBlocs);
   return { ...state, electionNight, rngState: rng.getState() };
 }
 
