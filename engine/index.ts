@@ -20,6 +20,7 @@ import type {
   PollingFirm,
   PollResult,
   Protest,
+  Scandal,
   ScandalResponse,
   SecessionistMovement,
   VoterBloc,
@@ -59,6 +60,7 @@ import {
   resolveFloorVote,
 } from './systems/legislative';
 import { applyCommitteeVoteResult, assignCommittees, findCommitteeForBill, resolveCommitteeVote } from './systems/committees';
+import { assignFactionLeaders, computeFactionTerms } from './systems/factions';
 import { attemptCorruptionAction, computeScandalSeverity } from './systems/corruption';
 import {
   applyBillOutcomeToGroups,
@@ -131,7 +133,14 @@ import {
   computeWarResolutionRelationDelta,
   resolveWarTurn,
 } from './systems/military';
-import { computeCabinetEffects } from './systems/cabinet';
+import {
+  applyMinisterNoConfidenceResult,
+  computeCabinetEffects,
+  resolveCollectiveResponsibility,
+  resolveMinisterNoConfidenceVote,
+  resolveScandalForcedExit,
+  type MinisterNoConfidenceResult,
+} from './systems/cabinet';
 import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
@@ -314,6 +323,7 @@ export * from './systems/dilemmas';
 export * from './systems/statistics';
 export * from './systems/promises';
 export * from './systems/committees';
+export * from './systems/factions';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -457,6 +467,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   }
 
   const committees = assignCommittees(politicians, parties, rng);
+  const factionLeaderId = assignFactionLeaders(politicians, parties);
 
   const baseState: GameState = {
     seed,
@@ -531,6 +542,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     startingEconomy,
     playerPromises: [],
     committees,
+    factionLeaderId,
   };
 
   return resolveGovernment(baseState, rng);
@@ -681,7 +693,16 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       const committee = findCommitteeForBill(state.committees, bill);
       if (!committee) return advanceToFloor(bill);
       const sponsor = politicians.find((p) => p.id === bill.sponsorId);
-      const lobbyingPressure = sponsor ? computeLobbyingPressure(state.interestGroups, bill, sponsor) : 0;
+      if (!sponsor) return advanceToFloor(bill);
+      const lobbyingPressure = computeLobbyingPressure(state.interestGroups, bill, sponsor);
+      const factionTerms = computeFactionTerms(
+        politicians,
+        sponsor,
+        state.parties,
+        state.relationships,
+        state.favorBank,
+        state.factionLeaderId
+      );
       const result = resolveCommitteeVote(
         bill,
         committee,
@@ -690,7 +711,8 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
         state.favorBank,
         rng,
         DEFAULT_WHIP_WEIGHTS,
-        lobbyingPressure
+        lobbyingPressure,
+        factionTerms
       );
       return applyCommitteeVoteResult(bill, result);
     }
@@ -712,10 +734,19 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   let infrastructure = state.infrastructure;
   let research = state.research;
   let playerMilitary = state.playerMilitary;
+  let cabinet = state.cabinet;
   bills = bills.map((bill) => {
     if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
     const sponsor = politicians.find((p) => p.id === bill.sponsorId)!;
     const lobbyingPressure = computeLobbyingPressure(interestGroups, bill, sponsor);
+    const factionTerms = computeFactionTerms(
+      politicians,
+      sponsor,
+      state.parties,
+      relationships,
+      state.favorBank,
+      state.factionLeaderId
+    );
     const result = resolveFloorVote(
       bill,
       politicians,
@@ -723,7 +754,8 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       state.favorBank,
       rng,
       DEFAULT_WHIP_WEIGHTS,
-      lobbyingPressure
+      lobbyingPressure,
+      factionTerms
     );
     if (player) {
       relationships = updateRelationshipsAfterVote(relationships, player.id, result.finalWhipCount);
@@ -741,6 +773,9 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       infrastructure = enacted.infrastructure;
       research = enacted.research;
       playerMilitary = enacted.playerMilitary;
+    } else if (resolvedBill.status === 'failed') {
+      const responsibility = resolveCollectiveResponsibility(cabinet, politicians, resolvedBill, rng);
+      cabinet = responsibility.cabinet;
     }
     interestGroups = applyBillOutcomeToGroups(interestGroups, resolvedBill, sponsor, resolvedBill.status === 'passed');
     return resolvedBill;
@@ -823,7 +858,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
 
     if (actor && tier && target) {
       const settings = getDifficultySettings(state.difficulty);
-      const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
+      const cabinetEffects = computeCabinetEffects(cabinet, state.politicians);
       const result = attemptCorruptionAction(
         tier,
         actor.attributes.integrity,
@@ -840,17 +875,16 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       if (result.detected) {
         const response = decideNpcScandalResponse(actor);
         const severity = computeScandalSeverity(tier, response);
-        scandals = [
-          ...scandals,
-          {
-            id: `scandal-${state.turn}-npc-${scandals.length + 1}`,
-            politicianId: actor.id,
-            tier,
-            turn: state.turn,
-            status: 'resolved',
-            response,
-          },
-        ];
+        const newScandal: Scandal = {
+          id: `scandal-${state.turn}-npc-${scandals.length + 1}`,
+          politicianId: actor.id,
+          tier,
+          turn: state.turn,
+          status: 'resolved',
+          response,
+        };
+        scandals = [...scandals, newScandal];
+        cabinet = resolveScandalForcedExit(cabinet, newScandal, rng).cabinet;
         nextPoliticians = nextPoliticians.map((p) =>
           p.id === actor.id ? pushApprovalEvent(p, 'public', severity, 6) : p
         );
@@ -874,6 +908,7 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     infrastructure,
     research,
     playerMilitary,
+    cabinet,
   };
 }
 
@@ -1012,18 +1047,24 @@ export function runUnrestTurn(state: GameState, rng: SeededRng): GameState {
  */
 export function runWealthScandalTurn(state: GameState, rng: SeededRng): GameState {
   let scandals = state.scandals;
+  let cabinet = state.cabinet;
   for (const politician of state.politicians) {
     const wealth = state.personalWealth[politician.id] ?? BASE_PERSONAL_WEALTH;
     const alreadyUnresolved = scandals.some((s) => s.politicianId === politician.id && s.status === 'unresolved');
     if (alreadyUnresolved) continue;
     if (rollForWealthScandal(wealth, rng)) {
-      scandals = [
-        ...scandals,
-        { id: `wealth-scandal-${state.turn}-${politician.id}`, politicianId: politician.id, tier: 'hard', turn: state.turn, status: 'unresolved' },
-      ];
+      const newScandal: Scandal = {
+        id: `wealth-scandal-${state.turn}-${politician.id}`,
+        politicianId: politician.id,
+        tier: 'hard',
+        turn: state.turn,
+        status: 'unresolved',
+      };
+      scandals = [...scandals, newScandal];
+      cabinet = resolveScandalForcedExit(cabinet, newScandal, rng).cabinet;
     }
   }
-  return { ...state, scandals };
+  return { ...state, scandals, cabinet };
 }
 
 /** Rolls, once per turn, whether a new international summit convenes — only when none is already awaiting the player's vote. */
@@ -2382,6 +2423,41 @@ export function attemptImpeachmentAction(
   };
 }
 
+export interface MinisterNoConfidenceOutcome {
+  result: MinisterNoConfidenceResult;
+  removed: boolean;
+  targetId: string;
+}
+
+/**
+ * A named no-confidence motion against one specific cabinet minister — a
+ * much lower, simple-majority bar than the head-of-government impeachment
+ * above, since ousting one minister is a routine legislative event, not a
+ * constitutional crisis. Only targets someone who actually holds a cabinet
+ * seat right now; a passed motion strips every seat they hold but, like
+ * impeachment, leaves them their legislative seat.
+ */
+export function attemptMinisterNoConfidenceAction(
+  state: GameState,
+  targetId: string
+): { state: GameState; outcome: MinisterNoConfidenceOutcome | null } {
+  const target = state.politicians.find((p) => p.id === targetId);
+  const holdsCabinetSeat = state.cabinet.some((c) => c.politicianId === targetId);
+  if (!target || !holdsCabinetSeat) return { state, outcome: null };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveMinisterNoConfidenceVote(target, state.politicians, state.relationships, state.scandals, rng);
+  const cabinet = applyMinisterNoConfidenceResult(state.cabinet, target, result);
+  const politicians = result.passed
+    ? state.politicians.map((p) => (p.id === target.id ? pushApprovalEvent(p, 'partyElite', -15, 6) : p))
+    : state.politicians;
+
+  return {
+    state: { ...state, cabinet, politicians, rngState: rng.getState() },
+    outcome: { result, removed: result.passed, targetId },
+  };
+}
+
 function replaceProtest(state: GameState, protestId: string, updated: Protest): GameState {
   return { ...state, protests: state.protests.map((p) => (p.id === protestId ? updated : p)) };
 }
@@ -2530,13 +2606,22 @@ export function advanceBillToFloor(state: GameState, billId: string, rng: Seeded
 
   const committee = findCommitteeForBill(state.committees, bill);
   let nextBill: Bill;
-  if (!committee) {
+  let cabinet = state.cabinet;
+  if (!committee || !sponsor) {
     // No matching standing committee exists (e.g. a save predating this
-    // system) — fall back to the old free pass rather than stranding the
-    // bill forever.
+    // system), or the sponsor is gone — fall back to the old free pass
+    // rather than stranding the bill forever.
     nextBill = advanceToFloor(bill);
   } else {
-    const lobbyingPressure = sponsor ? computeLobbyingPressure(state.interestGroups, bill, sponsor) : 0;
+    const lobbyingPressure = computeLobbyingPressure(state.interestGroups, bill, sponsor);
+    const factionTerms = computeFactionTerms(
+      state.politicians,
+      sponsor,
+      state.parties,
+      state.relationships,
+      state.favorBank,
+      state.factionLeaderId
+    );
     const result = resolveCommitteeVote(
       bill,
       committee,
@@ -2545,15 +2630,23 @@ export function advanceBillToFloor(state: GameState, billId: string, rng: Seeded
       state.favorBank,
       rng,
       DEFAULT_WHIP_WEIGHTS,
-      lobbyingPressure
+      lobbyingPressure,
+      factionTerms
     );
     nextBill = applyCommitteeVoteResult(bill, result);
   }
 
   if (nextBill.status === 'floor' && sponsor) {
     nextBill = applyNpcStances(nextBill, state.politicians, sponsor, state.relationships, state.coalition);
+  } else if (nextBill.status === 'failed') {
+    cabinet = resolveCollectiveResponsibility(cabinet, state.politicians, nextBill, rng).cabinet;
   }
-  return { ...state, bills: state.bills.map((b) => (b.id === billId ? nextBill : b)), rngState: rng.getState() };
+  return {
+    ...state,
+    bills: state.bills.map((b) => (b.id === billId ? nextBill : b)),
+    cabinet,
+    rngState: rng.getState(),
+  };
 }
 
 const BILL_ENACTMENT_DELAY_TURNS = 3;
@@ -2716,12 +2809,12 @@ export function commitCorruption(
 
   let scandals = state.scandals;
   let scandalId: string | undefined;
+  let cabinet = state.cabinet;
   if (result.detected) {
     scandalId = `scandal-${state.turn}-${state.scandals.length + 1}`;
-    scandals = [
-      ...scandals,
-      { id: scandalId, politicianId: actorId, tier, turn: state.turn, status: 'unresolved' },
-    ];
+    const newScandal: Scandal = { id: scandalId, politicianId: actorId, tier, turn: state.turn, status: 'unresolved' };
+    scandals = [...scandals, newScandal];
+    cabinet = resolveScandalForcedExit(cabinet, newScandal, rng).cabinet;
   }
 
   const personalWealth = {
@@ -2730,7 +2823,7 @@ export function commitCorruption(
   };
 
   return {
-    state: { ...state, favorBank, economy, scandals, personalWealth, rngState: rng.getState() },
+    state: { ...state, favorBank, economy, scandals, personalWealth, cabinet, rngState: rng.getState() },
     outcome: { detected: result.detected, favorGain: result.favorGain, budgetImpact: result.budgetImpact, scandalId },
   };
 }

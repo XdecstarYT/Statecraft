@@ -485,9 +485,13 @@ export interface ElectionNightState {
 
 export type CabinetPortfolio = 'finance' | 'defense' | 'foreignAffairs' | 'justice';
 
+/** A senior minister heads the portfolio; a junior minister assists them with a smaller version of the same effect. */
+export type CabinetRank = 'senior' | 'junior';
+
 export interface CabinetAppointment {
   portfolio: CabinetPortfolio;
   politicianId: string;
+  rank: CabinetRank;
 }
 
 export type InterestGroupFocus =
@@ -1019,6 +1023,8 @@ export interface GameState {
   interestGroups: InterestGroup[];
   /** partyId -> the politician currently leading it. Used by leadership challenges and (later) coalition PM selection. */
   partyLeaderId: Record<string, string>;
+  /** "partyId:factionName" -> the politician representing that faction. See engine/systems/factions.ts. */
+  factionLeaderId: Record<string, string>;
   /** At most one leadership contest in flight at a time. Null between challenges. */
   leadershipChallenge: LeadershipChallenge | null;
   /** 0..100 — the player's own intelligence-agency strength, grown via investInIntelligence. Lowers detection risk and raises success odds on covert operations. */

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { computeLobbyingPressure, pollWhipCount, type Bill, type BillCategory } from '../../engine';
+import { computeFactionTerms, computeLobbyingPressure, pollWhipCount, type Bill, type BillCategory } from '../../engine';
 import { useStatecraftStore } from '../store';
 
 const CATEGORY_LABELS: Record<BillCategory, string> = {
@@ -243,7 +243,8 @@ function BillRow({
           game.relationships,
           game.favorBank,
           undefined,
-          computeLobbyingPressure(game.interestGroups, bill, sponsor)
+          computeLobbyingPressure(game.interestGroups, bill, sponsor),
+          computeFactionTerms(game.politicians, sponsor, game.parties, game.relationships, game.favorBank, game.factionLeaderId)
         )
       : [];
 

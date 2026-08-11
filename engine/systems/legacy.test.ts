@@ -114,6 +114,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     startingEconomy: BASELINE_ECONOMY,
     playerPromises: [],
     committees: [],
+    factionLeaderId: {},
     ...overrides,
   };
 }

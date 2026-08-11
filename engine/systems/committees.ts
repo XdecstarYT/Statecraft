@@ -139,7 +139,8 @@ export function resolveCommitteeVote(
   favorBank: Record<string, number>,
   rng: SeededRng,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
-  lobbyingPressure = 0
+  lobbyingPressure = 0,
+  factionTerms: Record<string, number> = {}
 ): CommitteeVoteResult {
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
   if (!sponsor) {
@@ -163,7 +164,8 @@ export function resolveCommitteeVote(
         favorBankScore,
         weights,
         MAX_FAVORS,
-        lobbyingPressure
+        lobbyingPressure,
+        factionTerms[member.id] ?? 0
       );
       vote = resolveVote(probability, rng);
     }

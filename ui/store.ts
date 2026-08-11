@@ -68,6 +68,10 @@ import {
   joinParty as joinCareerParty,
   startEducation as startCareerEducation,
   appointToCabinet,
+  attemptMinisterNoConfidenceAction as engineAttemptMinisterNoConfidence,
+  reshuffleCabinet,
+  resolveCollectiveResponsibility,
+  computeFactionTerms,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
   applyImmediateEffect,
@@ -125,6 +129,8 @@ import {
   signTreaty,
   type BallotResult,
   type CabinetPortfolio,
+  type CabinetRank,
+  type MinisterNoConfidenceOutcome,
   type CampaignActionOutcome,
   type CareerState,
   type ClotureResult,
@@ -254,6 +260,7 @@ interface StatecraftStore {
   lastClotureResult: (ClotureResult & { billId: string }) | null;
   lastBallotResult: (BallotResult & { initiativeId: string }) | null;
   lastImpeachmentOutcome: ImpeachmentOutcome | null;
+  lastMinisterNoConfidenceOutcome: MinisterNoConfidenceOutcome | null;
   lastDispersalOutcome: (DispersalOutcome & { protestId: string }) | null;
   lastDebateResult: DebateResult | null;
   lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
@@ -353,8 +360,10 @@ interface StatecraftStore {
   reportNextProvinceAction: () => void;
   concludeElectionNightAction: () => void;
   dismissElectionNightAction: () => void;
-  appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string) => void;
-  removeFromCabinetAction: (portfolio: CabinetPortfolio) => void;
+  appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string, rank?: CabinetRank) => void;
+  removeFromCabinetAction: (portfolio: CabinetPortfolio, rank?: CabinetRank) => void;
+  reshuffleCabinetAction: (portfolio: CabinetPortfolio, rank: CabinetRank, politicianId: string) => void;
+  attemptMinisterNoConfidenceAction: (targetId: string) => void;
   courtInterestGroupAction: (groupId: string) => void;
   rallyPartySupportAction: () => void;
   denounceChallengerAction: () => void;
@@ -419,6 +428,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastClotureResult: null,
   lastBallotResult: null,
   lastImpeachmentOutcome: null,
+  lastMinisterNoConfidenceOutcome: null,
   lastDispersalOutcome: null,
   lastDebateResult: null,
   lastEndorsementOutcome: null,
@@ -727,6 +737,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
 
     const rng = SeededRng.fromState(game.rngState);
     const lobbyingPressure = computeLobbyingPressure(game.interestGroups, bill, sponsor);
+    const factionTerms = computeFactionTerms(
+      game.politicians,
+      sponsor,
+      game.parties,
+      game.relationships,
+      game.favorBank,
+      game.factionLeaderId
+    );
     const result = resolveFloorVote(
       bill,
       game.politicians,
@@ -734,13 +752,17 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       game.favorBank,
       rng,
       undefined,
-      lobbyingPressure
+      lobbyingPressure,
+      factionTerms
     );
     const updatedBill = applyFloorVoteResult(bill, result);
     const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
     const interestGroups = applyBillOutcomeToGroups(game.interestGroups, updatedBill, sponsor, result.passed);
+    const cabinet = result.passed
+      ? game.cabinet
+      : resolveCollectiveResponsibility(game.cabinet, game.politicians, updatedBill, rng).cabinet;
 
-    let nextState: GameState = { ...game, bills, interestGroups, rngState: rng.getState() };
+    let nextState: GameState = { ...game, bills, interestGroups, cabinet, rngState: rng.getState() };
     nextState = applyBillOutcomeToApproval(nextState, sponsor.id, result.passed);
     nextState = enactPassedBill(nextState, updatedBill);
     const { state: coveredState, coverage } = generateEventCoverage(
@@ -800,8 +822,22 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const bill = game.bills.find((b) => b.id === billId);
     if (!bill) return;
+    const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
     const rng = SeededRng.fromState(game.rngState);
-    const { bill: updatedBill, result } = attemptCloture(bill, game.politicians, game.relationships, game.favorBank, rng);
+    const factionTerms = sponsor
+      ? computeFactionTerms(game.politicians, sponsor, game.parties, game.relationships, game.favorBank, game.factionLeaderId)
+      : {};
+    const { bill: updatedBill, result } = attemptCloture(
+      bill,
+      game.politicians,
+      game.relationships,
+      game.favorBank,
+      rng,
+      undefined,
+      0,
+      undefined,
+      factionTerms
+    );
     const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
     set({ game: { ...game, bills, rngState: rng.getState() }, lastClotureResult: { ...result, billId } });
   },
@@ -1198,16 +1234,38 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ game: dismissElectionNight(game) });
   },
 
-  appointToCabinetAction: (portfolio, politicianId) => {
+  appointToCabinetAction: (portfolio, politicianId, rank = 'senior') => {
     const game = get().game;
     if (!game) return;
-    set({ game: { ...game, cabinet: appointToCabinet(game.cabinet, portfolio, politicianId) } });
+    set({ game: { ...game, cabinet: appointToCabinet(game.cabinet, portfolio, politicianId, rank) } });
   },
 
-  removeFromCabinetAction: (portfolio) => {
+  removeFromCabinetAction: (portfolio, rank = 'senior') => {
     const game = get().game;
     if (!game) return;
-    set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio) } });
+    set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio, rank) } });
+  },
+
+  reshuffleCabinetAction: (portfolio, rank, politicianId) => {
+    const game = get().game;
+    if (!game) return;
+    const { cabinet, removedPoliticianId } = reshuffleCabinet(game.cabinet, portfolio, rank, politicianId);
+    let relationships = game.relationships;
+    if (removedPoliticianId) {
+      const player = game.politicians.find((p) => p.isPlayer);
+      if (player) {
+        const key = relationshipKey(player.id, removedPoliticianId);
+        relationships = { ...relationships, [key]: (relationships[key] ?? 0) - 15 };
+      }
+    }
+    set({ game: { ...game, cabinet, relationships } });
+  },
+
+  attemptMinisterNoConfidenceAction: (targetId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineAttemptMinisterNoConfidence(game, targetId);
+    set({ game: state, lastMinisterNoConfidenceOutcome: outcome });
   },
 
   courtInterestGroupAction: (groupId) => {
