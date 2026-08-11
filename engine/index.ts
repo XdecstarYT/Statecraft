@@ -121,6 +121,8 @@ import { BASE_PERSONAL_WEALTH, WEALTH_TIER_GAIN, rollForWealthScandal } from './
 import { rollForSummit, resolveSummit, type SummitOutcome } from './systems/summit';
 import { SUMMIT_RESOLUTION_TEMPLATES } from '../content/summit/resolutions';
 import { rollForEvent, applyCrisisEvent, DEFAULT_EVENT_CHANCE } from './systems/events';
+import { rollForDilemma, DEFAULT_DILEMMA_CHANCE } from './systems/dilemmas';
+import { DILEMMA_TABLE } from '../content/events/dilemmaTable';
 import { adjustRelation } from './systems/diplomacy';
 import {
   applyWarAttrition,
@@ -307,6 +309,7 @@ export * from './systems/environment';
 export * from './systems/infrastructure';
 export * from './systems/socialMedia';
 export * from './systems/movements';
+export * from './systems/dilemmas';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -488,6 +491,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     polls: [],
     personalWealth: Object.fromEntries(politicians.map((p) => [p.id, BASE_PERSONAL_WEALTH])),
     activeSummit: null,
+    activeDilemma: null,
     milestones: [],
     houseRules: { ...DEFAULT_HOUSE_RULES, ...options.houseRules },
     resourceDeposits,
@@ -1371,6 +1375,17 @@ export function advanceTurn(state: GameState): GameState {
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
   if (eventDef) {
     next = applyCrisisEvent(next, eventDef);
+  }
+
+  // Dilemmas are the interactive cousin of the crisis table above — at
+  // most one awaiting the player's choice at a time, same guard shape as
+  // runSummitTurn's activeSummit check.
+  if (!next.activeDilemma) {
+    const dilemmaChance = DEFAULT_DILEMMA_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
+    const dilemma = rollForDilemma(DILEMMA_TABLE, next, rng, dilemmaChance);
+    if (dilemma) {
+      next = { ...next, activeDilemma: dilemma };
+    }
   }
 
   return { ...next, rngState: rng.getState() };

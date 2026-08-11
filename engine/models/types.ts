@@ -684,6 +684,45 @@ export interface EventLogEntry {
 }
 
 /**
+ * One option on a dilemma — a real, named response with its own bounded
+ * consequences, not just a flavor label. Every field mirrors a channel a
+ * crisis event can already move (see CrisisEventDef); delayedEconomyEffect
+ * is the one genuinely new piece, letting a choice's real bite land a few
+ * turns after the (possibly very different) immediate effect — same lag
+ * queue applyBillCategoryEffect's economy sibling already uses.
+ */
+export interface DilemmaChoice {
+  id: string;
+  label: string;
+  description: string;
+  economyEffect?: EconomyDelta;
+  playerApprovalEffect?: number;
+  foreignRelationEffect?: { counterpartId: string; delta: number };
+  delayedEconomyEffect?: { turnsRemaining: number; delta: EconomyDelta };
+}
+
+/** A pre-authored dilemma template — see content/events/dilemmaTable.ts and engine/systems/dilemmas.ts. */
+export interface DilemmaDef {
+  id: string;
+  category: CrisisCategory;
+  title: string;
+  description: string;
+  baseWeight: number;
+  choices: DilemmaChoice[];
+}
+
+/** A dilemma currently awaiting the player's decision — at most one at a time. See engine/systems/dilemmas.ts's resolveDilemmaChoice. */
+export interface ActiveDilemma {
+  id: string;
+  defId: string;
+  category: CrisisCategory;
+  title: string;
+  description: string;
+  choices: DilemmaChoice[];
+  turnRaised: number;
+}
+
+/**
  * JUDICIARY — a real check-and-balance: the player nominates justices to a
  * fixed-size court, the legislature confirms (or rejects) them by vote, and
  * once seated the court can strike down a passed bill on judicial review —
@@ -973,6 +1012,8 @@ export interface GameState {
   personalWealth: Record<string, number>;
   /** At most one convened international summit resolution at a time, awaiting the player's vote. Null between summits. */
   activeSummit: SummitResolution | null;
+  /** At most one dilemma awaiting the player's choice at a time. Null between dilemmas. See engine/systems/dilemmas.ts. */
+  activeDilemma: ActiveDilemma | null;
   /** One-time milestone achievement ids recorded the moment they happen (can't be reconstructed from a state snapshot alone). See engine/systems/achievements.ts. */
   milestones: string[];
   houseRules: HouseRules;

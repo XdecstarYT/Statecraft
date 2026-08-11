@@ -69,6 +69,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     polls: [],
     personalWealth: {},
     activeSummit: null,
+    activeDilemma: null,
     milestones: [],
     houseRules: { disableTermLimits: false, doubleEventFrequency: false, noCorruption: false },
     resourceDeposits: [],

@@ -469,6 +469,59 @@ button:disabled {
   box-shadow: 0 0 0 1px var(--accent-text) inset, var(--shadow-sm);
 }
 
+/* ---------- Dilemmas ---------- */
+
+.dilemma-panel {
+  border-color: var(--warning-text, #fbbf24);
+  box-shadow: 0 0 0 1px var(--warning-text, #fbbf24) inset, var(--shadow-sm);
+}
+
+.dilemma-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.6rem;
+}
+
+.dilemma-choice {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated-2);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.dilemma-choice-header {
+  font-size: 0.9rem;
+}
+
+.dilemma-choice-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.1rem 0 0.2rem;
+}
+
+.dilemma-choice-chips span {
+  font-size: 0.68rem;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid transparent;
+}
+
+.dilemma-chip-positive {
+  color: var(--success-text);
+  border-color: var(--success-text);
+}
+
+.dilemma-chip-negative {
+  color: var(--danger-text, #f87171);
+  border-color: var(--danger-text, #f87171);
+}
+
 .panel-columns {
   display: grid;
   grid-template-columns: 1fr 1fr;

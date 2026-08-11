@@ -52,6 +52,7 @@ import {
   proposeBill,
   applyBillCategoryEffect,
   enactPassedBill,
+  resolveDilemmaChoice,
   advanceToCommittee,
   relationshipKey,
   runMovementsTurn,
@@ -1460,5 +1461,49 @@ describe('applyBillCategoryEffect', () => {
     const next = enactPassedBill(state, bill);
     expect(next.research.capability).toBeGreaterThan(state.research.capability);
     expect(next.economy.pendingEffects.length).toBeGreaterThan(state.economy.pendingEffects.length);
+  });
+});
+
+describe('dilemmas wired into advanceTurn', () => {
+  it('eventually raises a dilemma over many turns', () => {
+    let state = createNewGame(7);
+    let raised = false;
+    for (let i = 0; i < 60 && !raised; i++) {
+      state = advanceTurn(state);
+      if (state.activeDilemma) raised = true;
+    }
+    expect(raised).toBe(true);
+  });
+
+  it('never raises a second dilemma while one is still awaiting a choice', () => {
+    let state = createNewGame(7);
+    for (let i = 0; i < 60 && !state.activeDilemma; i++) {
+      state = advanceTurn(state);
+    }
+    expect(state.activeDilemma).not.toBeNull();
+    const firstDilemmaId = state.activeDilemma!.id;
+
+    for (let i = 0; i < 10; i++) {
+      state = advanceTurn(state);
+      expect(state.activeDilemma!.id).toBe(firstDilemmaId);
+    }
+  });
+
+  it('resolveDilemmaChoice clears it, letting a new one eventually be raised again', () => {
+    let state = createNewGame(7);
+    for (let i = 0; i < 60 && !state.activeDilemma; i++) {
+      state = advanceTurn(state);
+    }
+    expect(state.activeDilemma).not.toBeNull();
+
+    state = resolveDilemmaChoice(state, state.activeDilemma!.choices[0].id);
+    expect(state.activeDilemma).toBeNull();
+
+    let raisedAgain = false;
+    for (let i = 0; i < 60 && !raisedAgain; i++) {
+      state = advanceTurn(state);
+      if (state.activeDilemma) raisedAgain = true;
+    }
+    expect(raisedAgain).toBe(true);
   });
 });

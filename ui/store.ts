@@ -26,6 +26,7 @@ import {
   mergePartiesAction as engineMergeParties,
   rebrandPartyAction as engineRebrandParty,
   castSummitVoteAction as engineCastSummitVote,
+  resolveDilemmaChoice,
   buildMineAction as engineBuildMine,
   upgradeMineAction as engineUpgradeMine,
   buildFactoryAction as engineBuildFactory,
@@ -323,6 +324,7 @@ interface StatecraftStore {
   mergePartiesAction: (absorbedPartyId: string, survivingPartyId: string) => void;
   rebrandPartyAction: (partyId: string, newName: string, newIdeology?: { economic: number; social: number }) => void;
   castSummitVoteAction: (vote: 'yes' | 'no') => void;
+  resolveDilemmaAction: (choiceId: string) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -944,6 +946,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const { state, outcome } = engineCastSummitVote(game, vote);
     if (!outcome) return;
     set({ game: state, lastSummitOutcome: outcome });
+  },
+
+  resolveDilemmaAction: (choiceId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: resolveDilemmaChoice(game, choiceId) });
   },
 
   nextTurn: () => {

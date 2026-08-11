@@ -42,6 +42,7 @@ import { ElectionResultsDrawer } from './components/ElectionResultsDrawer';
 import { TopHud } from './components/TopHud';
 import { TimelineScrubber } from './components/TimelineScrubber';
 import { AchievementsOverlay } from './components/AchievementsOverlay';
+import { DilemmaPanel } from './components/DilemmaPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature', icon: '🏛️' },
@@ -299,6 +300,8 @@ export default function App() {
         <TopHud />
 
         <OnboardingBanner />
+
+        <DilemmaPanel />
 
         <Dashboard />
 
