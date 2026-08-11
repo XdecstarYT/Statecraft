@@ -104,6 +104,8 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     playerPromises: [],
     committees: [],
     factionLeaderId: {},
+    worldGovernments: [],
+    worldElectionHistory: [],
     ...overrides,
   };
 }

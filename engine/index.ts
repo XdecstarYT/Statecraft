@@ -141,6 +141,7 @@ import {
   resolveScandalForcedExit,
   type MinisterNoConfidenceResult,
 } from './systems/cabinet';
+import { WORLD_ELECTION_HISTORY_LIMIT, initializeWorldGovernments, runWorldElectionsTurn } from './systems/worldElections';
 import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
@@ -324,6 +325,7 @@ export * from './systems/statistics';
 export * from './systems/promises';
 export * from './systems/committees';
 export * from './systems/factions';
+export * from './systems/worldElections';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -468,6 +470,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
 
   const committees = assignCommittees(politicians, parties, rng);
   const factionLeaderId = assignFactionLeaders(politicians, parties);
+  const worldGovernments = initializeWorldGovernments(foreignCounterparts, rng);
 
   const baseState: GameState = {
     seed,
@@ -485,6 +488,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     scandals: [],
     foreignCounterparts,
     foreignRelations: {},
+    worldGovernments,
+    worldElectionHistory: [],
     playerMilitary: options.playerMilitary ?? startingMilitaryProfile(country.id),
     treaties: [],
     tradeDeals: [],
@@ -1435,6 +1440,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runInfrastructureTurn(next);
   next = runSocialMediaTurn(next, rng);
   next = runMovementsTurn(next, rng);
+  next = runWorldElectionsForTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1454,6 +1460,34 @@ export function advanceTurn(state: GameState): GameState {
   }
 
   return { ...next, rngState: rng.getState() };
+}
+
+/**
+ * Runs one turn of every world nation's own election cycle (see
+ * worldElections.ts) — approval drift for all ~193 nations plus resolution
+ * for any whose term happens to be up this turn, trimming the recent-
+ * history log so it never grows unbounded across a long game.
+ */
+export function runWorldElectionsForTurn(state: GameState, rng: SeededRng): GameState {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const playerIdeology = player?.ideology ?? { economic: 0, social: 0 };
+  const { counterparts, governments, foreignRelations, results } = runWorldElectionsTurn(
+    state.foreignCounterparts,
+    state.worldGovernments,
+    state.foreignRelations,
+    playerIdeology,
+    state.turn,
+    rng
+  );
+  if (results.length === 0) return state;
+  const worldElectionHistory = [...state.worldElectionHistory, ...results].slice(-WORLD_ELECTION_HISTORY_LIMIT);
+  return {
+    ...state,
+    foreignCounterparts: counterparts,
+    worldGovernments: governments,
+    foreignRelations,
+    worldElectionHistory,
+  };
 }
 
 const ALLY_STRENGTH_CONTRIBUTION = 0.35;

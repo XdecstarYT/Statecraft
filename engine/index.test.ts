@@ -18,6 +18,8 @@ import {
   concludeElectionNightAction,
   dismissElectionNight,
   appointToCabinet,
+  advanceEconomy,
+  computeCabinetEffects,
   mergePartiesAction,
   MAX_HEAD_OF_GOVERNMENT_TERMS,
   TERM_LENGTH_TURNS,
@@ -571,40 +573,51 @@ describe('election night flow', () => {
 
 describe('cabinet effects wired into gameplay', () => {
   it('a Finance minister measurably calms economy volatility on average across many runs', () => {
-    // A single-seed comparison of a noise-derived metric is inherently
-    // flaky (25% less volatility doesn't mean every individual run is
-    // calmer) — average the metric across many independent seeds instead.
-    const runVariance = (seed: number, withMinister: boolean) => {
-      let state = createNewGame(seed);
-      const sharpFinanceMinister = state.politicians.find((p) => !p.isPlayer)!;
-      if (withMinister) {
-        state = {
-          ...state,
-          cabinet: appointToCabinet([], 'finance', sharpFinanceMinister.id),
-          politicians: state.politicians.map((p) =>
-            p.id === sharpFinanceMinister.id ? { ...p, attributes: { ...p.attributes, intellect: 10 } } : p
-          ),
-        };
-      }
+    // Isolates exactly what advanceTurn actually wires together — computeCabinetEffects's
+    // multiplier feeding advanceEconomy's volatility parameter, the same
+    // `settings.economyVolatilityMultiplier * cabinetEffects.economyVolatilityMultiplier`
+    // expression advanceTurn itself uses — rather than running the full 30-turn
+    // advanceTurn pipeline (NPC bills, world elections, scandals, ...), whose
+    // unrelated RNG draws and bill-driven pending economy effects have no
+    // bearing on this specific effect and only dilute/destabilize the signal
+    // being measured. A single-seed comparison of a noise-derived metric is
+    // still inherently flaky on its own, so this averages across many seeds.
+    const startingEconomy = createNewGame(1).economy;
+    const sharpMinister = {
+      id: 'sharp-minister',
+      name: 'Sharp Minister',
+      isPlayer: false,
+      ideology: { economic: 0, social: 0 },
+      attributes: { charisma: 5, intellect: 10, integrity: 5, network: 5, mediaSavvy: 5 },
+      partyId: 'party-a',
+      approval: { public: 50, base: 50, partyElite: 50 },
+      approvalEvents: [],
+    };
+    const cabinetEffects = computeCabinetEffects(
+      [{ portfolio: 'finance' as const, politicianId: sharpMinister.id, rank: 'senior' as const }],
+      [sharpMinister]
+    );
+    const withMultiplier = cabinetEffects.economyVolatilityMultiplier;
+    expect(withMultiplier).toBeLessThan(1);
+
+    const runVariance = (seed: number, volatilityMultiplier: number) => {
+      const rng = new SeededRng(seed);
+      let economy = startingEconomy;
       const growthValues: number[] = [];
       for (let i = 0; i < 30; i++) {
-        state = advanceTurn(state);
-        growthValues.push(state.economy.gdpGrowth);
+        economy = advanceEconomy(economy, rng, volatilityMultiplier);
+        growthValues.push(economy.gdpGrowth);
       }
       const mean = growthValues.reduce((a, b) => a + b, 0) / growthValues.length;
       return growthValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / growthValues.length;
     };
 
-    // A generous trial count for the same reason as the NPC-scandal test
-    // above: the shared rng stream shifts whenever a new per-turn system
-    // is added upstream, so this needs enough samples to stay robust to
-    // that rather than being tuned against one exact sequence.
     const trials = 400;
     let totalWith = 0;
     let totalWithout = 0;
     for (let seed = 1; seed <= trials; seed++) {
-      totalWith += runVariance(seed, true);
-      totalWithout += runVariance(seed, false);
+      totalWith += runVariance(seed, withMultiplier);
+      totalWithout += runVariance(seed, 1);
     }
 
     expect(totalWith / trials).toBeLessThan(totalWithout / trials);

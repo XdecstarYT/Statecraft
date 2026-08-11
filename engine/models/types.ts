@@ -317,6 +317,33 @@ export interface ForeignCounterpart {
   location: { lat: number; lng: number };
 }
 
+/**
+ * A foreign nation's current ruling government — real, seeded-deterministic
+ * elections happen on a schedule for every nation in the world roster, not
+ * just the player's own country. See engine/systems/worldElections.ts.
+ */
+export interface WorldGovernment {
+  counterpartId: string;
+  rulingPartyName: string;
+  leaderName: string;
+  /** 0..100 — drifts each turn; drives incumbent-retention odds at the next election. */
+  approval: number;
+  nextElectionTurn: number;
+  lastElectionTurn: number | null;
+  termsServed: number;
+}
+
+/** A resolved foreign election — kept as a bounded recent-history log for the World Elections UI. */
+export interface WorldElectionResult {
+  counterpartId: string;
+  turn: number;
+  incumbentReturned: boolean;
+  previousPartyName: string;
+  newPartyName: string;
+  newLeaderName: string;
+  ideologyShift: { economic: number; social: number };
+}
+
 export type TradeDealStatus = 'proposed' | 'active' | 'cancelled';
 
 export interface TradeDeal {
@@ -1010,6 +1037,9 @@ export interface GameState {
   foreignCounterparts: ForeignCounterpart[];
   /** counterpartId -> disposition -100..100. */
   foreignRelations: Record<string, number>;
+  worldGovernments: WorldGovernment[];
+  /** Bounded recent-history log of resolved foreign elections, newest last. */
+  worldElectionHistory: WorldElectionResult[];
   /** The player's own country's military profile — compared against a counterpart's in war resolution. */
   playerMilitary: MilitaryProfile;
   treaties: Treaty[];
