@@ -238,6 +238,9 @@ const STV_BALLOTS = 3000;
 
 interface StatecraftStore {
   game: GameState | null;
+  /** Turns the player flagged from the TurnMenu as "remind me" — client-side only, not part of GameState/save data. */
+  flaggedTurns: number[];
+  toggleTurnFlag: (turn: number) => void;
   career: CareerState | null;
   lastCareerPartyWorkOutcome: PartyWorkOutcome | null;
   lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
@@ -407,6 +410,13 @@ interface StatecraftStore {
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   game: null,
+  flaggedTurns: [],
+  toggleTurnFlag: (turn) => {
+    const { flaggedTurns } = get();
+    set({
+      flaggedTurns: flaggedTurns.includes(turn) ? flaggedTurns.filter((t) => t !== turn) : [...flaggedTurns, turn],
+    });
+  },
   career: null,
   lastCareerPartyWorkOutcome: null,
   lastCareerLocalRaceOutcome: null,
