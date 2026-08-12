@@ -46,6 +46,12 @@ import { TopHud } from './components/TopHud';
 import { TimelineScrubber } from './components/TimelineScrubber';
 import { AchievementsOverlay } from './components/AchievementsOverlay';
 import { DilemmaPanel } from './components/DilemmaPanel';
+import { CampaignFinancePanel } from './components/CampaignFinancePanel';
+import { MediaEcosystemPanel } from './components/MediaEcosystemPanel';
+import { ThinkTankPanel } from './components/ThinkTankPanel';
+import { WhipDisciplinePanel } from './components/WhipDisciplinePanel';
+import { InternationalCourtPanel } from './components/InternationalCourtPanel';
+import { PowerDynamicsPanel } from './components/PowerDynamicsPanel';
 
 const TABS = [
   { id: 'legislature', label: 'Legislature', icon: '🏛️' },
@@ -323,6 +329,7 @@ export default function App() {
             <ElectionPanel />
           </div>
           <PartyFoundingPanel />
+          <WhipDisciplinePanel />
         </>
       )}
 
@@ -333,6 +340,10 @@ export default function App() {
             <MediaPanel />
           </div>
           <MovementsPanel />
+          <div className="panel-columns">
+            <CampaignFinancePanel />
+            <MediaEcosystemPanel />
+          </div>
         </>
       )}
 
@@ -346,12 +357,14 @@ export default function App() {
           <SecessionPanel />
           <UnrestPanel />
           <BallotInitiativePanel />
+          <PowerDynamicsPanel />
         </>
       )}
       {activeTab === 'world' && (
         <>
           <WorldTab />
           <SummitPanel />
+          <InternationalCourtPanel />
         </>
       )}
 
@@ -369,6 +382,7 @@ export default function App() {
             <DemographicsPanel />
             <SocialPolicyPanel />
           </div>
+          <ThinkTankPanel />
         </>
       )}
 

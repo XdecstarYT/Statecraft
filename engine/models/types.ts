@@ -1147,6 +1147,161 @@ export interface GameState {
   playerPromises: PlayerPromise[];
   /** Standing committees every bill must clear before reaching the floor. See engine/systems/committees.ts. */
   committees: Committee[];
+  /** Individual/PAC/corporate/union donors courtable for campaign funds. See engine/systems/campaignFinance.ts. */
+  donors: Donor[];
+  /** War chest raised from donors, spendable on guaranteed-effect ad blitzes. */
+  campaignFunds: number;
+  /** Named journalists who can be courted, dig up scandals, or fact-check disinformation. See engine/systems/mediaEcosystem.ts. */
+  journalists: Journalist[];
+  /** Ideological policy institutes courtable for credibility and Overton-window influence. See engine/systems/thinkTanks.ts. */
+  thinkTanks: ThinkTank[];
+  /** The national ideological center of gravity — drifts as think tanks publish reports, and its distance from the player's own ideology exerts a small ongoing approval pressure. */
+  overtonWindow: IdeologyPosition;
+  /** One named whip per party, tracking caucus discipline. See engine/systems/whipDiscipline.ts. */
+  partyWhips: PartyWhip[];
+  /** politicianId -> 0..100 loyalty to their own party leadership; low loyalty raises rebellion risk. Defaults to a neutral baseline when absent. */
+  partyLoyalty: Record<string, number>;
+  /** Logged instances of a party's own members defying its whipped floor-vote stance in large numbers. */
+  rebellions: BackbenchRebellion[];
+  /** International tribunal cases — filed against foreign leaders or, rarely, the player. See engine/systems/internationalCourt.ts. */
+  tribunalCases: TribunalCase[];
+  /** Active multilateral sanctions regimes, distinct from the bilateral imposeSanctions in diplomacy.ts. */
+  sanctionsRegimes: SanctionsRegime[];
+  /** Political families accumulating prestige across generations. See engine/systems/dynasties.ts. */
+  dynasties: PoliticalDynasty[];
+  /** 'none' outside a crisis; a real, severe status once declared or seized. See engine/systems/instability.ts. */
+  emergencyPowers: EmergencyPowersStatus;
+  /** Logged coup attempts against the player's government. */
+  coupHistory: CoupAttempt[];
+  /** True once an attempted coup has actually succeeded — elections are suspended and Legacy scoring takes a severe hit until civilian rule is restored. */
+  juntaControl: boolean;
+}
+
+/**
+ * CAMPAIGN FINANCE & DONORS — see engine/systems/campaignFinance.ts.
+ */
+
+export type DonorType = 'individual' | 'corporation' | 'union' | 'pac';
+
+export interface Donor {
+  id: string;
+  name: string;
+  type: DonorType;
+  ideology: IdeologyPosition;
+  /** 1..100 — scales the size of a solicited contribution. */
+  wealth: number;
+  /** -100..100 — warmth toward the player; drifts to 0 each turn unless reinforced. */
+  disposition: number;
+}
+
+/**
+ * MEDIA ECOSYSTEM & DISINFORMATION — see engine/systems/mediaEcosystem.ts.
+ */
+
+export interface Journalist {
+  id: string;
+  name: string;
+  outletId: string;
+  ideology: IdeologyPosition;
+  /** 0..100 — reputation; a high-credibility journalist's exposés and fact-checks land harder. */
+  credibility: number;
+  /** -100..100 — rapport with the player, courted the same way as a donor or interest group. */
+  disposition: number;
+  /** 0..1 — how actively this journalist is currently digging into the player. Feeds corruption.ts's investigativePressure. */
+  scrutiny: number;
+}
+
+/**
+ * THINK TANKS & POLICY INSTITUTES — see engine/systems/thinkTanks.ts.
+ */
+
+export interface ThinkTank {
+  id: string;
+  name: string;
+  ideology: IdeologyPosition;
+  /** 0..100 — prestige; scales how far a published report actually moves the Overton window. */
+  prestige: number;
+  /** -100..100 — warmth toward the player, courted like a donor. */
+  disposition: number;
+}
+
+/**
+ * WHIP DISCIPLINE & BACKBENCH REBELLIONS — see engine/systems/whipDiscipline.ts.
+ */
+
+export interface PartyWhip {
+  partyId: string;
+  politicianId: string;
+  /** 0..100 — how tightly this whip currently controls the caucus; rises when discipline holds, falls after rebellions. */
+  disciplineScore: number;
+}
+
+/** Logged when a large enough share of a party's own members defy its majority floor-vote stance. */
+export interface BackbenchRebellion {
+  id: string;
+  billId: string;
+  partyId: string;
+  rebelIds: string[];
+  turn: number;
+}
+
+/**
+ * INTERNATIONAL COURTS & SANCTIONS — a multilateral body distinct from the
+ * bilateral imposeSanctions in diplomacy.ts. See
+ * engine/systems/internationalCourt.ts.
+ */
+
+export type TribunalChargeType = 'war_crimes' | 'corruption' | 'crimes_against_humanity';
+export type TribunalCaseStatus = 'investigating' | 'convicted' | 'acquitted';
+
+export interface TribunalCase {
+  id: string;
+  /** A real foreign counterpart id, or the sentinel 'player' when the tribunal is scrutinizing the player's own government. */
+  targetId: string;
+  chargeType: TribunalChargeType;
+  turnFiled: number;
+  status: TribunalCaseStatus;
+  turnResolved?: number;
+}
+
+export type SanctionsRegimeStatus = 'active' | 'lifted';
+
+export interface SanctionsRegime {
+  id: string;
+  targetId: string;
+  turnImposed: number;
+  status: SanctionsRegimeStatus;
+  /** 1..3 — scales the economy effect when the player is the target. */
+  severity: number;
+}
+
+/**
+ * POLITICAL DYNASTIES & SUCCESSION — see engine/systems/dynasties.ts.
+ */
+
+export interface PoliticalDynasty {
+  id: string;
+  familyName: string;
+  founderPoliticianId: string;
+  memberIds: string[];
+  /** 0..100 — accumulated prestige; a high-prestige dynasty's heirs start with a real attribute head start. */
+  prestige: number;
+}
+
+/**
+ * COUPS, JUNTAS & EMERGENCY POWERS — see engine/systems/instability.ts.
+ */
+
+export type EmergencyPowersStatus = 'none' | 'state_of_emergency' | 'martial_law';
+
+export type CoupInstigator = 'military' | 'rival_party' | 'popular_uprising';
+export type CoupOutcome = 'succeeded' | 'foiled';
+
+export interface CoupAttempt {
+  id: string;
+  turn: number;
+  outcome: CoupOutcome;
+  instigator: CoupInstigator;
 }
 
 /**

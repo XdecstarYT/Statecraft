@@ -281,6 +281,72 @@ import { CRISIS_TABLE } from '../content/events/crisisTable';
 import { BILL_TEMPLATES } from '../content/flavor/billTemplates';
 import { pickVictorySpeech } from '../content/flavor/victorySpeeches';
 import { STARTER_INTEREST_GROUPS } from '../content/lobbying/groups';
+import {
+  acceptDarkMoneyOffer,
+  applyCourtDonorOutcome,
+  courtDonor,
+  decayDonorDispositions,
+  runAdBlitz,
+  solicitDonation,
+  DARK_MONEY_TIER,
+  type CourtDonorOutcome,
+  type DarkMoneyOutcome,
+  type DonationOutcome,
+} from './systems/campaignFinance';
+import { STARTER_DONORS } from '../content/finance/donors';
+import {
+  applyCourtJournalistOutcome,
+  courtJournalist,
+  decayJournalistDispositions,
+  driftJournalistScrutiny,
+  launchDisinformationCampaign,
+  rollInvestigation,
+  type CourtJournalistOutcome,
+  type DisinformationOutcome,
+  type InvestigationOutcome,
+} from './systems/mediaEcosystem';
+import { STARTER_JOURNALISTS } from '../content/media/journalists';
+import {
+  applyCourtThinkTankOutcome,
+  commissionReport,
+  computeZeitgeistApprovalPressure,
+  courtThinkTank,
+  decayThinkTankDispositions,
+  type CommissionReportOutcome,
+  type CourtThinkTankOutcome,
+} from './systems/thinkTanks';
+import { STARTER_THINK_TANKS } from '../content/thinkTanks/institutes';
+import {
+  applyEnforceDisciplineToWhip,
+  assignPartyWhips,
+  enforceWhipDiscipline,
+  getPartyLoyalty,
+  processFloorVoteRebellions,
+  type EnforceDisciplineOutcome,
+} from './systems/whipDiscipline';
+import {
+  computeSanctionsEconomyEffect,
+  fileTribunalCase,
+  imposeMultilateralSanctions,
+  liftSanctions as liftSanctionsRegime,
+  PLAYER_TRIBUNAL_TARGET_ID,
+  resolveTribunalCase,
+  rollWorldTribunalScrutiny,
+  TRIBUNAL_RESOLUTION_DELAY_TURNS,
+} from './systems/internationalCourt';
+import { addDynastyMember, applyDynastyPrestigeDelta, foundDynasty, isDynastyMember, spawnHeir } from './systems/dynasties';
+import {
+  computeCoupRisk,
+  declareMartialLaw as declareMartialLawStatus,
+  declareStateOfEmergency as declareStateOfEmergencyStatus,
+  liftEmergencyPowers as liftEmergencyPowersStatus,
+  MARTIAL_LAW_APPROVAL_COST,
+  resolveCoupAttempt,
+  rollForCoupAttempt,
+  selectCoupInstigator,
+  STATE_OF_EMERGENCY_APPROVAL_COST,
+} from './systems/instability';
+import type { PoliticalDynasty, SanctionsRegime, TribunalCase, TribunalChargeType } from './models/types';
 
 export * from './rng';
 export * from './ideology';
@@ -340,6 +406,13 @@ export * from './systems/committees';
 export * from './systems/factions';
 export * from './systems/worldElections';
 export * from './systems/byElections';
+export * from './systems/campaignFinance';
+export * from './systems/mediaEcosystem';
+export * from './systems/thinkTanks';
+export * from './systems/whipDiscipline';
+export * from './systems/internationalCourt';
+export * from './systems/dynasties';
+export * from './systems/instability';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -485,6 +558,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   const committees = assignCommittees(politicians, parties, rng);
   const factionLeaderId = assignFactionLeaders(politicians, parties);
   const worldGovernments = initializeWorldGovernments(foreignCounterparts, rng);
+  const partyWhips = assignPartyWhips(politicians, parties);
 
   const baseState: GameState = {
     seed,
@@ -565,6 +639,20 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     playerPromises: [],
     committees,
     factionLeaderId,
+    donors: STARTER_DONORS.map((d) => ({ ...d })),
+    campaignFunds: 0,
+    journalists: STARTER_JOURNALISTS.map((j) => ({ ...j })),
+    thinkTanks: STARTER_THINK_TANKS.map((t) => ({ ...t })),
+    overtonWindow: { economic: 0, social: 0 },
+    partyWhips,
+    partyLoyalty: {},
+    rebellions: [],
+    tribunalCases: [],
+    sanctionsRegimes: [],
+    dynasties: [],
+    emergencyPowers: 'none',
+    coupHistory: [],
+    juntaControl: false,
   };
 
   return resolveGovernment(baseState, rng);
@@ -808,6 +896,8 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
   let research = state.research;
   let playerMilitary = state.playerMilitary;
   let cabinet = state.cabinet;
+  let partyWhips = state.partyWhips;
+  let rebellions = state.rebellions;
   bills = bills.map((bill) => {
     if (bill.status !== 'floor' || !isNpcBill(bill)) return bill;
     const sponsor = politicians.find((p) => p.id === bill.sponsorId)!;
@@ -834,6 +924,18 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
       relationships = updateRelationshipsAfterVote(relationships, player.id, result.finalWhipCount);
     }
     const resolvedBill = applyFloorVoteResult(bill, result);
+    const rebellionResult = processFloorVoteRebellions(
+      bill,
+      result.finalWhipCount,
+      politicians,
+      state.parties,
+      partyWhips,
+      relationships,
+      state.turn
+    );
+    partyWhips = rebellionResult.partyWhips;
+    relationships = rebellionResult.relationships;
+    if (rebellionResult.rebellions.length > 0) rebellions = [...rebellions, ...rebellionResult.rebellions];
     if (resolvedBill.status === 'passed') {
       const enacted = enactPassedBill(
         { ...state, economy, socialPolicy, crime, environment, infrastructure, research, playerMilitary },
@@ -973,6 +1075,8 @@ export function runNpcTurn(state: GameState, rng: SeededRng): GameState {
     politicians: nextPoliticians,
     favorBank,
     scandals,
+    partyWhips,
+    rebellions,
     interestGroups,
     eventLog,
     socialPolicy,
@@ -1477,6 +1581,147 @@ export function runMovementsTurn(state: GameState, rng: SeededRng): GameState {
   return { ...state, movements, protests, politicians };
 }
 
+/** Donor dispositions cool the same way every other courted relationship in this engine does when nobody's tending them. */
+export function runCampaignFinanceTurn(state: GameState): GameState {
+  return { ...state, donors: decayDonorDispositions(state.donors) };
+}
+
+const HARD_SCANDAL_SCRUTINY_SCALE = 0.25;
+
+/**
+ * Journalist dispositions cool like any courted relationship; scrutiny
+ * drifts toward a ceiling driven by how much unresolved hard-tier scandal
+ * there actually is to dig into — a clean player keeps the press quiet.
+ */
+export function runMediaEcosystemTurn(state: GameState): GameState {
+  const hardScandalCount = state.scandals.filter((s) => s.status === 'unresolved' && s.tier === 'hard').length;
+  const pressureCeiling = clamp(hardScandalCount * HARD_SCANDAL_SCRUTINY_SCALE, 0, 1);
+  const journalists = decayJournalistDispositions(state.journalists).map((j) => driftJournalistScrutiny(j, pressureCeiling));
+  return { ...state, journalists };
+}
+
+/** Think tank dispositions cool like any courted relationship; the Overton window's distance from the player exerts a small ongoing approval pressure. */
+export function runThinkTankTurn(state: GameState): GameState {
+  const thinkTanks = decayThinkTankDispositions(state.thinkTanks);
+  const player = state.politicians.find((p) => p.isPlayer);
+  let politicians = state.politicians;
+  if (player) {
+    const pressure = computeZeitgeistApprovalPressure(state.overtonWindow, player.ideology);
+    if (pressure !== 0) {
+      politicians = politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', pressure, 4) : p));
+    }
+  }
+  return { ...state, thinkTanks, politicians };
+}
+
+const TRIBUNAL_EVIDENCE_SCANDAL_SCALE = 0.15;
+const TRIBUNAL_EVIDENCE_WAR_SCALE = 0.2;
+const EXTREME_WAR_ADVANTAGE_THRESHOLD = 60;
+const TRIBUNAL_CONVICTION_APPROVAL_PENALTY = -12;
+
+/**
+ * Resolves any tribunal case whose investigation period has run out
+ * (see TRIBUNAL_RESOLUTION_DELAY_TURNS), imposing exactly one new
+ * multilateral sanctions regime — with exactly one, one-time economy hit —
+ * on conviction. Separately rolls a small chance the world opens a fresh
+ * case against the player's own government, driven by real unresolved
+ * hard-tier scandals or wars fought at an extreme advantage swing.
+ */
+export function runInternationalCourtTurn(state: GameState, rng: SeededRng): GameState {
+  let sanctionsRegimes = state.sanctionsRegimes;
+  let economy = state.economy;
+  let politicians = state.politicians;
+
+  const hardScandalCount = state.scandals.filter((s) => s.status === 'unresolved' && s.tier === 'hard').length;
+  const extremeWarCount = state.wars.filter(
+    (w) => w.status === 'active' && Math.abs(w.advantage) >= EXTREME_WAR_ADVANTAGE_THRESHOLD
+  ).length;
+
+  const tribunalCases = state.tribunalCases.map((tc) => {
+    if (tc.status !== 'investigating' || state.turn - tc.turnFiled < TRIBUNAL_RESOLUTION_DELAY_TURNS) return tc;
+    const isPlayerTarget = tc.targetId === PLAYER_TRIBUNAL_TARGET_ID;
+    const standing = isPlayerTarget
+      ? (politicians.find((p) => p.isPlayer)?.approval.public ?? 50) - 50
+      : state.foreignRelations[tc.targetId] ?? 0;
+    const evidenceStrength = clamp(
+      (isPlayerTarget ? hardScandalCount : 1) * TRIBUNAL_EVIDENCE_SCANDAL_SCALE + extremeWarCount * TRIBUNAL_EVIDENCE_WAR_SCALE,
+      0,
+      1
+    );
+    const resolution = resolveTribunalCase(tc, evidenceStrength, standing, state.turn, rng);
+    if (resolution.convicted) {
+      const regime = imposeMultilateralSanctions(
+        tc.targetId,
+        1 + Math.round(evidenceStrength * 2),
+        state.turn,
+        `sanctions-${state.turn}-${tc.targetId}`
+      );
+      sanctionsRegimes = [...sanctionsRegimes, regime];
+      economy = applyImmediateEffect(economy, computeSanctionsEconomyEffect(regime));
+      if (isPlayerTarget) {
+        politicians = politicians.map((p) => (p.isPlayer ? pushApprovalEvent(p, 'public', TRIBUNAL_CONVICTION_APPROVAL_PENALTY, 6) : p));
+      }
+    }
+    return resolution.case;
+  });
+
+  const hasOpenPlayerCase = tribunalCases.some(
+    (tc) => tc.targetId === PLAYER_TRIBUNAL_TARGET_ID && tc.status === 'investigating'
+  );
+  const nextTribunalCases =
+    !hasOpenPlayerCase && rollWorldTribunalScrutiny(hardScandalCount, extremeWarCount, rng)
+      ? [
+          ...tribunalCases,
+          fileTribunalCase(
+            PLAYER_TRIBUNAL_TARGET_ID,
+            hardScandalCount > 0 ? 'corruption' : 'war_crimes',
+            state.turn,
+            `tribunal-${state.turn}-player`
+          ),
+        ]
+      : tribunalCases;
+
+  return { ...state, tribunalCases: nextTribunalCases, sanctionsRegimes, economy, politicians };
+}
+
+const COUP_FOILED_APPROVAL_PENALTY = -5;
+
+/**
+ * A rare instability check built from signal already present elsewhere:
+ * economic/approval-driven unrest pressure, the player's own military
+ * strength, and any standing emergency powers. Short-circuits once a coup
+ * has already succeeded — juntaControl freezes further rolls until civilian
+ * rule is restored.
+ */
+export function runInstabilityTurn(state: GameState, rng: SeededRng): GameState {
+  if (state.juntaControl) return state;
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) return state;
+
+  const unrestPressure = computeUnrestPressure(state.economy, player.approval.public);
+  const risk = computeCoupRisk(unrestPressure, state.playerMilitary.strength, player.approval.public, state.emergencyPowers);
+  if (!rollForCoupAttempt(risk, rng)) return state;
+
+  const instigator = selectCoupInstigator(unrestPressure, state.playerMilitary.strength, player.approval.public, rng);
+  const attempt = resolveCoupAttempt(
+    instigator,
+    state.playerMilitary.strength,
+    player.approval.public,
+    state.turn,
+    `coup-${state.turn}`,
+    rng
+  );
+  const coupHistory = [...state.coupHistory, attempt];
+
+  if (attempt.outcome === 'succeeded') {
+    return { ...state, coupHistory, juntaControl: true };
+  }
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', COUP_FOILED_APPROVAL_PENALTY, 5) : p
+  );
+  return { ...state, coupHistory, politicians };
+}
+
 export function advanceTurn(state: GameState): GameState {
   const settings = getDifficultySettings(state.difficulty);
   const cabinetEffects = computeCabinetEffects(state.cabinet, state.politicians);
@@ -1510,6 +1755,11 @@ export function advanceTurn(state: GameState): GameState {
   next = runMovementsTurn(next, rng);
   next = runWorldElectionsForTurn(next, rng);
   next = runByElectionsTurn(next, rng);
+  next = runCampaignFinanceTurn(next);
+  next = runMediaEcosystemTurn(next);
+  next = runThinkTankTurn(next);
+  next = runInternationalCourtTurn(next, rng);
+  next = runInstabilityTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1571,6 +1821,7 @@ export function runByElectionsTurn(state: GameState, rng: SeededRng): GameState 
   let politicians = state.politicians;
   let parties = state.parties;
   let byElections = state.byElections;
+  let dynasties = state.dynasties;
 
   byElections = byElections.map((be) => {
     if (be.resolved || be.resolutionTurn !== state.turn) return be;
@@ -1578,6 +1829,20 @@ export function runByElectionsTurn(state: GameState, rng: SeededRng): GameState 
     const applied = applyByElectionResult(politicians, parties, be, winnerPartyId, rng);
     politicians = applied.politicians;
     parties = applied.parties;
+
+    // A dynasty holding the vacated seat's own party fields the next
+    // generation instead of a generic replacement — see dynasties.ts.
+    if (winnerPartyId === be.vacatedPartyId) {
+      const dynasty = dynasties.find((d) => isDynastyMember(d, be.vacatedPoliticianId));
+      if (dynasty) {
+        const founder = politicians.find((p) => p.id === dynasty.founderPoliticianId);
+        const familyIdeology = founder?.ideology ?? parties.find((p) => p.id === winnerPartyId)?.ideology ?? { economic: 0, social: 0 };
+        const heir = spawnHeir(dynasty, familyIdeology, winnerPartyId, be.id, rng);
+        politicians = [...politicians.slice(0, -1), heir];
+        dynasties = dynasties.map((d) => (d.id === dynasty.id ? applyDynastyPrestigeDelta(addDynastyMember(d, heir.id), 4) : d));
+      }
+    }
+
     return { ...be, resolved: true, winnerPartyId };
   });
 
@@ -1593,7 +1858,7 @@ export function runByElectionsTurn(state: GameState, rng: SeededRng): GameState 
     }
   }
 
-  return { ...state, politicians, parties, byElections };
+  return { ...state, politicians, parties, byElections, dynasties };
 }
 
 const ALLY_STRENGTH_CONTRIBUTION = 0.35;
@@ -2211,6 +2476,270 @@ export function courtInterestGroupAction(
     g.id === groupId ? applyCourtOutcome(g, outcome) : g
   );
   return { state: { ...state, interestGroups, rngState: rng.getState() }, outcome };
+}
+
+/** Directly courts a donor — meetings, briefings, a personal ask. A no-op if the donor id doesn't exist. */
+export function courtDonorAction(state: GameState, donorId: string): { state: GameState; outcome: CourtDonorOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const donor = state.donors.find((d) => d.id === donorId);
+  if (!player || !donor) return { state, outcome: { success: false, dispositionDelta: 0 } };
+  const outcome = courtDonor(donor, player.attributes, rng);
+  const donors = state.donors.map((d) => (d.id === donorId ? applyCourtDonorOutcome(d, outcome) : d));
+  return { state: { ...state, donors, rngState: rng.getState() }, outcome };
+}
+
+/** A disclosed, legal contribution added straight to the campaign war chest. */
+export function solicitDonationAction(state: GameState, donorId: string): { state: GameState; outcome: DonationOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const donor = state.donors.find((d) => d.id === donorId);
+  if (!player || !donor) return { state, outcome: { amount: 0 } };
+  const outcome = solicitDonation(donor, player.ideology, rng);
+  return {
+    state: { ...state, campaignFunds: state.campaignFunds + outcome.amount, rngState: rng.getState() },
+    outcome,
+  };
+}
+
+/**
+ * An undisclosed, off-the-books contribution — a much bigger check, but a
+ * real corruption exposure: detection scales with any active investigative
+ * pressure from unresolved hard-tier scandals, and a detected offer logs a
+ * fresh 'hard'-tier scandal against the player, not just a quiet flag.
+ */
+export function acceptDarkMoneyOfferAction(
+  state: GameState,
+  donorId: string
+): { state: GameState; outcome: DarkMoneyOutcome | null } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const donor = state.donors.find((d) => d.id === donorId);
+  if (!player || !donor) return { state, outcome: null };
+  const hardScandalCount = state.scandals.filter((s) => s.status === 'unresolved' && s.tier === 'hard').length;
+  const investigativePressure = clamp(hardScandalCount * 0.2, 0, 1);
+  const outcome = acceptDarkMoneyOffer(donor, player.ideology, player.attributes.integrity, investigativePressure, rng);
+  if (!outcome) return { state: { ...state, rngState: rng.getState() }, outcome: null };
+
+  let scandals = state.scandals;
+  if (outcome.detected) {
+    const newScandal: Scandal = {
+      id: `scandal-${state.turn}-${scandals.length + 1}`,
+      politicianId: player.id,
+      tier: DARK_MONEY_TIER,
+      turn: state.turn,
+      status: 'unresolved',
+    };
+    scandals = [...scandals, newScandal];
+  }
+
+  return {
+    state: { ...state, campaignFunds: state.campaignFunds + outcome.amount, scandals, rngState: rng.getState() },
+    outcome,
+  };
+}
+
+/** Spends the war chest on a guaranteed, diminishing-returns approval bump — no gaffe risk, unlike a rally or interview. */
+export function runAdBlitzAction(
+  state: GameState,
+  amountToSpend: number
+): { state: GameState; outcome: { fundsSpent: number; approvalImpact: number } } {
+  const player = state.politicians.find((p) => p.isPlayer);
+  if (!player) return { state, outcome: { fundsSpent: 0, approvalImpact: 0 } };
+  const outcome = runAdBlitz(state.campaignFunds, amountToSpend);
+  const politicians = state.politicians.map((p) =>
+    p.id === player.id ? pushApprovalEvent(p, 'public', outcome.approvalImpact, 4) : p
+  );
+  return { state: { ...state, campaignFunds: state.campaignFunds - outcome.fundsSpent, politicians }, outcome };
+}
+
+/** Directly courts a journalist — access, exclusives, a relationship built over time. */
+export function courtJournalistAction(
+  state: GameState,
+  journalistId: string
+): { state: GameState; outcome: CourtJournalistOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const journalist = state.journalists.find((j) => j.id === journalistId);
+  if (!player || !journalist) return { state, outcome: { success: false, dispositionDelta: 0 } };
+  const outcome = courtJournalist(journalist, player.attributes, rng);
+  const journalists = state.journalists.map((j) => (j.id === journalistId ? applyCourtJournalistOutcome(j, outcome) : j));
+  return { state: { ...state, journalists, rngState: rng.getState() }, outcome };
+}
+
+/**
+ * Asks a courted journalist to dig into a rival — a real chance of turning
+ * up a fresh scandal, gated by the journalist's own scrutiny and
+ * credibility against the target's integrity. Never targets the player:
+ * the press digging into the player's own conduct is the passive
+ * consequence of state.journalists' scrutiny drift, not a player action.
+ */
+export function investigateRivalAction(
+  state: GameState,
+  journalistId: string,
+  targetPoliticianId: string
+): { state: GameState; outcome: InvestigationOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const journalist = state.journalists.find((j) => j.id === journalistId);
+  const target = state.politicians.find((p) => p.id === targetPoliticianId && !p.isPlayer);
+  if (!journalist || !target) return { state, outcome: { found: false } };
+  const outcome = rollInvestigation(journalist, target.attributes.integrity, rng);
+  if (!outcome.found) return { state: { ...state, rngState: rng.getState() }, outcome };
+  const newScandal: Scandal = {
+    id: `scandal-${state.turn}-${state.scandals.length + 1}`,
+    politicianId: target.id,
+    tier: 'medium',
+    turn: state.turn,
+    status: 'unresolved',
+  };
+  return { state: { ...state, scandals: [...state.scandals, newScandal], rngState: rng.getState() }, outcome };
+}
+
+/** Spreads a false narrative about a rival — a real tail risk of backfiring onto the player instead. */
+export function launchDisinformationCampaignAction(
+  state: GameState,
+  targetPoliticianId: string
+): { state: GameState; outcome: DisinformationOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const target = state.politicians.find((p) => p.id === targetPoliticianId);
+  if (!player || !target) return { state, outcome: { outcome: 'exposed', approvalImpact: 0 } };
+  const outcome = launchDisinformationCampaign(player.attributes, state.journalists, rng);
+  const politicians = state.politicians.map((p) => {
+    if (outcome.outcome === 'landed' && p.id === target.id) return pushApprovalEvent(p, 'public', outcome.approvalImpact, 5);
+    if (outcome.outcome === 'backfired' && p.id === player.id) return pushApprovalEvent(p, 'public', outcome.approvalImpact, 5);
+    return p;
+  });
+  return { state: { ...state, politicians, rngState: rng.getState() }, outcome };
+}
+
+/** Directly courts a think tank — briefings, funding, a seat at the table. */
+export function courtThinkTankAction(
+  state: GameState,
+  thinkTankId: string
+): { state: GameState; outcome: CourtThinkTankOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const player = state.politicians.find((p) => p.isPlayer);
+  const thinkTank = state.thinkTanks.find((t) => t.id === thinkTankId);
+  if (!player || !thinkTank) return { state, outcome: { success: false, dispositionDelta: 0 } };
+  const outcome = courtThinkTank(thinkTank, player.attributes, rng);
+  const thinkTanks = state.thinkTanks.map((t) => (t.id === thinkTankId ? applyCourtThinkTankOutcome(t, outcome) : t));
+  return { state: { ...state, thinkTanks, rngState: rng.getState() }, outcome };
+}
+
+/** Commissions a report from a courted think tank, nudging the national Overton window toward its position. */
+export function commissionReportAction(
+  state: GameState,
+  thinkTankId: string
+): { state: GameState; outcome: CommissionReportOutcome } {
+  const rng = SeededRng.fromState(state.rngState);
+  const thinkTank = state.thinkTanks.find((t) => t.id === thinkTankId);
+  if (!thinkTank) return { state, outcome: { published: false, overtonShift: { economic: 0, social: 0 } } };
+  const outcome = commissionReport(thinkTank, state.overtonWindow, rng);
+  const overtonWindow = outcome.published
+    ? {
+        economic: state.overtonWindow.economic + outcome.overtonShift.economic,
+        social: state.overtonWindow.social + outcome.overtonShift.social,
+      }
+    : state.overtonWindow;
+  return { state: { ...state, overtonWindow, rngState: rng.getState() }, outcome };
+}
+
+/** The whip privately confronts a rebel — real leverage on both the party's own discipline score and the whip-rebel relationship. */
+export function enforceWhipDisciplineAction(
+  state: GameState,
+  partyId: string,
+  rebelId: string
+): { state: GameState; outcome: EnforceDisciplineOutcome | null } {
+  const rng = SeededRng.fromState(state.rngState);
+  const whip = state.partyWhips.find((w) => w.partyId === partyId);
+  const rebel = state.politicians.find((p) => p.id === rebelId);
+  if (!whip || !rebel) return { state, outcome: null };
+  const outcome = enforceWhipDiscipline(whip, rebel.attributes.integrity, rng);
+  const partyWhips = state.partyWhips.map((w) => (w.partyId === partyId ? applyEnforceDisciplineToWhip(w, outcome) : w));
+  const partyLoyalty = {
+    ...state.partyLoyalty,
+    [rebelId]: clamp(getPartyLoyalty(state.partyLoyalty, rebelId) + outcome.loyaltyDelta, 0, 100),
+  };
+  const key = relationshipKey(whip.politicianId, rebelId);
+  const relationships = {
+    ...state.relationships,
+    [key]: clamp((state.relationships[key] ?? 0) + outcome.relationshipDelta, -100, 100),
+  };
+  return { state: { ...state, partyWhips, partyLoyalty, relationships, rngState: rng.getState() }, outcome };
+}
+
+/** Files a fresh international tribunal case against a foreign leader (or the player's own government). */
+export function fileTribunalCaseAction(
+  state: GameState,
+  targetId: string,
+  chargeType: TribunalChargeType
+): { state: GameState; outcome: TribunalCase } {
+  const tribunalCase = fileTribunalCase(
+    targetId,
+    chargeType,
+    state.turn,
+    `tribunal-${state.turn}-${targetId}-${state.tribunalCases.length + 1}`
+  );
+  return { state: { ...state, tribunalCases: [...state.tribunalCases, tribunalCase] }, outcome: tribunalCase };
+}
+
+/** A direct diplomatic push for multilateral sanctions, distinct from a tribunal conviction's automatic regime. */
+export function imposeMultilateralSanctionsAction(
+  state: GameState,
+  targetId: string,
+  severity: number
+): { state: GameState; outcome: SanctionsRegime } {
+  const regime = imposeMultilateralSanctions(
+    targetId,
+    severity,
+    state.turn,
+    `sanctions-${state.turn}-${targetId}-${state.sanctionsRegimes.length + 1}`
+  );
+  const economy = applyImmediateEffect(state.economy, computeSanctionsEconomyEffect(regime));
+  return { state: { ...state, sanctionsRegimes: [...state.sanctionsRegimes, regime], economy }, outcome: regime };
+}
+
+export function liftSanctionsAction(state: GameState, regimeId: string): { state: GameState; outcome: SanctionsRegime | null } {
+  const regime = state.sanctionsRegimes.find((r) => r.id === regimeId);
+  if (!regime) return { state, outcome: null };
+  const lifted = liftSanctionsRegime(regime);
+  const sanctionsRegimes = state.sanctionsRegimes.map((r) => (r.id === regimeId ? lifted : r));
+  return { state: { ...state, sanctionsRegimes }, outcome: lifted };
+}
+
+/** Founds a new political dynasty rooted in an existing politician — typically the player. */
+export function foundDynastyAction(
+  state: GameState,
+  politicianId: string,
+  familyName: string
+): { state: GameState; outcome: PoliticalDynasty | null } {
+  const founder = state.politicians.find((p) => p.id === politicianId);
+  if (!founder) return { state, outcome: null };
+  const dynasty = foundDynasty(founder, familyName, `dynasty-${state.dynasties.length + 1}-${politicianId}`);
+  return { state: { ...state, dynasties: [...state.dynasties, dynasty] }, outcome: dynasty };
+}
+
+/** Declares a state of emergency — a real, immediate approval cost for a real (if modest) drop in coup risk from unrest pressure. */
+export function declareStateOfEmergencyAction(state: GameState): { state: GameState } {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', STATE_OF_EMERGENCY_APPROVAL_COST, 5) : p))
+    : state.politicians;
+  return { state: { ...state, emergencyPowers: declareStateOfEmergencyStatus(), politicians } };
+}
+
+/** Declares martial law — a blunt, costly instrument that raises baseline instability risk even as it suppresses unrest. */
+export function declareMartialLawAction(state: GameState): { state: GameState } {
+  const player = state.politicians.find((p) => p.isPlayer);
+  const politicians = player
+    ? state.politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', MARTIAL_LAW_APPROVAL_COST, 6) : p))
+    : state.politicians;
+  return { state: { ...state, emergencyPowers: declareMartialLawStatus(), politicians } };
+}
+
+export function liftEmergencyPowersAction(state: GameState): { state: GameState } {
+  return { state: { ...state, emergencyPowers: liftEmergencyPowersStatus() } };
 }
 
 /**

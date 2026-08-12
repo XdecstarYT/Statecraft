@@ -220,7 +220,14 @@ describe('runNpcTurn via advanceTurn', () => {
       state = advanceTurn(state);
       for (const bill of state.bills) {
         const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
-        if (sponsor && !sponsor.isPlayer && (bill.status === 'passed' || bill.status === 'failed')) {
+        // A bill can also be marked 'failed' at the committee stage without
+        // ever reaching a floor vote (see committees.ts's
+        // applyCommitteeVoteResult) — whipCount stays untouched in that
+        // case, so only bills that actually reached resolveFloorVote (a
+        // 'passed' bill, or a 'failed' one with a populated whipCount)
+        // are checked here.
+        const reachedFloorVote = bill.status === 'passed' || (bill.status === 'failed' && Object.keys(bill.whipCount).length > 0);
+        if (sponsor && !sponsor.isPlayer && reachedFloorVote) {
           expect(['yes', 'no']).toContain(bill.whipCount[player.id]);
           sawPlayerVote = true;
         }
