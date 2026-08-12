@@ -99,6 +99,8 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     nominationHistory: [],
     civicRecord: 0,
     citizenInitiatives: [],
+    campaignMomentum: 0,
+    partyOfficer: false,
     eventLog: [],
   };
   return withStage(state);
@@ -299,6 +301,132 @@ export function doPartyWork(state: CareerState, rng: SeededRng): { state: Career
 }
 
 /**
+ * PARTY LEADERSHIP — the difference between being well-liked in the party
+ * and actually holding a lever inside its machine. A one-shot bid, gated
+ * on standing built up through doPartyWork, that installs the player as a
+ * local party officer on success: a permanent standing floor and a real
+ * nomination-odds bonus, not just another temporary boost.
+ */
+
+export const PARTY_OFFICER_STANDING_REQUIREMENT = 60;
+const PARTY_OFFICER_STANDING_FLOOR = 40;
+const PARTY_LEADERSHIP_BID_SETBACK = -10;
+
+export function canSeekPartyLeadership(state: CareerState): boolean {
+  return !!state.partyId && !state.partyOfficer && state.partyStanding >= PARTY_OFFICER_STANDING_REQUIREMENT;
+}
+
+export interface PartyLeadershipOutcome {
+  won: boolean;
+  probability: number;
+}
+
+/** Probability leans heavily on standing (the delegates who'll actually vote for you), with network and charisma as secondary factors. */
+export function computePartyLeadershipProbability(state: CareerState): number {
+  const standingTerm = (state.partyStanding - 50) / 50;
+  const attributeTerm = (state.attributes.network + state.attributes.charisma - 10) / 10;
+  const score = 1.6 * standingTerm + 0.6 * attributeTerm;
+  return clamp(sigmoid(score), 0.05, 0.9);
+}
+
+export function attemptPartyLeadershipBid(
+  state: CareerState,
+  rng: SeededRng
+): { state: CareerState; outcome: PartyLeadershipOutcome | null } {
+  if (!canSeekPartyLeadership(state)) {
+    return { state, outcome: null };
+  }
+
+  const probability = computePartyLeadershipProbability(state);
+  const won = rng.next() < probability;
+  const partyStanding = won ? state.partyStanding : clamp(state.partyStanding + PARTY_LEADERSHIP_BID_SETBACK, 0, 100);
+
+  return {
+    state: withStage({ ...state, partyOfficer: state.partyOfficer || won, partyStanding, rngState: rng.getState() }),
+    outcome: { won, probability },
+  };
+}
+
+/**
+ * REAL CAMPAIGN MECHANICS — short-lived buzz built between race attempts.
+ * Canvassing is cheap and leans on charisma/network; a media blitz is
+ * expensive and leans on media savvy/charisma. Both feed campaignMomentum,
+ * which factors into computePersonalAppeal for local/regional races and
+ * the national nomination alike.
+ */
+
+export type CampaignActivityType = 'canvass' | 'media_blitz';
+
+export interface CampaignActivityConfig {
+  id: CampaignActivityType;
+  label: string;
+  cost: number;
+}
+
+export const CAMPAIGN_ACTIVITIES: Record<CampaignActivityType, CampaignActivityConfig> = {
+  canvass: { id: 'canvass', label: 'Canvass the District', cost: 15 },
+  media_blitz: { id: 'media_blitz', label: 'Run a Media Blitz', cost: 80 },
+};
+
+function computeCampaignSkill(attributes: PoliticianAttributes, activityType: CampaignActivityType): number {
+  if (activityType === 'media_blitz') {
+    return clamp((attributes.mediaSavvy + attributes.charisma) / 20, 0, 1);
+  }
+  return clamp((attributes.charisma + attributes.network) / 20, 0, 1);
+}
+
+export type CampaignActivityOutcomeTier = 'strong' | 'solid' | 'setback';
+
+export interface CampaignActivityOutcome {
+  activityType: CampaignActivityType;
+  outcome: CampaignActivityOutcomeTier;
+  momentumDelta: number;
+}
+
+const CAMPAIGN_STRONG_DELTA = 14;
+const CAMPAIGN_SOLID_DELTA = 6;
+const CAMPAIGN_SETBACK_DELTA = -4;
+
+export function canRunCampaignActivity(state: CareerState, activityType: CampaignActivityType): boolean {
+  return state.money >= CAMPAIGN_ACTIVITIES[activityType].cost;
+}
+
+export function runCampaignActivity(
+  state: CareerState,
+  activityType: CampaignActivityType,
+  rng: SeededRng
+): { state: CareerState; outcome: CampaignActivityOutcome | null } {
+  if (!canRunCampaignActivity(state, activityType)) {
+    return { state, outcome: null };
+  }
+
+  const config = CAMPAIGN_ACTIVITIES[activityType];
+  const skill = computeCampaignSkill(state.attributes, activityType);
+  const pStrong = 0.15 + skill * 0.35;
+  const pSetback = 0.25 - skill * 0.2;
+  const roll = rng.next();
+
+  let outcome: CampaignActivityOutcomeTier;
+  let momentumDelta: number;
+  if (roll < pStrong) {
+    outcome = 'strong';
+    momentumDelta = CAMPAIGN_STRONG_DELTA;
+  } else if (roll < 1 - pSetback) {
+    outcome = 'solid';
+    momentumDelta = CAMPAIGN_SOLID_DELTA;
+  } else {
+    outcome = 'setback';
+    momentumDelta = CAMPAIGN_SETBACK_DELTA;
+  }
+
+  const campaignMomentum = clamp(state.campaignMomentum + momentumDelta, 0, 100);
+  return {
+    state: withStage({ ...state, money: state.money - config.cost, campaignMomentum, rngState: rng.getState() }),
+    outcome: { activityType, outcome, momentumDelta },
+  };
+}
+
+/**
  * LOCAL COUNCIL RACE
  */
 
@@ -313,15 +441,22 @@ const LOCAL_RACE_CAMPAIGN_COST = 60;
 
 /**
  * Ideology fit and personal appeal (attributes + party standing + a public
- * civic record) all matter — neither alone is enough. civicRecord is
- * optional so callers that predate citizen petitions still compile; it
- * carries real weight once a player has actually filed any.
+ * civic record + short-lived campaign momentum) all matter — neither alone
+ * is enough. civicRecord and campaignMomentum are optional so callers that
+ * predate those systems still compile; they carry real weight once a
+ * player has actually built either up.
  */
-export function computePersonalAppeal(attributes: PoliticianAttributes, partyStanding: number, civicRecord = 0): number {
+export function computePersonalAppeal(
+  attributes: PoliticianAttributes,
+  partyStanding: number,
+  civicRecord = 0,
+  campaignMomentum = 0
+): number {
   const attributeAppeal = (attributes.charisma + attributes.mediaSavvy + attributes.network) / 30;
   const standingAppeal = partyStanding / 100;
   const civicAppeal = civicRecord / 100;
-  return clamp(attributeAppeal * 0.55 + standingAppeal * 0.35 + civicAppeal * 0.1, 0.05, 1);
+  const momentumAppeal = campaignMomentum / 100;
+  return clamp(attributeAppeal * 0.45 + standingAppeal * 0.3 + civicAppeal * 0.1 + momentumAppeal * 0.15, 0.05, 1);
 }
 
 /**
@@ -348,7 +483,7 @@ export function attemptLocalRace(
   };
 
   const playerAlignment = 1 - ideologicalDistance(state.ideology, localElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
-  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord);
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord, state.campaignMomentum);
   const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
   const rivalScores = rivalNames.map(() => Math.max(0.02, 0.3 + rng.next() * 0.4));
 
@@ -399,7 +534,7 @@ export function attemptRegionalRace(
   };
 
   const playerAlignment = 1 - ideologicalDistance(state.ideology, regionalElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
-  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord);
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord, state.campaignMomentum);
   const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
   // Tougher field than a local race — better-funded, more experienced rivals.
   const rivalScores = rivalNames.map(() => Math.max(0.02, 0.4 + rng.next() * 0.45));
@@ -559,14 +694,18 @@ function sigmoid(x: number): number {
  * party leadership's own closed-door decision, not a poll of anyone the
  * player interacts with. Party standing dominates; having actually held
  * office is a real, separate boost that grows with how high up the ladder
- * that office was; personal attributes matter but least of the three.
+ * that office was; a party leadership post and fresh campaign momentum
+ * both matter too, but personal attributes matter least of all.
  */
 export function computeNominationProbability(state: CareerState): number {
   const standingTerm = (state.partyStanding - 50) / 50;
   const seatBonus = (state.localSeatWon ? 0.4 : 0) + (state.regionalSeatWon ? 0.8 : 0);
   const attributeTerm = (state.attributes.charisma + state.attributes.integrity + state.attributes.intellect - 15) / 15;
   const civicTerm = (state.civicRecord - 50) / 50;
-  const score = 1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm + 0.4 * civicTerm;
+  const officerBonus = state.partyOfficer ? 1 : 0;
+  const momentumTerm = (state.campaignMomentum - 50) / 50;
+  const score =
+    1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm + 0.4 * civicTerm + 0.7 * officerBonus + 0.3 * momentumTerm;
   return clamp(sigmoid(score), 0.02, 0.95);
 }
 
@@ -597,6 +736,7 @@ export function isGraduated(state: CareerState): boolean {
  */
 
 const PARTY_STANDING_DECAY_RATE = 0.04;
+const CAMPAIGN_MOMENTUM_DECAY_RATE = 0.2;
 const IDEOLOGY_DRIFT_RATE = 0.08;
 const LOCAL_OFFICE_STIPEND = 20;
 const REGIONAL_OFFICE_STIPEND = 50;
@@ -651,8 +791,12 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     money += LOCAL_OFFICE_STIPEND;
   }
 
-  const partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
+  let partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
+  if (state.partyOfficer) {
+    partyStanding = Math.max(partyStanding, PARTY_OFFICER_STANDING_FLOOR);
+  }
   const civicRecord = state.civicRecord * (1 - PARTY_STANDING_DECAY_RATE);
+  const campaignMomentum = state.campaignMomentum * (1 - CAMPAIGN_MOMENTUM_DECAY_RATE);
 
   let ideology = state.ideology;
   const party = state.foundedParty ?? (state.partyId ? parties.find((p) => p.id === state.partyId) : undefined);
@@ -673,6 +817,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     completedEducationTracks,
     partyStanding,
     civicRecord,
+    campaignMomentum,
     ideology,
     eventLog,
   });

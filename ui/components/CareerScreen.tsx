@@ -2,10 +2,15 @@ import { useState } from 'react';
 import {
   EDUCATION_TRACKS,
   JOB_LISTINGS,
+  CAMPAIGN_ACTIVITIES,
   CITIZEN_INITIATIVE_COST,
+  PARTY_OFFICER_STANDING_REQUIREMENT,
   computeCareerAge,
   computeNominationProbability,
+  computePartyLeadershipProbability,
   computePersonalAppeal,
+  type CampaignActivityOutcome,
+  type CampaignActivityType,
   type CareerState,
   type CitizenInitiativeOutcome,
   type EducationTrack,
@@ -14,11 +19,13 @@ import {
   type LocalRaceOutcome,
   type NominationOutcome,
   type Party,
+  type PartyLeadershipOutcome,
   type PartyWorkOutcome,
 } from '../../engine';
 import { STARTER_COUNTRY_OPTIONS } from '../../content/countries/registry';
 import { CITIZEN_ISSUE_TEMPLATES } from '../../content/career/issues';
 import {
+  CAMPAIGN_ACTIVITY_FLAVOR,
   CITIZEN_INITIATIVE_FAIL_FLAVOR,
   CITIZEN_INITIATIVE_PASS_FLAVOR,
   EDUCATION_START_FLAVOR,
@@ -27,6 +34,8 @@ import {
   LOCAL_RACE_WIN_FLAVOR,
   NOMINATION_REJECTION_FLAVOR,
   NOMINATION_SUCCESS_FLAVOR,
+  PARTY_LEADERSHIP_LOSS_FLAVOR,
+  PARTY_LEADERSHIP_WIN_FLAVOR,
   PARTY_WORK_FLAVOR,
   REGIONAL_RACE_LOSS_FLAVOR,
   REGIONAL_RACE_WIN_FLAVOR,
@@ -58,12 +67,16 @@ export function CareerScreen() {
   const careerDoLocalGovernanceAction = useStatecraftStore((s) => s.careerDoLocalGovernanceAction);
   const careerAttemptNominationAction = useStatecraftStore((s) => s.careerAttemptNominationAction);
   const careerAttemptCitizenInitiativeAction = useStatecraftStore((s) => s.careerAttemptCitizenInitiativeAction);
+  const careerRunCampaignActivityAction = useStatecraftStore((s) => s.careerRunCampaignActivityAction);
+  const careerAttemptPartyLeadershipBidAction = useStatecraftStore((s) => s.careerAttemptPartyLeadershipBidAction);
   const lastPartyWork = useStatecraftStore((s) => s.lastCareerPartyWorkOutcome);
   const lastLocalRace = useStatecraftStore((s) => s.lastCareerLocalRaceOutcome);
   const lastRegionalRace = useStatecraftStore((s) => s.lastCareerRegionalRaceOutcome);
   const lastGovernance = useStatecraftStore((s) => s.lastCareerGovernanceOutcome);
   const lastNomination = useStatecraftStore((s) => s.lastCareerNominationOutcome);
   const lastCitizenInitiative = useStatecraftStore((s) => s.lastCareerCitizenInitiativeOutcome);
+  const lastCampaignActivity = useStatecraftStore((s) => s.lastCareerCampaignActivityOutcome);
+  const lastPartyLeadership = useStatecraftStore((s) => s.lastCareerPartyLeadershipOutcome);
 
   const [statusMessage, setStatusMessage] = useState('');
 
@@ -71,7 +84,8 @@ export function CareerScreen() {
 
   const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
   const age = computeCareerAge(career.turn);
-  const appeal = computePersonalAppeal(career.attributes, career.partyStanding, career.civicRecord);
+  const appeal = computePersonalAppeal(career.attributes, career.partyStanding, career.civicRecord, career.campaignMomentum);
+  const partyLeadershipProbability = career.partyId ? computePartyLeadershipProbability(career) : 0;
   const nominationProbability = career.partyId ? computeNominationProbability(career) : 0;
 
   const flashStatus = (message: string) => {
@@ -119,6 +133,10 @@ export function CareerScreen() {
             <div className="indicator-value">{career.civicRecord.toFixed(0)}</div>
           </div>
           <div className="indicator">
+            <div className="indicator-label">Campaign Momentum</div>
+            <div className="indicator-value">{career.campaignMomentum.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
             <div className="indicator-label">Personal Appeal</div>
             <div className="indicator-value">{(appeal * 100).toFixed(0)}%</div>
           </div>
@@ -164,8 +182,13 @@ export function CareerScreen() {
           onFound={careerFoundOwnPartyAction}
           onDoPartyWork={careerDoPartyWorkAction}
           lastPartyWork={lastPartyWork}
+          leadershipProbability={partyLeadershipProbability}
+          onSeekLeadership={careerAttemptPartyLeadershipBidAction}
+          lastLeadershipOutcome={lastPartyLeadership}
         />
       </div>
+
+      <CampaignSection career={career} onRun={careerRunCampaignActivityAction} lastOutcome={lastCampaignActivity} />
 
       <div className="panel-columns">
         <LocalRaceSection career={career} onAttempt={careerAttemptLocalRaceAction} lastOutcome={lastLocalRace} />
@@ -259,6 +282,9 @@ function PartySection({
   onFound,
   onDoPartyWork,
   lastPartyWork,
+  leadershipProbability,
+  onSeekLeadership,
+  lastLeadershipOutcome,
 }: {
   career: CareerState;
   parties: Party[];
@@ -266,6 +292,9 @@ function PartySection({
   onFound: (partyId: string, name: string) => void;
   onDoPartyWork: () => void;
   lastPartyWork: PartyWorkOutcome | null;
+  leadershipProbability: number;
+  onSeekLeadership: () => void;
+  lastLeadershipOutcome: PartyLeadershipOutcome | null;
 }) {
   const party = career.foundedParty ?? parties.find((p) => p.id === career.partyId);
   const [newPartyName, setNewPartyName] = useState('');
@@ -339,7 +368,78 @@ function PartySection({
               {lastPartyWork.standingDelta.toFixed(0)} standing)
             </p>
           )}
+
+          <h4 className="subheading">Party Leadership</h4>
+          {career.partyOfficer ? (
+            <p className="muted">You hold a formal officer post in the party — a floor under your standing, not just goodwill.</p>
+          ) : career.partyStanding >= PARTY_OFFICER_STANDING_REQUIREMENT ? (
+            <>
+              <p className="muted">
+                Estimated odds the delegates seat you as an officer: <strong>{(leadershipProbability * 100).toFixed(0)}%</strong>
+              </p>
+              <div className="bill-actions">
+                <button onClick={onSeekLeadership}>Seek Party Leadership</button>
+              </div>
+            </>
+          ) : (
+            <p className="muted">Reach {PARTY_OFFICER_STANDING_REQUIREMENT} party standing to make a leadership bid.</p>
+          )}
+          {lastLeadershipOutcome && (
+            <p className={lastLeadershipOutcome.won ? 'result-pass' : 'result-fail'}>
+              {(lastLeadershipOutcome.won ? PARTY_LEADERSHIP_WIN_FLAVOR : PARTY_LEADERSHIP_LOSS_FLAVOR)[
+                pickFlavorIndex(
+                  `${career.turn}-leadership`,
+                  (lastLeadershipOutcome.won ? PARTY_LEADERSHIP_WIN_FLAVOR : PARTY_LEADERSHIP_LOSS_FLAVOR).length
+                )
+              ]}
+            </p>
+          )}
         </>
+      )}
+    </section>
+  );
+}
+
+function CampaignSection({
+  career,
+  onRun,
+  lastOutcome,
+}: {
+  career: CareerState;
+  onRun: (activityType: CampaignActivityType) => void;
+  lastOutcome: CampaignActivityOutcome | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Campaign Activity</h2>
+        <span className="muted">Short-lived buzz that sharpens your odds in the next race or nomination attempt</span>
+      </div>
+      <div className="score-bar">
+        <div className="score-bar-label">
+          <span>Campaign Momentum</span>
+          <span>{career.campaignMomentum.toFixed(0)}</span>
+        </div>
+        <div className="score-bar-track">
+          <div className="score-bar-fill" style={{ width: `${Math.max(0, Math.min(100, career.campaignMomentum))}%` }} />
+        </div>
+      </div>
+      <div className="bill-actions">
+        <button onClick={() => onRun('canvass')} disabled={career.money < CAMPAIGN_ACTIVITIES.canvass.cost}>
+          {CAMPAIGN_ACTIVITIES.canvass.label} (${CAMPAIGN_ACTIVITIES.canvass.cost})
+        </button>
+        <button onClick={() => onRun('media_blitz')} disabled={career.money < CAMPAIGN_ACTIVITIES.media_blitz.cost}>
+          {CAMPAIGN_ACTIVITIES.media_blitz.label} (${CAMPAIGN_ACTIVITIES.media_blitz.cost})
+        </button>
+      </div>
+      {lastOutcome && (
+        <p className={lastOutcome.outcome === 'setback' ? 'result-fail' : 'result-pass'}>
+          {CAMPAIGN_ACTIVITY_FLAVOR[lastOutcome.activityType][lastOutcome.outcome][
+            pickFlavorIndex(`${career.turn}-campaign`, CAMPAIGN_ACTIVITY_FLAVOR[lastOutcome.activityType][lastOutcome.outcome].length)
+          ]}{' '}
+          ({lastOutcome.momentumDelta >= 0 ? '+' : ''}
+          {lastOutcome.momentumDelta.toFixed(0)} momentum)
+        </p>
       )}
     </section>
   );

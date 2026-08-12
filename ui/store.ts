@@ -58,12 +58,14 @@ import {
   attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
+  attemptPartyLeadershipBid,
   attemptRegionalRace,
   buildCustomNation,
   buildGraduationPayload,
   createCareer,
   doLocalGovernance,
   doPartyWork,
+  runCampaignActivity,
   validateCustomNation,
   foundNewPartyAction as engineFoundNewParty,
   foundOwnParty as foundCareerParty,
@@ -170,8 +172,11 @@ import {
   type IntelligenceInvestmentTier,
   type JudiciaryActionOutcome,
   type ConfirmationVoteResult,
+  type CampaignActivityOutcome,
+  type CampaignActivityType,
   type GovernanceOutcome,
   type LocalRaceOutcome,
+  type PartyLeadershipOutcome,
   type LogisticsInvestmentTier,
   type MilitaryInvestmentTier,
   type ProcessedGoodType,
@@ -254,6 +259,8 @@ interface StatecraftStore {
   lastCareerCitizenInitiativeOutcome: CitizenInitiativeOutcome | null;
   lastCareerRegionalRaceOutcome: LocalRaceOutcome | null;
   lastCareerGovernanceOutcome: GovernanceOutcome | null;
+  lastCareerCampaignActivityOutcome: CampaignActivityOutcome | null;
+  lastCareerPartyLeadershipOutcome: PartyLeadershipOutcome | null;
   lastFoundPartyResult: FoundPartyResult | null;
   lastReferendumOutcome: (ReferendumOutcome & { provinceId: string }) | null;
   lastSuppressionOutcome: (SuppressionOutcome & { provinceId: string }) | null;
@@ -315,6 +322,8 @@ interface StatecraftStore {
   careerDoLocalGovernanceAction: () => void;
   careerAttemptNominationAction: (seed?: number, difficulty?: Difficulty) => void;
   careerAttemptCitizenInitiativeAction: (title: string, stance: IdeologyPosition) => void;
+  careerRunCampaignActivityAction: (activityType: CampaignActivityType) => void;
+  careerAttemptPartyLeadershipBidAction: () => void;
   proposeNewBill: () => void;
   proposeCustomBill: (
     title: string,
@@ -437,6 +446,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCareerCitizenInitiativeOutcome: null,
   lastCareerRegionalRaceOutcome: null,
   lastCareerGovernanceOutcome: null,
+  lastCareerCampaignActivityOutcome: null,
+  lastCareerPartyLeadershipOutcome: null,
   lastFoundPartyResult: null,
   lastReferendumOutcome: null,
   lastSuppressionOutcome: null,
@@ -585,6 +596,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         lastCareerCitizenInitiativeOutcome: null,
         lastCareerRegionalRaceOutcome: null,
         lastCareerGovernanceOutcome: null,
+        lastCareerCampaignActivityOutcome: null,
+        lastCareerPartyLeadershipOutcome: null,
       });
       return true;
     }
@@ -603,6 +616,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCareerCitizenInitiativeOutcome: null,
       lastCareerRegionalRaceOutcome: null,
       lastCareerGovernanceOutcome: null,
+      lastCareerCampaignActivityOutcome: null,
+      lastCareerPartyLeadershipOutcome: null,
     });
   },
 
@@ -676,6 +691,22 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const rng = SeededRng.fromState(career.rngState);
     const { state, outcome } = doLocalGovernance(career, rng);
     if (outcome) set({ career: state, lastCareerGovernanceOutcome: outcome });
+  },
+
+  careerRunCampaignActivityAction: (activityType) => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = runCampaignActivity(career, activityType, rng);
+    if (outcome) set({ career: state, lastCareerCampaignActivityOutcome: outcome });
+  },
+
+  careerAttemptPartyLeadershipBidAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = attemptPartyLeadershipBid(career, rng);
+    if (outcome) set({ career: state, lastCareerPartyLeadershipOutcome: outcome });
   },
 
   careerAttemptNominationAction: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard') => {

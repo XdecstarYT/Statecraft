@@ -113,6 +113,63 @@ export const CITIZEN_INITIATIVE_FAIL_FLAVOR: string[] = [
   'Close, but the count comes back against you.',
 ];
 
+export const CAMPAIGN_ACTIVITY_FLAVOR: Record<'canvass' | 'media_blitz', Record<'strong' | 'solid' | 'setback', string[]>> = {
+  canvass: {
+    strong: [
+      'A full afternoon of door-knocking turned into a genuine conversation on every porch.',
+      'You hit every block on the list, and people actually remembered your name after.',
+      'A local shop owner offered to put your flyer in the window unprompted.',
+      'The canvassing sheet came back covered in "strong yes" checkmarks.',
+    ],
+    solid: [
+      'A steady round of doors — some conversations, some just a wave.',
+      'Nothing dramatic, but the list got worked all the way through.',
+      'A few undecided voters said they’d think about it.',
+      'You handed out flyers at the transit stop for a couple hours.',
+    ],
+    setback: [
+      'Rain cut the route short, and half the list went unworked.',
+      'A tense exchange on one doorstep followed you for the rest of the block.',
+      'Most doors just didn’t open.',
+      'You mixed up two addresses and burned an hour finding your way back.',
+    ],
+  },
+  media_blitz: {
+    strong: [
+      'A local news segment ran your clip almost unedited — the message landed exactly right.',
+      'The ad buy outperformed every projection the campaign had.',
+      'A well-placed op-ed got picked up and reprinted twice.',
+      'Your social clips actually got shared outside your own circle.',
+    ],
+    solid: [
+      'The ads ran on schedule. No breakout moment, but no disaster either.',
+      'A radio spot got a modest, respectful response.',
+      'The press release went out and got the usual small mention.',
+      'Steady spend, steady (if unremarkable) reach.',
+    ],
+    setback: [
+      'A clumsy soundbite got clipped out of context and spread faster than the original.',
+      'The ad buy landed in the wrong time slot and barely reached anyone.',
+      'A reporter asked a question the prepared lines didn’t cover.',
+      'The budget went out and the numbers barely moved.',
+    ],
+  },
+};
+
+export const PARTY_LEADERSHIP_WIN_FLAVOR: string[] = [
+  'The branch votes you in as an officer — a real seat at the table now, not just a volunteer badge.',
+  'A show of hands, a gavel tap, and suddenly the machine answers to you too.',
+  'The outgoing officer hands over the keys to the filing cabinet. It’s official.',
+  'You’re not just canvassing for the party anymore. You help decide who else does.',
+];
+
+export const PARTY_LEADERSHIP_LOSS_FLAVOR: string[] = [
+  'A rival with deeper roots in the branch wins the vote instead.',
+  '"Not yet," the outgoing chair says. "Build a bit more first."',
+  'The delegates weren’t wrong to be cautious — you weren’t quite ready.',
+  'A close vote, but close doesn’t seat you.',
+];
+
 /** Deterministic (not RNG) pick so flavor varies by context without touching game state. See CorruptionPanel.tsx for the same pattern. */
 export function pickFlavorIndex(key: string, length: number): number {
   let hash = 0;

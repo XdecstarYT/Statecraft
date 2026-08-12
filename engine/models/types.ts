@@ -1259,5 +1259,9 @@ export interface CareerState {
   /** 0..100 — a public track record built from filed citizen petitions, earned with no seat and no party required. Decays slowly like partyStanding. */
   civicRecord: number;
   citizenInitiatives: CareerCitizenInitiativeRecord[];
+  /** 0..100 — short-lived campaign buzz from canvassing/media blitzes, factored into race and nomination appeal. Decays fast, unlike party standing or civic record. */
+  campaignMomentum: number;
+  /** Set once a local-party leadership bid succeeds — a real foothold inside the party machine, not just standing with it. Grants a partyStanding floor and a nomination-odds bonus. */
+  partyOfficer: boolean;
   eventLog: CareerEventLogEntry[];
 }
