@@ -1209,6 +1209,19 @@ export interface CareerNominationRecord {
   probability: number;
 }
 
+/**
+ * A citizen petition/local ballot initiative filed before ever holding
+ * office or even joining a party — the "still make laws while not elected"
+ * path through career mode. Resolved immediately against a randomly-seeded
+ * local electorate, the same way attemptLocalRace resolves a mini-election.
+ */
+export interface CareerCitizenInitiativeRecord {
+  turn: number;
+  title: string;
+  passed: boolean;
+  supportShare: number;
+}
+
 export interface CareerState {
   seed: number;
   rngState: number;
@@ -1234,5 +1247,8 @@ export interface CareerState {
   localSeatWon: boolean;
   localRaceHistory: CareerLocalRaceRecord[];
   nominationHistory: CareerNominationRecord[];
+  /** 0..100 — a public track record built from filed citizen petitions, earned with no seat and no party required. Decays slowly like partyStanding. */
+  civicRecord: number;
+  citizenInitiatives: CareerCitizenInitiativeRecord[];
   eventLog: CareerEventLogEntry[];
 }

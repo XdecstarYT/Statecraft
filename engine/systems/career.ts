@@ -1,6 +1,7 @@
 import type { SeededRng } from '../rng';
 import { clamp, ideologicalDistance, MAX_IDEOLOGICAL_DISTANCE } from '../ideology';
 import type {
+  CareerCitizenInitiativeRecord,
   CareerLocalRaceRecord,
   CareerNominationRecord,
   CareerStage,
@@ -93,6 +94,8 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     localSeatWon: false,
     localRaceHistory: [],
     nominationHistory: [],
+    civicRecord: 0,
+    citizenInitiatives: [],
     eventLog: [],
   };
   return withStage(state);
@@ -305,11 +308,17 @@ export interface LocalRaceOutcome {
 
 const LOCAL_RACE_CAMPAIGN_COST = 60;
 
-/** Ideology fit and personal appeal (attributes + party standing) both matter — neither alone is enough. */
-export function computePersonalAppeal(attributes: PoliticianAttributes, partyStanding: number): number {
+/**
+ * Ideology fit and personal appeal (attributes + party standing + a public
+ * civic record) all matter — neither alone is enough. civicRecord is
+ * optional so callers that predate citizen petitions still compile; it
+ * carries real weight once a player has actually filed any.
+ */
+export function computePersonalAppeal(attributes: PoliticianAttributes, partyStanding: number, civicRecord = 0): number {
   const attributeAppeal = (attributes.charisma + attributes.mediaSavvy + attributes.network) / 30;
   const standingAppeal = partyStanding / 100;
-  return clamp(attributeAppeal * 0.6 + standingAppeal * 0.4, 0.05, 1);
+  const civicAppeal = civicRecord / 100;
+  return clamp(attributeAppeal * 0.55 + standingAppeal * 0.35 + civicAppeal * 0.1, 0.05, 1);
 }
 
 /**
@@ -336,7 +345,7 @@ export function attemptLocalRace(
   };
 
   const playerAlignment = 1 - ideologicalDistance(state.ideology, localElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
-  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding);
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord);
   const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
   const rivalScores = rivalNames.map(() => Math.max(0.02, 0.3 + rng.next() * 0.4));
 
@@ -356,6 +365,66 @@ export function attemptLocalRace(
       rngState: rng.getState(),
     }),
     outcome: { won, playerShare, opponentNames: rivalNames, opponentShares },
+  };
+}
+
+/**
+ * CITIZEN PETITIONS — lawmaking without a seat or even a party. A local
+ * ballot initiative filed straight to the public, resolved immediately
+ * against a randomly-seeded local electorate, the same shape as
+ * attemptLocalRace. No stage requirement: this is deliberately available
+ * from turn zero, before joining a party or winning anything.
+ */
+
+export interface CitizenInitiativeOutcome {
+  passed: boolean;
+  supportShare: number;
+}
+
+export const CITIZEN_INITIATIVE_COST = 20;
+
+export function canProposeCitizenInitiative(state: CareerState): boolean {
+  return state.money >= CITIZEN_INITIATIVE_COST;
+}
+
+const CITIZEN_INITIATIVE_PASS_STANDING = 10;
+const CITIZEN_INITIATIVE_FAIL_STANDING = -3;
+
+export function attemptCitizenInitiative(
+  state: CareerState,
+  title: string,
+  stance: IdeologyPosition,
+  rng: SeededRng
+): { state: CareerState; outcome: CitizenInitiativeOutcome | null } {
+  if (!canProposeCitizenInitiative(state)) {
+    return { state, outcome: null };
+  }
+
+  const localOpinion: IdeologyPosition = {
+    economic: (rng.next() - 0.5) * 160,
+    social: (rng.next() - 0.5) * 160,
+  };
+  const alignment = 1 - ideologicalDistance(stance, localOpinion) / MAX_IDEOLOGICAL_DISTANCE;
+  const organizingSkill = clamp((state.attributes.mediaSavvy + state.attributes.network + state.attributes.charisma) / 30, 0, 1);
+  const supportShare = clamp(alignment * 0.65 + organizingSkill * 0.25 + (rng.next() - 0.5) * 0.2, 0.02, 0.98);
+  const passed = supportShare >= 0.5;
+
+  const record: CareerCitizenInitiativeRecord = { turn: state.turn, title, passed, supportShare };
+  const civicRecord = clamp(
+    state.civicRecord + (passed ? CITIZEN_INITIATIVE_PASS_STANDING : CITIZEN_INITIATIVE_FAIL_STANDING),
+    0,
+    100
+  );
+
+  return {
+    state: withStage({
+      ...state,
+      money: state.money - CITIZEN_INITIATIVE_COST,
+      civicRecord,
+      citizenInitiatives: [...state.citizenInitiatives, record],
+      rngState: rng.getState(),
+    }),
+    outcome: { passed, supportShare },
   };
 }
 
@@ -383,7 +452,8 @@ export function computeNominationProbability(state: CareerState): number {
   const standingTerm = (state.partyStanding - 50) / 50;
   const seatBonus = state.localSeatWon ? 1 : 0;
   const attributeTerm = (state.attributes.charisma + state.attributes.integrity + state.attributes.intellect - 15) / 15;
-  const score = 1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm;
+  const civicTerm = (state.civicRecord - 50) / 50;
+  const score = 1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm + 0.4 * civicTerm;
   return clamp(sigmoid(score), 0.02, 0.95);
 }
 
@@ -460,6 +530,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   }
 
   const partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
+  const civicRecord = state.civicRecord * (1 - PARTY_STANDING_DECAY_RATE);
 
   let ideology = state.ideology;
   const party = state.foundedParty ?? (state.partyId ? parties.find((p) => p.id === state.partyId) : undefined);
@@ -479,6 +550,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     educationTurnsRemaining,
     completedEducationTracks,
     partyStanding,
+    civicRecord,
     ideology,
     eventLog,
   });

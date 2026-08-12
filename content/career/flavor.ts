@@ -64,6 +64,20 @@ export const NOMINATION_REJECTION_FLAVOR: string[] = [
   'The door isn’t closed — but it isn’t open yet either.',
 ];
 
+export const CITIZEN_INITIATIVE_PASS_FLAVOR: string[] = [
+  'The clerk certifies enough signatures, and the council has to actually vote on it.',
+  'Your petition table outside the grocery store paid off — this is going on the ballot, and it wins.',
+  'Local news picks up the story: "Resident-Led Petition Succeeds Where Council Wouldn’t Act."',
+  'Neighbors who’d never met before showed up to canvass for this. It passed.',
+];
+
+export const CITIZEN_INITIATIVE_FAIL_FLAVOR: string[] = [
+  'You fall short of a majority, and the petition dies in committee.',
+  'A rival flyer campaign outworked yours in the final week.',
+  'The turnout just wasn’t there — most people never even heard about it.',
+  'Close, but the count comes back against you.',
+];
+
 /** Deterministic (not RNG) pick so flavor varies by context without touching game state. See CorruptionPanel.tsx for the same pattern. */
 export function pickFlavorIndex(key: string, length: number): number {
   let hash = 0;

@@ -55,6 +55,7 @@ import {
   postTweetAction as enginePostTweet,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
+  attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
   buildCustomNation,
@@ -184,6 +185,7 @@ import {
   type InfrastructureCategory,
   type InfrastructureInvestmentTier,
   type TweetActionOutcome,
+  type CitizenInitiativeOutcome,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -246,6 +248,7 @@ interface StatecraftStore {
   lastCareerPartyWorkOutcome: PartyWorkOutcome | null;
   lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
   lastCareerNominationOutcome: NominationOutcome | null;
+  lastCareerCitizenInitiativeOutcome: CitizenInitiativeOutcome | null;
   lastFoundPartyResult: FoundPartyResult | null;
   lastReferendumOutcome: (ReferendumOutcome & { provinceId: string }) | null;
   lastSuppressionOutcome: (SuppressionOutcome & { provinceId: string }) | null;
@@ -304,6 +307,7 @@ interface StatecraftStore {
   careerDoPartyWorkAction: () => void;
   careerAttemptLocalRaceAction: () => void;
   careerAttemptNominationAction: (seed?: number, difficulty?: Difficulty) => void;
+  careerAttemptCitizenInitiativeAction: (title: string, stance: IdeologyPosition) => void;
   proposeNewBill: () => void;
   proposeCustomBill: (
     title: string,
@@ -423,6 +427,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastCareerPartyWorkOutcome: null,
   lastCareerLocalRaceOutcome: null,
   lastCareerNominationOutcome: null,
+  lastCareerCitizenInitiativeOutcome: null,
   lastFoundPartyResult: null,
   lastReferendumOutcome: null,
   lastSuppressionOutcome: null,
@@ -568,6 +573,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         lastCareerPartyWorkOutcome: null,
         lastCareerLocalRaceOutcome: null,
         lastCareerNominationOutcome: null,
+        lastCareerCitizenInitiativeOutcome: null,
       });
       return true;
     }
@@ -583,6 +589,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCareerPartyWorkOutcome: null,
       lastCareerLocalRaceOutcome: null,
       lastCareerNominationOutcome: null,
+      lastCareerCitizenInitiativeOutcome: null,
     });
   },
 
@@ -669,6 +676,16 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         });
       }
     }
+  },
+
+  careerAttemptCitizenInitiativeAction: (title, stance) => {
+    const career = get().career;
+    if (!career) return;
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = attemptCitizenInitiative(career, trimmed, stance, rng);
+    if (outcome) set({ career: state, lastCareerCitizenInitiativeOutcome: outcome });
   },
 
   proposeNewBill: () => {

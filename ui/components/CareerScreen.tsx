@@ -2,18 +2,24 @@ import { useState } from 'react';
 import {
   EDUCATION_TRACKS,
   JOB_LISTINGS,
+  CITIZEN_INITIATIVE_COST,
   computeCareerAge,
   computeNominationProbability,
   computePersonalAppeal,
   type CareerState,
+  type CitizenInitiativeOutcome,
   type EducationTrack,
+  type IdeologyPosition,
   type LocalRaceOutcome,
   type NominationOutcome,
   type Party,
   type PartyWorkOutcome,
 } from '../../engine';
 import { STARTER_COUNTRY_OPTIONS } from '../../content/countries/registry';
+import { CITIZEN_ISSUE_TEMPLATES } from '../../content/career/issues';
 import {
+  CITIZEN_INITIATIVE_FAIL_FLAVOR,
+  CITIZEN_INITIATIVE_PASS_FLAVOR,
   EDUCATION_START_FLAVOR,
   LOCAL_RACE_LOSS_FLAVOR,
   LOCAL_RACE_WIN_FLAVOR,
@@ -44,9 +50,11 @@ export function CareerScreen() {
   const careerDoPartyWorkAction = useStatecraftStore((s) => s.careerDoPartyWorkAction);
   const careerAttemptLocalRaceAction = useStatecraftStore((s) => s.careerAttemptLocalRaceAction);
   const careerAttemptNominationAction = useStatecraftStore((s) => s.careerAttemptNominationAction);
+  const careerAttemptCitizenInitiativeAction = useStatecraftStore((s) => s.careerAttemptCitizenInitiativeAction);
   const lastPartyWork = useStatecraftStore((s) => s.lastCareerPartyWorkOutcome);
   const lastLocalRace = useStatecraftStore((s) => s.lastCareerLocalRaceOutcome);
   const lastNomination = useStatecraftStore((s) => s.lastCareerNominationOutcome);
+  const lastCitizenInitiative = useStatecraftStore((s) => s.lastCareerCitizenInitiativeOutcome);
 
   const [statusMessage, setStatusMessage] = useState('');
 
@@ -54,7 +62,7 @@ export function CareerScreen() {
 
   const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
   const age = computeCareerAge(career.turn);
-  const appeal = computePersonalAppeal(career.attributes, career.partyStanding);
+  const appeal = computePersonalAppeal(career.attributes, career.partyStanding, career.civicRecord);
   const nominationProbability = career.partyId ? computeNominationProbability(career) : 0;
 
   const flashStatus = (message: string) => {
@@ -98,6 +106,10 @@ export function CareerScreen() {
             <div className="indicator-value">{career.partyStanding.toFixed(0)}</div>
           </div>
           <div className="indicator">
+            <div className="indicator-label">Civic Record</div>
+            <div className="indicator-value">{career.civicRecord.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
             <div className="indicator-label">Personal Appeal</div>
             <div className="indicator-value">{(appeal * 100).toFixed(0)}%</div>
           </div>
@@ -127,6 +139,12 @@ export function CareerScreen() {
           </div>
         </div>
       </section>
+
+      <CitizenInitiativeSection
+        career={career}
+        onAttempt={careerAttemptCitizenInitiativeAction}
+        lastOutcome={lastCitizenInitiative}
+      />
 
       <div className="panel-columns">
         <EducationSection career={career} onStart={careerStartEducationAction} onApplyForJob={careerApplyForJobAction} />
@@ -411,6 +429,107 @@ function NominationSection({
               <li key={i} className={`scandal-item status-${n.selected ? 'resolved' : 'unresolved'}`}>
                 <span>
                   Season {n.turn} — {n.selected ? 'Selected' : 'Passed over'} — {(n.probability * 100).toFixed(0)}% odds
+                </span>
+              </li>
+            ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function CitizenInitiativeSection({
+  career,
+  onAttempt,
+  lastOutcome,
+}: {
+  career: CareerState;
+  onAttempt: (title: string, stance: IdeologyPosition) => void;
+  lastOutcome: CitizenInitiativeOutcome | null;
+}) {
+  const [customTitle, setCustomTitle] = useState('');
+  const [economic, setEconomic] = useState(0);
+  const [social, setSocial] = useState(0);
+  const canAfford = career.money >= CITIZEN_INITIATIVE_COST;
+
+  const handleTemplate = (templateId: string) => {
+    const template = CITIZEN_ISSUE_TEMPLATES.find((t) => t.id === templateId);
+    if (!template) return;
+    onAttempt(template.title, template.stance);
+  };
+
+  const handleCustom = () => {
+    const trimmed = customTitle.trim();
+    if (!trimmed) return;
+    onAttempt(trimmed, { economic, social });
+    setCustomTitle('');
+    setEconomic(0);
+    setSocial(0);
+  };
+
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Citizen Petitions</h2>
+        <span className="muted">No seat, no party required — put an issue to the neighborhood directly. Costs ${CITIZEN_INITIATIVE_COST}.</span>
+      </div>
+
+      <div className="bill-actions">
+        {CITIZEN_ISSUE_TEMPLATES.map((template) => (
+          <button key={template.id} disabled={!canAfford} onClick={() => handleTemplate(template.id)} title={template.description}>
+            {template.title}
+          </button>
+        ))}
+      </div>
+
+      <h4 className="subheading">Or File Your Own</h4>
+      <div className="custom-bill-form">
+        <label>
+          Title
+          <input
+            type="text"
+            value={customTitle}
+            onChange={(e) => setCustomTitle(e.target.value)}
+            placeholder="e.g. Fix the Pothole on 5th Street Petition"
+          />
+        </label>
+        <label>
+          Economic Stance ({economic})
+          <input type="range" min={-100} max={100} value={economic} onChange={(e) => setEconomic(Number(e.target.value))} />
+        </label>
+        <label>
+          Social Stance ({social})
+          <input type="range" min={-100} max={100} value={social} onChange={(e) => setSocial(Number(e.target.value))} />
+        </label>
+        <div className="row-actions">
+          <button onClick={handleCustom} disabled={!canAfford || !customTitle.trim()}>
+            File Petition
+          </button>
+        </div>
+      </div>
+
+      {lastOutcome && (
+        <p className={lastOutcome.passed ? 'result-pass' : 'result-fail'}>
+          {(lastOutcome.passed ? CITIZEN_INITIATIVE_PASS_FLAVOR : CITIZEN_INITIATIVE_FAIL_FLAVOR)[
+            pickFlavorIndex(
+              `${career.turn}-citizen`,
+              (lastOutcome.passed ? CITIZEN_INITIATIVE_PASS_FLAVOR : CITIZEN_INITIATIVE_FAIL_FLAVOR).length
+            )
+          ]}{' '}
+          ({(lastOutcome.supportShare * 100).toFixed(0)}% support)
+        </p>
+      )}
+
+      {career.citizenInitiatives.length > 0 && (
+        <ul className="scandal-list">
+          {career.citizenInitiatives
+            .slice(-5)
+            .reverse()
+            .map((initiative, i) => (
+              <li key={i} className={`scandal-item status-${initiative.passed ? 'resolved' : 'unresolved'}`}>
+                <span>
+                  Season {initiative.turn} — {initiative.title} — {initiative.passed ? 'Passed' : 'Failed'} —{' '}
+                  {(initiative.supportShare * 100).toFixed(0)}% support
                 </span>
               </li>
             ))}

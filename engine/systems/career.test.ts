@@ -3,14 +3,17 @@ import { SeededRng } from '../rng';
 import type { CareerState, Party } from '../models/types';
 import {
   CAREER_STARTING_AGE,
+  CITIZEN_INITIATIVE_COST,
   EDUCATION_TRACKS,
   JOB_LISTINGS,
   advanceCareerTurn,
   applyForJob,
+  attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
   buildGraduationPayload,
   canApplyForJob,
+  canProposeCitizenInitiative,
   canStartEducation,
   computeCareerAge,
   computeCareerStage,
@@ -216,6 +219,97 @@ describe('computePersonalAppeal', () => {
     expect(computePersonalAppeal({ charisma: 1, intellect: 1, integrity: 1, network: 1, mediaSavvy: 1 }, 0)).toBeGreaterThanOrEqual(0.05);
     expect(computePersonalAppeal({ charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 }, 100)).toBeLessThanOrEqual(1);
   });
+
+  it('rises further with a strong civic record', () => {
+    const attrs = { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 };
+    const noRecord = computePersonalAppeal(attrs, 50, 0);
+    const strongRecord = computePersonalAppeal(attrs, 50, 100);
+    expect(strongRecord).toBeGreaterThan(noRecord);
+  });
+});
+
+describe('citizen initiatives', () => {
+  it('are available immediately — no party or seat required', () => {
+    const state = makeCareer({ money: 100, partyId: null, localSeatWon: false });
+    expect(canProposeCitizenInitiative(state)).toBe(true);
+  });
+
+  it('refuses without enough money', () => {
+    const state = makeCareer({ money: CITIZEN_INITIATIVE_COST - 1 });
+    expect(canProposeCitizenInitiative(state)).toBe(false);
+    const { outcome } = attemptCitizenInitiative(state, 'Too Poor to Petition', { economic: 0, social: 0 }, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('deducts the filing cost regardless of outcome', () => {
+    const state = makeCareer({ money: 500 });
+    const { state: after } = attemptCitizenInitiative(state, 'Test Petition', { economic: 0, social: 0 }, new SeededRng(3));
+    expect(after.money).toBe(500 - CITIZEN_INITIATIVE_COST);
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ money: 500 });
+    const a = attemptCitizenInitiative(state, 'Test Petition', { economic: 20, social: -10 }, new SeededRng(7));
+    const b = attemptCitizenInitiative(state, 'Test Petition', { economic: 20, social: -10 }, new SeededRng(7));
+    expect(a).toEqual(b);
+  });
+
+  it('records the petition and raises civic record on a pass', () => {
+    const state = makeCareer({
+      money: 10_000,
+      attributes: { charisma: 10, intellect: 8, integrity: 8, network: 10, mediaSavvy: 10 },
+      civicRecord: 20,
+    });
+    const rng = new SeededRng(2);
+    let before = state;
+    let after = state;
+    let passed = false;
+    for (let i = 0; i < 30 && !passed; i++) {
+      before = after;
+      const result = attemptCitizenInitiative(after, `Petition ${i}`, { economic: 0, social: 0 }, rng);
+      after = result.state;
+      passed = result.outcome!.passed;
+    }
+    expect(passed).toBe(true);
+    expect(after.civicRecord).toBeGreaterThan(before.civicRecord);
+    expect(after.citizenInitiatives.some((r) => r.passed)).toBe(true);
+  });
+
+  it('records the petition and lowers civic record on a fail', () => {
+    const state = makeCareer({
+      money: 10_000,
+      attributes: { charisma: 1, intellect: 3, integrity: 3, network: 1, mediaSavvy: 1 },
+      civicRecord: 20,
+    });
+    const rng = new SeededRng(6);
+    let before = state;
+    let after = state;
+    let failed = false;
+    for (let i = 0; i < 30 && !failed; i++) {
+      before = after;
+      const result = attemptCitizenInitiative(after, `Petition ${i}`, { economic: 100, social: 100 }, rng);
+      after = result.state;
+      failed = !result.outcome!.passed;
+    }
+    expect(failed).toBe(true);
+    expect(after.civicRecord).toBeLessThan(before.civicRecord);
+    expect(after.citizenInitiatives.some((r) => !r.passed)).toBe(true);
+  });
+
+  it('a well-organized candidate passes petitions far more often than a disorganized one over many trials', () => {
+    const strong = makeCareer({ money: 10_000, attributes: { charisma: 10, intellect: 8, integrity: 8, network: 10, mediaSavvy: 10 } });
+    const weak = makeCareer({ money: 10_000, attributes: { charisma: 1, intellect: 3, integrity: 3, network: 1, mediaSavvy: 1 } });
+
+    const rngStrong = new SeededRng(9);
+    const rngWeak = new SeededRng(9);
+    let strongPasses = 0;
+    let weakPasses = 0;
+    for (let i = 0; i < 100; i++) {
+      if (attemptCitizenInitiative(strong, `P${i}`, { economic: 0, social: 0 }, rngStrong).outcome!.passed) strongPasses++;
+      if (attemptCitizenInitiative(weak, `P${i}`, { economic: 0, social: 0 }, rngWeak).outcome!.passed) weakPasses++;
+    }
+    expect(strongPasses).toBeGreaterThan(weakPasses);
+  });
 });
 
 describe('attemptLocalRace', () => {
@@ -298,6 +392,12 @@ describe('computeNominationProbability / attemptNationalNomination', () => {
     expect(outcome.probability).toBe(0);
   });
 
+  it('rises with a stronger civic record, all else equal', () => {
+    const noRecord = makeCareer({ civicRecord: 0 });
+    const strongRecord = makeCareer({ civicRecord: 100 });
+    expect(computeNominationProbability(strongRecord)).toBeGreaterThan(computeNominationProbability(noRecord));
+  });
+
   it('a very strong candidate gets selected within a handful of attempts', () => {
     const state = joinParty(
       makeCareer({ partyStanding: 100, localSeatWon: true, attributes: { charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 } }),
@@ -333,6 +433,13 @@ describe('advanceCareerTurn', () => {
     state = advanceCareerTurn(state, PARTIES);
     expect(state.partyStanding).toBeLessThan(50);
     expect(state.partyStanding).toBeGreaterThan(40);
+  });
+
+  it('decays civic record a little each turn without reinforcement, even with no party', () => {
+    let state = makeCareer({ partyId: null, civicRecord: 50 });
+    state = advanceCareerTurn(state, PARTIES);
+    expect(state.civicRecord).toBeLessThan(50);
+    expect(state.civicRecord).toBeGreaterThan(40);
   });
 
   it('increments the turn counter', () => {
