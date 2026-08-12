@@ -10,6 +10,7 @@ import {
   PARTY_OFFICER_STANDING_REQUIREMENT,
   advanceCareerTurn,
   applyForJob,
+  applyLifeEventEffect,
   attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
@@ -25,6 +26,7 @@ import {
   canStartEducation,
   computeCareerAge,
   computeCareerStage,
+  computeCareerWorkload,
   computeNominationProbability,
   computePartyLeadershipProbability,
   computePersonalAppeal,
@@ -34,8 +36,11 @@ import {
   foundOwnParty,
   isGraduated,
   joinParty,
+  restAndRecover,
+  rollForLifeEvent,
   runCampaignActivity,
   startEducation,
+  type CareerLifeEventDef,
 } from './career';
 
 const PARTY_A: Party = { id: 'party-a', name: 'Party A', ideology: { economic: 60, social: 60 }, seats: 10, factions: [] };
@@ -712,6 +717,136 @@ describe('advanceCareerTurn', () => {
   it('increments the turn counter', () => {
     const state = advanceCareerTurn(makeCareer(), PARTIES);
     expect(state.turn).toBe(1);
+  });
+
+  it('drains health under a heavy workload', () => {
+    const state = joinParty(makeCareer({ health: 80, jobId: 'retail_clerk', educationTrack: 'state_university', educationTurnsRemaining: 8 }), 'party-a');
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.health).toBeLessThan(80);
+  });
+
+  it('recovers health under a light workload', () => {
+    const state = makeCareer({ health: 50, jobId: null, educationTrack: null, partyId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.health).toBeGreaterThan(50);
+  });
+
+  it('clamps health to [0, 100]', () => {
+    const overworked = joinParty(makeCareer({ health: 2, jobId: 'retail_clerk', educationTrack: 'state_university', educationTurnsRemaining: 8 }), 'party-a');
+    const after = advanceCareerTurn(overworked, PARTIES);
+    expect(after.health).toBeGreaterThanOrEqual(0);
+
+    const rested = makeCareer({ health: 99, jobId: null, educationTrack: null, partyId: null });
+    const afterRest = advanceCareerTurn(rested, PARTIES);
+    expect(afterRest.health).toBeLessThanOrEqual(100);
+  });
+
+  it('scales down job/education attribute gains under burnout (low health)', () => {
+    const healthy = makeCareer({ health: 80, jobId: 'retail_clerk' });
+    const burnedOut = makeCareer({ health: 10, jobId: 'retail_clerk' });
+    const healthyAfter = advanceCareerTurn(healthy, PARTIES);
+    const burnedOutAfter = advanceCareerTurn(burnedOut, PARTIES);
+    const healthyGain = healthyAfter.attributes.charisma - healthy.attributes.charisma;
+    const burnedOutGain = burnedOutAfter.attributes.charisma - burnedOut.attributes.charisma;
+    expect(burnedOutGain).toBeLessThan(healthyGain);
+  });
+
+  it('rolls and applies a life event when rng and defs are provided, and updates rngState', () => {
+    const alwaysFires: CareerLifeEventDef[] = [
+      { id: 'test-event', title: 'Test Event', description: 'desc', weight: 1, effect: { moneyDelta: 25 } },
+    ];
+    const state = makeCareer({ money: 100 });
+    const rng = new SeededRng(1);
+    let after = state;
+    let fired = false;
+    for (let i = 0; i < 20 && !fired; i++) {
+      after = advanceCareerTurn(after, PARTIES, rng, alwaysFires);
+      if (after.eventLog.some((e) => e.title === 'Test Event')) fired = true;
+    }
+    expect(fired).toBe(true);
+    expect(after.rngState).not.toBe(state.rngState);
+  });
+
+  it('never fires a life event when rng is omitted, even with defs available', () => {
+    const alwaysFires: CareerLifeEventDef[] = [
+      { id: 'test-event', title: 'Test Event', description: 'desc', weight: 1, effect: { moneyDelta: 25 } },
+    ];
+    let state = makeCareer();
+    for (let i = 0; i < 20; i++) {
+      state = advanceCareerTurn(state, PARTIES, undefined, alwaysFires);
+    }
+    expect(state.eventLog.some((e) => e.title === 'Test Event')).toBe(false);
+  });
+});
+
+describe('computeCareerWorkload', () => {
+  it('rises with job, education, party, and office all stacked', () => {
+    const idle = makeCareer({ jobId: null, educationTrack: null, partyId: null, localSeatWon: false });
+    const loaded = joinParty(makeCareer({ jobId: 'retail_clerk', educationTrack: 'state_university', localSeatWon: true }), 'party-a');
+    expect(computeCareerWorkload(loaded)).toBeGreaterThan(computeCareerWorkload(idle));
+  });
+});
+
+describe('restAndRecover', () => {
+  it('raises health without touching money or attributes', () => {
+    const state = makeCareer({ health: 50, money: 100 });
+    const after = restAndRecover(state);
+    expect(after.health).toBeGreaterThan(50);
+    expect(after.money).toBe(100);
+    expect(after.attributes).toEqual(state.attributes);
+  });
+
+  it('clamps health to 100', () => {
+    const state = makeCareer({ health: 95 });
+    const after = restAndRecover(state);
+    expect(after.health).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('rollForLifeEvent / applyLifeEventEffect', () => {
+  const defs: CareerLifeEventDef[] = [
+    { id: 'a', title: 'A', description: 'a', weight: 1, effect: { moneyDelta: 10 } },
+    { id: 'b', title: 'B', description: 'b', weight: 1, effect: { healthDelta: -5 }, condition: (s) => s.health > 50 },
+  ];
+
+  it('returns null when defs is empty', () => {
+    expect(rollForLifeEvent([], makeCareer(), new SeededRng(1))).toBeNull();
+  });
+
+  it('only returns events whose condition currently holds', () => {
+    const lowHealth = makeCareer({ health: 10 });
+    for (let seed = 0; seed < 50; seed++) {
+      const result = rollForLifeEvent(defs, lowHealth, new SeededRng(seed));
+      if (result) expect(result.id).not.toBe('b');
+    }
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer();
+    const a = rollForLifeEvent(defs, state, new SeededRng(7));
+    const b = rollForLifeEvent(defs, state, new SeededRng(7));
+    expect(a).toEqual(b);
+  });
+
+  it('applyLifeEventEffect applies money/health deltas and logs the event', () => {
+    const state = makeCareer({ money: 50, health: 50, turn: 3 });
+    const after = applyLifeEventEffect(state, defs[0]);
+    expect(after.money).toBe(60);
+    expect(after.eventLog.at(-1)).toEqual({ turn: 3, title: 'A', description: 'a' });
+  });
+
+  it('applyLifeEventEffect can change relationship status and hasChildren', () => {
+    const state = makeCareer({ relationshipStatus: 'dating', hasChildren: false });
+    const marry: CareerLifeEventDef = {
+      id: 'wedding',
+      title: 'Wedding',
+      description: 'desc',
+      weight: 1,
+      effect: { setRelationshipStatus: 'married' },
+    };
+    const after = applyLifeEventEffect(state, marry);
+    expect(after.relationshipStatus).toBe('married');
+    expect(after.hasChildren).toBe(false);
   });
 });
 

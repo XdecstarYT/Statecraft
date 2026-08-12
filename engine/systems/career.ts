@@ -4,6 +4,7 @@ import type {
   CareerCitizenInitiativeRecord,
   CareerLocalRaceRecord,
   CareerNominationRecord,
+  CareerRelationshipStatus,
   CareerStage,
   CareerState,
   EducationTrack,
@@ -101,6 +102,9 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     citizenInitiatives: [],
     campaignMomentum: 0,
     partyOfficer: false,
+    health: 80,
+    relationshipStatus: 'single',
+    hasChildren: false,
     eventLog: [],
   };
   return withStage(state);
@@ -732,6 +736,79 @@ export function isGraduated(state: CareerState): boolean {
 }
 
 /**
+ * PERSONAL LIFE — the life-sim layer underneath the political one. Health
+ * drains under a heavy workload (job + education + party + office all at
+ * once) and recovers when the load is lighter; low health scales down how
+ * much attribute gain work and study actually produce (burnout), so
+ * grinding every track at once has a real cost. Life events are seeded,
+ * weighted, and content-supplied (career.ts stays content-free), the same
+ * shape as the main game's crisis events.
+ */
+
+const BURNOUT_HEALTH_THRESHOLD = 30;
+const BURNOUT_GAIN_MULTIPLIER = 0.5;
+const REST_RECOVERY_AMOUNT = 15;
+
+export function computeCareerWorkload(state: CareerState): number {
+  return (
+    (state.jobId ? 1 : 0) +
+    (state.educationTrack ? 1 : 0) +
+    (state.partyId ? 0.5 : 0) +
+    (state.localSeatWon || state.regionalSeatWon ? 1 : 0)
+  );
+}
+
+/** A deliberate season spent on rest instead of grinding any track — no rng needed, just a flat, honest trade-off. */
+export function restAndRecover(state: CareerState): CareerState {
+  return withStage({ ...state, health: clamp(state.health + REST_RECOVERY_AMOUNT, 0, 100) });
+}
+
+export interface CareerLifeEventEffect {
+  healthDelta?: number;
+  moneyDelta?: number;
+  attributeDelta?: Partial<PoliticianAttributes>;
+  civicRecordDelta?: number;
+  partyStandingDelta?: number;
+  setRelationshipStatus?: CareerRelationshipStatus;
+  setHasChildren?: boolean;
+}
+
+export interface CareerLifeEventDef {
+  id: string;
+  title: string;
+  description: string;
+  weight: number;
+  /** Optional gate — the event is only eligible when this returns true for the current state. */
+  condition?: (state: CareerState) => boolean;
+  effect: CareerLifeEventEffect;
+}
+
+const LIFE_EVENT_CHANCE = 0.35;
+
+/** Null when no event fires this season, defs is empty, or nothing currently qualifies. */
+export function rollForLifeEvent(defs: CareerLifeEventDef[], state: CareerState, rng: SeededRng): CareerLifeEventDef | null {
+  if (defs.length === 0 || rng.next() >= LIFE_EVENT_CHANCE) return null;
+  const eligible = defs.filter((d) => !d.condition || d.condition(state));
+  if (eligible.length === 0) return null;
+  return rng.pickWeighted(eligible.map((d) => ({ item: d, weight: d.weight })));
+}
+
+export function applyLifeEventEffect(state: CareerState, def: CareerLifeEventDef): CareerState {
+  const effect = def.effect;
+  return withStage({
+    ...state,
+    attributes: effect.attributeDelta ? addAttributes(state.attributes, effect.attributeDelta) : state.attributes,
+    health: clamp(state.health + (effect.healthDelta ?? 0), 0, 100),
+    money: Math.max(0, state.money + (effect.moneyDelta ?? 0)),
+    civicRecord: clamp(state.civicRecord + (effect.civicRecordDelta ?? 0), 0, 100),
+    partyStanding: clamp(state.partyStanding + (effect.partyStandingDelta ?? 0), 0, 100),
+    relationshipStatus: effect.setRelationshipStatus ?? state.relationshipStatus,
+    hasChildren: effect.setHasChildren ?? state.hasChildren,
+    eventLog: [...state.eventLog, { turn: state.turn, title: def.title, description: def.description }],
+  });
+}
+
+/**
  * TURN ADVANCEMENT
  */
 
@@ -740,6 +817,16 @@ const CAMPAIGN_MOMENTUM_DECAY_RATE = 0.2;
 const IDEOLOGY_DRIFT_RATE = 0.08;
 const LOCAL_OFFICE_STIPEND = 20;
 const REGIONAL_OFFICE_STIPEND = 50;
+const HEALTH_FATIGUE_RATE = 6;
+const HEALTH_RECOVERY_RATE = 4;
+
+function scaleAttributeGain(gain: Partial<PoliticianAttributes>, factor: number): Partial<PoliticianAttributes> {
+  const scaled: Partial<PoliticianAttributes> = {};
+  for (const key of ATTRIBUTE_KEYS) {
+    if (gain[key] !== undefined) scaled[key] = gain[key]! * factor;
+  }
+  return scaled;
+}
 
 /**
  * Advances one career season: education and employment both apply their
@@ -748,9 +835,20 @@ const REGIONAL_OFFICE_STIPEND = 50;
  * decays a little without reinforcement (the same "needs upkeep" shape as
  * interest-group disposition), and ideology drifts gradually toward the
  * joined party's own position — who you organize alongside shapes what
- * you come to believe, not an instant conversion.
+ * you come to believe, not an instant conversion. Health drains under a
+ * heavy workload and recovers under a light one, and low health scales
+ * down work/study gains (burnout) — grinding every track at once has a
+ * real cost, not just a time cost. rng and lifeEventDefs are both
+ * optional so existing callers that don't care about the life-sim layer
+ * still compile; passing both rolls a seeded personal life event for the
+ * season, content-supplied so career.ts stays content-free.
  */
-export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerState {
+export function advanceCareerTurn(
+  state: CareerState,
+  parties: Party[],
+  rng?: SeededRng,
+  lifeEventDefs: CareerLifeEventDef[] = []
+): CareerState {
   let attributes = state.attributes;
   let money = state.money;
   let educationTrack = state.educationTrack;
@@ -758,9 +856,11 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   let completedEducationTracks = state.completedEducationTracks;
   const eventLog = [...state.eventLog];
 
+  const burnoutFactor = state.health < BURNOUT_HEALTH_THRESHOLD ? BURNOUT_GAIN_MULTIPLIER : 1;
+
   if (educationTrack) {
     const config = EDUCATION_TRACKS[educationTrack];
-    attributes = addAttributes(attributes, config.attributeGainPerTurn);
+    attributes = addAttributes(attributes, scaleAttributeGain(config.attributeGainPerTurn, burnoutFactor));
     money = Math.max(0, money - config.costPerTurn);
     educationTurnsRemaining -= 1;
     if (educationTurnsRemaining <= 0) {
@@ -779,7 +879,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   if (state.jobId) {
     const job = JOB_LISTINGS.find((j) => j.id === state.jobId);
     if (job) {
-      attributes = addAttributes(attributes, job.attributeGainPerTurn);
+      attributes = addAttributes(attributes, scaleAttributeGain(job.attributeGainPerTurn, burnoutFactor));
       money += job.incomePerTurn;
     }
   }
@@ -798,6 +898,9 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   const civicRecord = state.civicRecord * (1 - PARTY_STANDING_DECAY_RATE);
   const campaignMomentum = state.campaignMomentum * (1 - CAMPAIGN_MOMENTUM_DECAY_RATE);
 
+  const workload = computeCareerWorkload(state);
+  const health = clamp(state.health + (workload >= 2 ? -HEALTH_FATIGUE_RATE : HEALTH_RECOVERY_RATE), 0, 100);
+
   let ideology = state.ideology;
   const party = state.foundedParty ?? (state.partyId ? parties.find((p) => p.id === state.partyId) : undefined);
   if (party) {
@@ -807,7 +910,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     };
   }
 
-  return withStage({
+  let next = withStage({
     ...state,
     turn: state.turn + 1,
     attributes,
@@ -818,9 +921,17 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     partyStanding,
     civicRecord,
     campaignMomentum,
+    health,
     ideology,
     eventLog,
   });
+
+  if (rng) {
+    const lifeEvent = rollForLifeEvent(lifeEventDefs, next, rng);
+    next = { ...(lifeEvent ? applyLifeEventEffect(next, lifeEvent) : next), rngState: rng.getState() };
+  }
+
+  return next;
 }
 
 /**

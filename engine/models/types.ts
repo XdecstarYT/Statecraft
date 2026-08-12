@@ -1263,5 +1263,11 @@ export interface CareerState {
   campaignMomentum: number;
   /** Set once a local-party leadership bid succeeds — a real foothold inside the party machine, not just standing with it. Grants a partyStanding floor and a nomination-odds bonus. */
   partyOfficer: boolean;
+  /** 0..100 — physical/mental wellbeing. Overloading education+job+party+office drains it; low health scales down attribute gains from work and education (burnout). */
+  health: number;
+  relationshipStatus: CareerRelationshipStatus;
+  hasChildren: boolean;
   eventLog: CareerEventLogEntry[];
 }
+
+export type CareerRelationshipStatus = 'single' | 'dating' | 'married' | 'divorced';

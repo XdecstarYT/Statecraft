@@ -65,6 +65,7 @@ import {
   createCareer,
   doLocalGovernance,
   doPartyWork,
+  restAndRecover,
   runCampaignActivity,
   validateCustomNation,
   foundNewPartyAction as engineFoundNewParty,
@@ -209,6 +210,7 @@ import { pickBillTemplate } from '../content/flavor/billTemplates';
 import { SCENARIO_PRESETS } from '../content/scenarios/presets';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
+import { CAREER_LIFE_EVENTS } from '../content/career/lifeEvents';
 import { generateName } from '../content/names/pool';
 import {
   clearSavedCareer,
@@ -312,6 +314,7 @@ interface StatecraftStore {
   startCareer: (name: string, countryOptionId: string, seed?: number) => void;
   abandonCareer: () => void;
   careerAdvanceTurnAction: () => void;
+  careerRestAndRecoverAction: () => void;
   careerStartEducationAction: (track: EducationTrack) => void;
   careerApplyForJobAction: (jobId: string) => void;
   careerJoinPartyAction: (partyId: string) => void;
@@ -630,7 +633,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const career = get().career;
     if (!career) return;
     const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
-    set({ career: advanceCareerTurn(career, option.parties) });
+    const rng = SeededRng.fromState(career.rngState);
+    set({ career: advanceCareerTurn(career, option.parties, rng, CAREER_LIFE_EVENTS) });
+  },
+
+  careerRestAndRecoverAction: () => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: restAndRecover(career) });
   },
 
   careerStartEducationAction: (track) => {

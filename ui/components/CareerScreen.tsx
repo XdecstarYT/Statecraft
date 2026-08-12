@@ -52,6 +52,13 @@ const STAGE_LABELS: Record<string, string> = {
   graduated: 'Graduated',
 };
 
+const RELATIONSHIP_LABELS: Record<CareerState['relationshipStatus'], string> = {
+  single: 'Single',
+  dating: 'Dating',
+  married: 'Married',
+  divorced: 'Divorced',
+};
+
 export function CareerScreen() {
   const career = useStatecraftStore((s) => s.career);
   const saveGame = useStatecraftStore((s) => s.saveGame);
@@ -69,6 +76,7 @@ export function CareerScreen() {
   const careerAttemptCitizenInitiativeAction = useStatecraftStore((s) => s.careerAttemptCitizenInitiativeAction);
   const careerRunCampaignActivityAction = useStatecraftStore((s) => s.careerRunCampaignActivityAction);
   const careerAttemptPartyLeadershipBidAction = useStatecraftStore((s) => s.careerAttemptPartyLeadershipBidAction);
+  const careerRestAndRecoverAction = useStatecraftStore((s) => s.careerRestAndRecoverAction);
   const lastPartyWork = useStatecraftStore((s) => s.lastCareerPartyWorkOutcome);
   const lastLocalRace = useStatecraftStore((s) => s.lastCareerLocalRaceOutcome);
   const lastRegionalRace = useStatecraftStore((s) => s.lastCareerRegionalRaceOutcome);
@@ -112,7 +120,10 @@ export function CareerScreen() {
       <section className="panel">
         <div className="panel-header">
           <h2>{career.name} — {STAGE_LABELS[career.stage]}</h2>
-          <button onClick={careerAdvanceTurnAction}>Advance Season</button>
+          <div className="row-actions">
+            <button className="ghost-button" onClick={careerRestAndRecoverAction}>Rest &amp; Recover</button>
+            <button onClick={careerAdvanceTurnAction}>Advance Season</button>
+          </div>
         </div>
 
         <div className="indicator-grid">
@@ -123,6 +134,14 @@ export function CareerScreen() {
           <div className="indicator">
             <div className="indicator-label">Money</div>
             <div className="indicator-value">${career.money.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Health</div>
+            <div className="indicator-value">{career.health.toFixed(0)}</div>
+          </div>
+          <div className="indicator">
+            <div className="indicator-label">Personal Life</div>
+            <div className="indicator-value">{RELATIONSHIP_LABELS[career.relationshipStatus]}{career.hasChildren ? ' + Kid' : ''}</div>
           </div>
           <div className="indicator">
             <div className="indicator-label">Party Standing</div>
@@ -141,6 +160,10 @@ export function CareerScreen() {
             <div className="indicator-value">{(appeal * 100).toFixed(0)}%</div>
           </div>
         </div>
+
+        {career.health < 30 && (
+          <p className="result-fail">Burnout is dragging down how much your work and study actually pay off. Consider resting.</p>
+        )}
 
         <h4 className="subheading">Attributes</h4>
         <div className="indicator-grid">
@@ -165,6 +188,24 @@ export function CareerScreen() {
             <div className="indicator-value">{career.attributes.mediaSavvy.toFixed(1)}</div>
           </div>
         </div>
+
+        {career.eventLog.length > 0 && (
+          <>
+            <h4 className="subheading">Life &amp; Career Log</h4>
+            <ul className="scandal-list">
+              {career.eventLog
+                .slice(-6)
+                .reverse()
+                .map((entry, i) => (
+                  <li key={i} className="scandal-item status-resolved">
+                    <span>
+                      Season {entry.turn} — <strong>{entry.title}</strong> — {entry.description}
+                    </span>
+                  </li>
+                ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <CitizenInitiativeSection
