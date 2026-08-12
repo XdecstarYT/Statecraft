@@ -133,15 +133,15 @@ function ringArea(ring: number[][]): number {
 }
 
 /**
- * A flat, locally-projected silhouette of one country's largest landmass
- * ring (small offshore islands/exclaves are dropped — a stylized backdrop
- * doesn't need every enclave), normalized so its largest half-extent is 1
- * and centered on its own centroid. Callers rescale/recenter to whatever
- * on-screen size they need. Returns null for ids with no geometry —
- * custom/fictional countries, or real countries this low-res dataset
- * doesn't include (see the coverage note above findCountryGeoId).
+ * The real, unprojected [lng, lat] outer ring of one country's largest
+ * landmass (small offshore islands/exclaves are dropped, same "biggest ring
+ * wins" rule as getCountrySilhouette below) — no normalization, no
+ * projection, just the raw coordinates straight out of the topology. Used
+ * wherever a caller needs real geographic position (e.g. seeding electorate
+ * cells inside the country's true shape) rather than a display-ready
+ * backdrop. Returns null for the same cases getCountrySilhouette does.
  */
-export function getCountrySilhouette(nationId: string, displayName: string): SilhouettePoint[] | null {
+export function getCountryOuterRingLngLat(nationId: string, displayName: string): number[][] | null {
   const geoId = findCountryGeoId(nationId, displayName);
   if (!geoId) return null;
   const geometry = countryGeometries.find((g) => String(g.id) === geoId);
@@ -167,6 +167,21 @@ export function getCountrySilhouette(nationId: string, displayName: string): Sil
     }
   }
   if (!outerRing || outerRing.length < 3) return null;
+  return outerRing;
+}
+
+/**
+ * A flat, locally-projected silhouette of one country's largest landmass
+ * ring (small offshore islands/exclaves are dropped — a stylized backdrop
+ * doesn't need every enclave), normalized so its largest half-extent is 1
+ * and centered on its own centroid. Callers rescale/recenter to whatever
+ * on-screen size they need. Returns null for ids with no geometry —
+ * custom/fictional countries, or real countries this low-res dataset
+ * doesn't include (see the coverage note above findCountryGeoId).
+ */
+export function getCountrySilhouette(nationId: string, displayName: string): SilhouettePoint[] | null {
+  const outerRing = getCountryOuterRingLngLat(nationId, displayName);
+  if (!outerRing) return null;
 
   const centerLat = outerRing.reduce((sum, [, lat]) => sum + lat, 0) / outerRing.length;
   const centerLng = outerRing.reduce((sum, [lng]) => sum + lng, 0) / outerRing.length;

@@ -50,6 +50,9 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
   selectedIdRef.current = selectedId;
 
   const game = useStatecraftStore((s) => s.game);
+  const lastElection = useStatecraftStore((s) => s.lastElection);
+  const lastElectionRef = useRef(lastElection);
+  lastElectionRef.current = lastElection;
   const seed = game?.seed;
 
   useEffect(() => {
@@ -91,7 +94,13 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     fillLight.position.set(-14, -6, -10);
     scene.add(fillLight);
 
-    const initialTexture = buildWorldPoliticalTexture(nations, game ?? null, filterRef.current, selectedIdRef.current);
+    const initialTexture = buildWorldPoliticalTexture(
+      nations,
+      game ?? null,
+      filterRef.current,
+      selectedIdRef.current,
+      lastElectionRef.current
+    );
     const globe = new THREE.Mesh(
       new THREE.SphereGeometry(GLOBE_RADIUS, 64, 64),
       new THREE.MeshPhongMaterial({ map: initialTexture, shininess: 10, specular: 0x1a2a3a })
@@ -230,7 +239,7 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     if (globeMesh) {
       const material = globeMesh.material as THREE.MeshPhongMaterial;
       const oldTexture = material.map;
-      material.map = buildWorldPoliticalTexture(nations, game, filter, selectedId);
+      material.map = buildWorldPoliticalTexture(nations, game, filter, selectedId, lastElection);
       material.needsUpdate = true;
       oldTexture?.dispose();
     }
@@ -243,7 +252,7 @@ export function Globe({ selectedId, onSelect, filter }: GlobeProps) {
     warRingsRef.current.forEach((ring, id) => {
       ring.visible = activeWarCounterpartIds.has(id);
     });
-  }, [filter, game, selectedId]);
+  }, [filter, game, selectedId, lastElection]);
 
   return <div ref={containerRef} className="globe-container" />;
 }
