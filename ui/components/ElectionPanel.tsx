@@ -159,6 +159,34 @@ export function ElectionPanel() {
       <h3 className="subheading">Government</h3>
       <GovernmentStatus />
 
+      {game.byElections.length > 0 && (
+        <>
+          <h3 className="subheading">By-Elections</h3>
+          <ul className="scandal-list">
+            {[...game.byElections]
+              .reverse()
+              .slice(0, 8)
+              .map((be) => {
+                const vacatedParty = game.parties.find((p) => p.id === be.vacatedPartyId);
+                const winnerParty = be.winnerPartyId ? game.parties.find((p) => p.id === be.winnerPartyId) : null;
+                const weeksUntil = be.resolutionTurn - game.turn;
+                return (
+                  <li key={be.id} className={`scandal-item status-${be.resolved ? 'resolved' : 'unresolved'}`}>
+                    <span>
+                      {vacatedParty?.name ?? be.vacatedPartyId} seat vacated (turn {be.vacatedTurn}) —{' '}
+                      {be.resolved
+                        ? `held by ${winnerParty?.name ?? be.winnerPartyId}`
+                        : weeksUntil > 0
+                          ? `special election in ${weeksUntil} week${weeksUntil === 1 ? '' : 's'}`
+                          : 'special election due'}
+                    </span>
+                  </li>
+                );
+              })}
+          </ul>
+        </>
+      )}
+
       <h3 className="subheading">Cabinet</h3>
       {cabinetCandidates.length === 0 ? (
         <p className="muted">No party members available to appoint.</p>
@@ -245,10 +273,34 @@ function GovernmentStatus() {
   const game = useStatecraftStore((s) => s.game);
   const attemptImpeachmentAction = useStatecraftStore((s) => s.attemptImpeachmentAction);
   const lastImpeachmentOutcome = useStatecraftStore((s) => s.lastImpeachmentOutcome);
+  const resolveCoalitionOfferAction = useStatecraftStore((s) => s.resolveCoalitionOfferAction);
   if (!game) return null;
 
   const { coalition } = game;
   const player = game.politicians.find((p) => p.isPlayer);
+
+  if (game.pendingCoalitionOffers && game.pendingCoalitionOffers.length > 0) {
+    return (
+      <div className="billboard-slide">
+        <span className="status-floor bill-status">Coalition Talks</span>
+        <p className="muted">
+          No party holds an outright majority, and your party is pivotal to who governs. Choose:
+        </p>
+        <div className="dilemma-choices">
+          {game.pendingCoalitionOffers.map((offer) => (
+            <div key={offer.id} className="dilemma-choice">
+              <div className="dilemma-choice-header">{offer.label}</div>
+              <p className="muted">
+                {offer.seatsHeld}/{offer.totalSeats} seats
+                {offer.offeredPortfolio && ` — offered the ${offer.offeredPortfolio} portfolio`}
+              </p>
+              <button onClick={() => resolveCoalitionOfferAction(offer.id)}>Choose</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (!coalition) {
     const majorityParty = game.parties.find((p) => p.seats > game.parties.reduce((sum, x) => sum + x.seats, 0) / 2);

@@ -344,6 +344,21 @@ export interface WorldElectionResult {
   ideologyShift: { economic: number; social: number };
 }
 
+/**
+ * A single-seat special election, triggered when a sitting (non-player)
+ * legislator resigns their seat outright over an unresolved hard scandal.
+ * See engine/systems/byElections.ts.
+ */
+export interface ByElection {
+  id: string;
+  vacatedPartyId: string;
+  vacatedPoliticianId: string;
+  vacatedTurn: number;
+  resolutionTurn: number;
+  resolved: boolean;
+  winnerPartyId?: string;
+}
+
 export type TradeDealStatus = 'proposed' | 'active' | 'cancelled';
 
 export interface TradeDeal {
@@ -609,6 +624,22 @@ export interface Coalition {
   confidenceVotesFor: number;
   confidenceVotesAgainst: number;
   formedTurn: number;
+}
+
+/**
+ * One concrete choice offered to the player when their party is pivotal to
+ * a hung parliament — join a specific coalition (with a portfolio on
+ * offer) or let the rest of parliament govern without them. See
+ * engine/systems/coalition.ts's computeCoalitionOffers.
+ */
+export interface CoalitionOffer {
+  id: 'join' | 'opposition';
+  label: string;
+  memberPartyIds: string[];
+  formateurPartyId: string;
+  seatsHeld: number;
+  totalSeats: number;
+  offeredPortfolio: CabinetPortfolio | null;
 }
 
 export type EndorserType = 'celebrity' | 'union' | 'newspaper';
@@ -1062,6 +1093,11 @@ export interface GameState {
   covertOperations: CovertOperationRecord[];
   /** The current governing coalition, or null when a single party holds an outright majority and none was needed. */
   coalition: Coalition | null;
+  /** Real, player-facing coalition offers awaiting a choice — populated instead of auto-resolving whenever the player's own party is pivotal to a hung parliament. Null the rest of the time. See engine/systems/coalition.ts's computeCoalitionOffers. */
+  pendingCoalitionOffers: CoalitionOffer[] | null;
+  byElections: ByElection[];
+  /** districtId -> accumulated redistricting drift on top of its base hash-derived lean. See engine/systems/elections.ts's redistrict. */
+  districtLeanDrift: Record<string, IdeologyPosition>;
   secessionistMovements: SecessionistMovement[];
   ballotInitiatives: BallotInitiative[];
   /** politicianId -> number of terms served as head of government (Prime Minister or majority-party leader). See engine/systems/succession.ts. */

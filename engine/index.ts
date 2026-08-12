@@ -41,6 +41,7 @@ import {
   allocateSeatsDHondt,
   generateDistrictVotes,
   generateNationalVotes,
+  redistrict,
   resolveFPTPElection,
   type DistrictResult,
   type PartyVoteShare,
@@ -77,7 +78,19 @@ import {
   rollForLeadershipChallenge,
   type PartyActionOutcome,
 } from './systems/leadership';
-import { formCoalition, formGovernment, hasOutrightMajority } from './systems/coalition';
+import {
+  computeCoalitionOffers,
+  formCoalition,
+  formGovernment,
+  hasOutrightMajority,
+  resolveCoalitionOffer,
+} from './systems/coalition';
+import {
+  applyByElectionResult,
+  resolveByElection,
+  rollForSeatVacancy,
+  scheduleByElection,
+} from './systems/byElections';
 import {
   isTermLimited,
   recordTermServed,
@@ -326,6 +339,7 @@ export * from './systems/promises';
 export * from './systems/committees';
 export * from './systems/factions';
 export * from './systems/worldElections';
+export * from './systems/byElections';
 
 /** A 4-year term at 48 weeks/year (see calendar.ts's WEEKS_PER_YEAR) — purely advisory, nothing auto-fires when it's reached. */
 export const TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 4;
@@ -490,6 +504,9 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     foreignRelations: {},
     worldGovernments,
     worldElectionHistory: [],
+    pendingCoalitionOffers: null,
+    byElections: [],
+    districtLeanDrift: {},
     playerMilitary: options.playerMilitary ?? startingMilitaryProfile(country.id),
     treaties: [],
     tradeDeals: [],
@@ -633,6 +650,13 @@ function resolveGovernment(state: GameState, rng: SeededRng): GameState {
     return next;
   }
 
+  if (player) {
+    const offers = computeCoalitionOffers(state.parties, player.partyId);
+    if (offers.length > 0) {
+      return { ...state, coalition: null, pendingCoalitionOffers: offers, rngState: rng.getState() };
+    }
+  }
+
   const { formateurPartyId } = formCoalition(state.parties);
   const succeeded = applyTermLimitSuccession(state, formateurPartyId);
 
@@ -659,6 +683,50 @@ function resolveGovernment(state: GameState, rng: SeededRng): GameState {
   }
 
   let next: GameState = { ...succeeded, coalition, termsServed, rngState: rng.getState() };
+  if (player && coalition.memberPartyIds.length > 1 && coalition.memberPartyIds.includes(player.partyId)) {
+    next = addMilestone(next, 'coalition_survivor');
+  }
+  return next;
+}
+
+/**
+ * Resolves a pending coalition negotiation with the player's chosen offer
+ * (see computeCoalitionOffers) — the deferred second half of resolveGovernment
+ * for the specific case where the player was pivotal enough to get a real
+ * choice instead of the greedy auto-pick deciding for them.
+ */
+export function resolveCoalitionOfferAction(state: GameState, offerId: 'join' | 'opposition'): GameState {
+  if (!state.pendingCoalitionOffers) return state;
+  const offer = state.pendingCoalitionOffers.find((o) => o.id === offerId);
+  if (!offer) return state;
+
+  const rng = SeededRng.fromState(state.rngState);
+  const succeeded = applyTermLimitSuccession(state, offer.formateurPartyId);
+  const coalition = resolveCoalitionOffer(
+    offer,
+    succeeded.parties,
+    succeeded.politicians,
+    succeeded.partyLeaderId,
+    succeeded.relationships,
+    succeeded.turn,
+    rng
+  );
+  const termsServed = recordTermServed(succeeded.termsServed, coalition.primeMinisterId);
+  const player = state.politicians.find((p) => p.isPlayer);
+
+  if (coalition.status === 'collapsed') {
+    return {
+      ...succeeded,
+      coalition,
+      termsServed,
+      pendingCoalitionOffers: null,
+      economy: applyImmediateEffect(succeeded.economy, COALITION_COLLAPSE_ECONOMY_EFFECT),
+      nextElectionTurn: succeeded.turn,
+      rngState: rng.getState(),
+    };
+  }
+
+  let next: GameState = { ...succeeded, coalition, termsServed, pendingCoalitionOffers: null, rngState: rng.getState() };
   if (player && coalition.memberPartyIds.length > 1 && coalition.memberPartyIds.includes(player.partyId)) {
     next = addMilestone(next, 'coalition_survivor');
   }
@@ -1441,6 +1509,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runSocialMediaTurn(next, rng);
   next = runMovementsTurn(next, rng);
   next = runWorldElectionsForTurn(next, rng);
+  next = runByElectionsTurn(next, rng);
 
   const eventChance = DEFAULT_EVENT_CHANCE * settings.eventChanceMultiplier * (next.houseRules.doubleEventFrequency ? 2 : 1);
   const eventDef = rollForEvent(CRISIS_TABLE, next, rng, eventChance);
@@ -1488,6 +1557,43 @@ export function runWorldElectionsForTurn(state: GameState, rng: SeededRng): Game
     foreignRelations,
     worldElectionHistory,
   };
+}
+
+/**
+ * Runs one turn of by-election activity: resolves any special election
+ * whose time has come (see byElections.ts), then rolls whether any sitting
+ * (non-player) legislator with an unresolved hard scandal resigns their
+ * seat outright, scheduling a fresh by-election if so. At most one
+ * resignation per turn, so a bad turn for the government doesn't cascade
+ * into an unrealistic wave of vacancies all at once.
+ */
+export function runByElectionsTurn(state: GameState, rng: SeededRng): GameState {
+  let politicians = state.politicians;
+  let parties = state.parties;
+  let byElections = state.byElections;
+
+  byElections = byElections.map((be) => {
+    if (be.resolved || be.resolutionTurn !== state.turn) return be;
+    const winnerPartyId = resolveByElection(parties, rng);
+    const applied = applyByElectionResult(politicians, parties, be, winnerPartyId, rng);
+    politicians = applied.politicians;
+    parties = applied.parties;
+    return { ...be, resolved: true, winnerPartyId };
+  });
+
+  for (const politician of politicians) {
+    if (rollForSeatVacancy(politician, state.scandals, rng)) {
+      parties = parties.map((p) => (p.id === politician.partyId ? { ...p, seats: Math.max(0, p.seats - 1) } : p));
+      politicians = politicians.filter((p) => p.id !== politician.id);
+      byElections = [
+        ...byElections,
+        scheduleByElection(politician.partyId, politician.id, state.turn, `byel-${state.turn}-${politician.id}`),
+      ];
+      break;
+    }
+  }
+
+  return { ...state, politicians, parties, byElections };
 }
 
 const ALLY_STRENGTH_CONTRIBUTION = 0.35;
@@ -2910,11 +3016,15 @@ export function runLegislativeElection(
   const { legislature } = state.country;
   const momentum = computeStrategicMomentum(state.politicians, state.parties);
   let outcome: ElectionOutcome;
+  const districtLeanDrift =
+    legislature.electoralSystem === 'FPTP'
+      ? redistrict(legislature.districts.map((d) => d.id), state.districtLeanDrift, rng)
+      : state.districtLeanDrift;
 
   if (legislature.electoralSystem === 'FPTP') {
     const perDistrictTurnout = Math.round(turnout / legislature.districts.length);
     const districtResults = legislature.districts.map((district) =>
-      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng, momentum, state.voterBlocs)
+      generateDistrictVotes(district, state.parties, perDistrictTurnout, rng, momentum, state.voterBlocs, districtLeanDrift)
     );
     const seatsWon = resolveFPTPElection(districtResults);
     outcome = { system: 'FPTP', seatsWon, districtResults };
@@ -2936,6 +3046,7 @@ export function runLegislativeElection(
   const afterVote: GameState = {
     ...state,
     parties,
+    districtLeanDrift,
     nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
     rngState: rng.getState(),
   };
@@ -2951,8 +3062,20 @@ export function runLegislativeElection(
 export function beginElectionNight(state: GameState, turnout = 500_000): GameState {
   const rng = SeededRng.fromState(state.rngState);
   const momentum = computeStrategicMomentum(state.politicians, state.parties);
-  const electionNight = startElectionNight(state.country, state.parties, turnout, rng, momentum, state.voterBlocs);
-  return { ...state, electionNight, rngState: rng.getState() };
+  const districtLeanDrift =
+    state.country.legislature.electoralSystem === 'FPTP'
+      ? redistrict(state.country.legislature.districts.map((d) => d.id), state.districtLeanDrift, rng)
+      : state.districtLeanDrift;
+  const electionNight = startElectionNight(
+    state.country,
+    state.parties,
+    turnout,
+    rng,
+    momentum,
+    state.voterBlocs,
+    districtLeanDrift
+  );
+  return { ...state, electionNight, districtLeanDrift, rngState: rng.getState() };
 }
 
 /** Reveals the next province's results. Once every province has reported, the race is called. */

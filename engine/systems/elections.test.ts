@@ -4,8 +4,10 @@ import {
   allocateSeatsDHondt,
   computeBlocPartyShares,
   computeDistrictLean,
+  computeEffectiveDistrictLean,
   computeIdeologicalVoteShares,
   droopQuota,
+  redistrict,
   generateDistrictVotes,
   generateNationalVotes,
   generatePrimaryVotes,
@@ -211,6 +213,59 @@ describe('computeDistrictLean', () => {
       expect(Math.abs(lean.economic)).toBeLessThanOrEqual(22);
       expect(Math.abs(lean.social)).toBeLessThanOrEqual(22);
     }
+  });
+});
+
+describe('redistrict', () => {
+  const ids = ['district-1', 'district-2', 'district-3'];
+
+  it('is deterministic given the same seed and starting drift', () => {
+    const a = redistrict(ids, {}, new SeededRng(1));
+    const b = redistrict(ids, {}, new SeededRng(1));
+    expect(a).toEqual(b);
+  });
+
+  it('nudges every district, not just some', () => {
+    const drift = redistrict(ids, {}, new SeededRng(5));
+    for (const id of ids) {
+      expect(drift[id]).toBeDefined();
+    }
+  });
+
+  it('accumulates on top of existing drift rather than replacing it', () => {
+    const once = redistrict(ids, {}, new SeededRng(1));
+    const twice = redistrict(ids, once, new SeededRng(2));
+    // Two passes should generally move further from zero than one, for at least one district.
+    const movedFurther = ids.some(
+      (id) => Math.abs(twice[id].economic) + Math.abs(twice[id].social) >= Math.abs(once[id].economic) + Math.abs(once[id].social)
+    );
+    expect(movedFurther).toBe(true);
+  });
+
+  it('never exceeds the documented max drift bound after many passes', () => {
+    let drift: Record<string, { economic: number; social: number }> = {};
+    const rng = new SeededRng(3);
+    for (let i = 0; i < 50; i++) {
+      drift = redistrict(ids, drift, rng);
+    }
+    for (const id of ids) {
+      expect(Math.abs(drift[id].economic)).toBeLessThanOrEqual(18);
+      expect(Math.abs(drift[id].social)).toBeLessThanOrEqual(18);
+    }
+  });
+});
+
+describe('computeEffectiveDistrictLean', () => {
+  it('equals the base lean when there is no drift', () => {
+    expect(computeEffectiveDistrictLean('district-7', {})).toEqual(computeDistrictLean('district-7'));
+  });
+
+  it('adds the drift on top of the base lean', () => {
+    const base = computeDistrictLean('district-7');
+    const drift = { 'district-7': { economic: 5, social: -3 } };
+    const effective = computeEffectiveDistrictLean('district-7', drift);
+    expect(effective.economic).toBeCloseTo(base.economic + 5);
+    expect(effective.social).toBeCloseTo(base.social - 3);
   });
 });
 

@@ -1,5 +1,5 @@
 import { SeededRng } from '../rng';
-import { MAX_IDEOLOGICAL_DISTANCE, clampAxis, ideologicalAlignment, ideologicalDistance } from '../ideology';
+import { MAX_IDEOLOGICAL_DISTANCE, clamp, clampAxis, ideologicalAlignment, ideologicalDistance } from '../ideology';
 import type { District, DistrictResult, IdeologyPosition, Party, PartyVoteShare, VoterBloc } from '../models/types';
 
 export type { DistrictResult, PartyVoteShare } from '../models/types';
@@ -53,6 +53,47 @@ export function computeDistrictLean(districtId: string): IdeologyPosition {
   const economic = ((hash % 1000) / 1000 - 0.5) * 2 * MAX_DISTRICT_LEAN;
   const social = (((Math.floor(hash / 1000) % 1000) / 1000) - 0.5) * 2 * MAX_DISTRICT_LEAN;
   return { economic, social };
+}
+
+/** How far a single redistricting pass can nudge one district's lean on either axis. */
+const REDISTRICTING_DRIFT_STEP = 6;
+/** Total accumulated drift (on top of the district's base hash-derived lean) never exceeds this. */
+const MAX_REDISTRICTING_DRIFT = 18;
+
+/**
+ * REDISTRICTING — a district's boundaries aren't frozen forever in reality,
+ * and neither is its electorate's makeup; each legislative term nudges
+ * every district's lean a bounded step in a random direction (a seeded
+ * random walk, not a fresh reroll), so the map's partisan geography
+ * gradually shifts across a long game instead of staying static. `drift` is
+ * the accumulated delta on top of computeDistrictLean's base value, keyed
+ * by district id; districts with no entry yet start from zero.
+ */
+export function redistrict(
+  districtIds: string[],
+  drift: Record<string, IdeologyPosition>,
+  rng: SeededRng
+): Record<string, IdeologyPosition> {
+  const next = { ...drift };
+  for (const id of districtIds) {
+    const current = next[id] ?? NEUTRAL_LEAN;
+    next[id] = {
+      economic: clamp(current.economic + (rng.next() - 0.5) * 2 * REDISTRICTING_DRIFT_STEP, -MAX_REDISTRICTING_DRIFT, MAX_REDISTRICTING_DRIFT),
+      social: clamp(current.social + (rng.next() - 0.5) * 2 * REDISTRICTING_DRIFT_STEP, -MAX_REDISTRICTING_DRIFT, MAX_REDISTRICTING_DRIFT),
+    };
+  }
+  return next;
+}
+
+/** The district's base hash-derived lean plus any accumulated redistricting drift, clamped to a sane combined range. */
+export function computeEffectiveDistrictLean(districtId: string, drift: Record<string, IdeologyPosition>): IdeologyPosition {
+  const base = computeDistrictLean(districtId);
+  const d = drift[districtId] ?? NEUTRAL_LEAN;
+  const combinedMax = MAX_DISTRICT_LEAN + MAX_REDISTRICTING_DRIFT;
+  return {
+    economic: clamp(base.economic + d.economic, -combinedMax, combinedMax),
+    social: clamp(base.social + d.social, -combinedMax, combinedMax),
+  };
 }
 
 /**
@@ -125,12 +166,15 @@ export function generateDistrictVotes(
   turnout: number,
   rng: SeededRng,
   momentum: Record<string, number> = {},
-  voterBlocs: VoterBloc[] = []
+  voterBlocs: VoterBloc[] = [],
+  districtLeanDrift: Record<string, IdeologyPosition> = {}
 ): DistrictResult {
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
   const votesByParty: Record<string, number> = {};
   const ideologicalShares =
-    voterBlocs.length > 0 ? computeIdeologicalVoteShares(parties, voterBlocs, computeDistrictLean(district.id)) : null;
+    voterBlocs.length > 0
+      ? computeIdeologicalVoteShares(parties, voterBlocs, computeEffectiveDistrictLean(district.id, districtLeanDrift))
+      : null;
 
   for (const party of parties) {
     const incumbencyShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;

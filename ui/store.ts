@@ -27,6 +27,7 @@ import {
   rebrandPartyAction as engineRebrandParty,
   castSummitVoteAction as engineCastSummitVote,
   resolveDilemmaChoice,
+  resolveCoalitionOfferAction as engineResolveCoalitionOffer,
   makePromise,
   buildMineAction as engineBuildMine,
   upgradeMineAction as engineUpgradeMine,
@@ -371,6 +372,7 @@ interface StatecraftStore {
   rallyPartySupportAction: () => void;
   denounceChallengerAction: () => void;
   dismissLeadershipChallengeAction: () => void;
+  resolveCoalitionOfferAction: (offerId: 'join' | 'opposition') => void;
   attemptCovertOperationAction: (counterpartId: string, type: CovertOperationType) => void;
   investInIntelligenceAction: (tier: IntelligenceInvestmentTier) => void;
   foundNewPartyAction: (partyId: string, name: string, ideology: IdeologyPosition) => void;
@@ -1061,7 +1063,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       const { districts } = game.country.legislature;
       const perDistrictTurnout = Math.round(LAB_TURNOUT / districts.length);
       const districtResults = districts.map((d) =>
-        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng, {}, game.voterBlocs)
+        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng, {}, game.voterBlocs, game.districtLeanDrift)
       );
       const listVotes = generateNationalVotes(game.parties, LAB_TURNOUT, rng, {}, game.voterBlocs);
       const result = resolveMMP(districtResults, listVotes, districts.length);
@@ -1303,6 +1305,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: engineDismissLeadershipChallenge(game), lastLeadershipActionOutcome: null });
+  },
+
+  resolveCoalitionOfferAction: (offerId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineResolveCoalitionOffer(game, offerId) });
   },
 
   attemptCovertOperationAction: (counterpartId, type) => {

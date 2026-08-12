@@ -21,6 +21,7 @@ import {
   advanceEconomy,
   computeCabinetEffects,
   mergePartiesAction,
+  resolveCoalitionOfferAction,
   MAX_HEAD_OF_GOVERNMENT_TERMS,
   TERM_LENGTH_TURNS,
   buildMineAction,
@@ -703,9 +704,15 @@ describe('the second starter country (Vantorra, presidential/PR)', () => {
   });
 });
 
+/** Resolves any pending coalition negotiation (see resolveCoalitionOfferAction) so tests that just need *a* formed government don't have to special-case the pivotal-player case. */
+function withResolvedGovernment(state: GameState): GameState {
+  if (!state.pendingCoalitionOffers) return state;
+  return resolveCoalitionOfferAction(state, 'join');
+}
+
 describe('mergePartiesAction', () => {
   it('cleans up a dangling coalition membership when the absorbed party was a coalition member', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     expect(state.coalition).not.toBeNull();
     const coalition = state.coalition!;
     const absorbedPartyId = coalition.memberPartyIds[coalition.memberPartyIds.length - 1];
@@ -726,7 +733,7 @@ describe('mergePartiesAction', () => {
   });
 
   it('reassigns the formateur when the absorbed party was the formateur', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     const coalition = state.coalition!;
     const formateurPartyId = coalition.formateurPartyId;
     const survivingPartyId = state.parties.find((p) => p.id !== formateurPartyId)!.id;
@@ -737,7 +744,7 @@ describe('mergePartiesAction', () => {
   });
 
   it('leaves the coalition untouched when neither party is a coalition member', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     const coalition = state.coalition!;
     const nonMemberParties = state.parties.filter((p) => !coalition.memberPartyIds.includes(p.id));
     if (nonMemberParties.length < 2) return; // not applicable for this seed's party split
