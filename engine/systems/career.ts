@@ -49,6 +49,7 @@ function addAttributes(base: PoliticianAttributes, delta: Partial<PoliticianAttr
 /** Derives the display stage from what's actually been achieved, rather than tracking it as separate mutable state. */
 export function computeCareerStage(state: CareerState): CareerStage {
   if (state.nominationHistory.some((n) => n.selected)) return 'graduated';
+  if (state.regionalSeatWon) return 'regional_officeholder';
   if (state.localSeatWon) return 'local_officeholder';
   if (state.partyId) return 'party_volunteer';
   if (state.jobId) return 'working';
@@ -93,6 +94,8 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     partyStanding: 0,
     localSeatWon: false,
     localRaceHistory: [],
+    regionalSeatWon: false,
+    regionalRaceHistory: [],
     nominationHistory: [],
     civicRecord: 0,
     citizenInitiatives: [],
@@ -369,6 +372,116 @@ export function attemptLocalRace(
 }
 
 /**
+ * REGIONAL RACE — the next rung up the ladder. A state/regional
+ * legislature seat, deliberately gated on having won a local seat first:
+ * the career has to climb the ladder in order, not skip straight to a
+ * bigger office. Tougher, better-funded rivals than the local race.
+ */
+
+const REGIONAL_RACE_CAMPAIGN_COST = 150;
+
+export function canAttemptRegionalRace(state: CareerState): boolean {
+  return state.localSeatWon && state.money >= REGIONAL_RACE_CAMPAIGN_COST;
+}
+
+export function attemptRegionalRace(
+  state: CareerState,
+  rivalNames: string[],
+  rng: SeededRng
+): { state: CareerState; outcome: LocalRaceOutcome | null } {
+  if (!canAttemptRegionalRace(state)) {
+    return { state, outcome: null };
+  }
+
+  const regionalElectorateIdeology: IdeologyPosition = {
+    economic: (rng.next() - 0.5) * 160,
+    social: (rng.next() - 0.5) * 160,
+  };
+
+  const playerAlignment = 1 - ideologicalDistance(state.ideology, regionalElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord);
+  const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
+  // Tougher field than a local race — better-funded, more experienced rivals.
+  const rivalScores = rivalNames.map(() => Math.max(0.02, 0.4 + rng.next() * 0.45));
+
+  const total = playerScore + rivalScores.reduce((a, b) => a + b, 0);
+  const playerShare = playerScore / total;
+  const opponentShares = rivalScores.map((s) => s / total);
+  const won = rivalScores.every((s) => s < playerScore);
+
+  const record: CareerLocalRaceRecord = { turn: state.turn, won, playerShare, opponentNames: rivalNames };
+
+  return {
+    state: withStage({
+      ...state,
+      money: state.money - REGIONAL_RACE_CAMPAIGN_COST,
+      regionalSeatWon: state.regionalSeatWon || won,
+      regionalRaceHistory: [...state.regionalRaceHistory, record],
+      rngState: rng.getState(),
+    }),
+    outcome: { won, playerShare, opponentNames: rivalNames, opponentShares },
+  };
+}
+
+/**
+ * LOCAL GOVERNANCE — what actually holding office is for. Available only
+ * once a seat (local or regional) is won, this is the governing
+ * counterpart to doPartyWork: constituency service, committee work, and
+ * legislating build a public record (civicRecord) rather than party
+ * standing. Governing skill draws on integrity/intellect/network, distinct
+ * from the charisma-led organizing skill that powers party work.
+ */
+
+export type GovernanceOutcomeTier = 'strong' | 'solid' | 'setback';
+
+export interface GovernanceOutcome {
+  outcome: GovernanceOutcomeTier;
+  civicRecordDelta: number;
+}
+
+function computeGoverningSkill(attributes: PoliticianAttributes): number {
+  return clamp((attributes.integrity + attributes.intellect + attributes.network) / 30, 0, 1);
+}
+
+const GOVERNANCE_STRONG_DELTA = 8;
+const GOVERNANCE_SOLID_DELTA = 3;
+const GOVERNANCE_SETBACK_DELTA = -2;
+
+export function canGovernLocally(state: CareerState): boolean {
+  return state.localSeatWon || state.regionalSeatWon;
+}
+
+export function doLocalGovernance(state: CareerState, rng: SeededRng): { state: CareerState; outcome: GovernanceOutcome | null } {
+  if (!canGovernLocally(state)) {
+    return { state, outcome: null };
+  }
+
+  const skill = computeGoverningSkill(state.attributes);
+  const pStrong = 0.15 + skill * 0.35;
+  const pSetback = 0.25 - skill * 0.2;
+  const roll = rng.next();
+
+  let outcome: GovernanceOutcomeTier;
+  let civicRecordDelta: number;
+  if (roll < pStrong) {
+    outcome = 'strong';
+    civicRecordDelta = GOVERNANCE_STRONG_DELTA;
+  } else if (roll < 1 - pSetback) {
+    outcome = 'solid';
+    civicRecordDelta = GOVERNANCE_SOLID_DELTA;
+  } else {
+    outcome = 'setback';
+    civicRecordDelta = GOVERNANCE_SETBACK_DELTA;
+  }
+
+  const civicRecord = clamp(state.civicRecord + civicRecordDelta, 0, 100);
+  return {
+    state: withStage({ ...state, civicRecord, rngState: rng.getState() }),
+    outcome: { outcome, civicRecordDelta },
+  };
+}
+
+/**
  * CITIZEN PETITIONS — lawmaking without a seat or even a party. A local
  * ballot initiative filed straight to the public, resolved immediately
  * against a randomly-seeded local electorate, the same shape as
@@ -444,13 +557,13 @@ function sigmoid(x: number): number {
 /**
  * A probabilistic gate rather than a simulated vote — this represents the
  * party leadership's own closed-door decision, not a poll of anyone the
- * player interacts with. Party standing dominates; having actually won a
- * local seat is a real, separate boost; personal attributes matter but
- * least of the three.
+ * player interacts with. Party standing dominates; having actually held
+ * office is a real, separate boost that grows with how high up the ladder
+ * that office was; personal attributes matter but least of the three.
  */
 export function computeNominationProbability(state: CareerState): number {
   const standingTerm = (state.partyStanding - 50) / 50;
-  const seatBonus = state.localSeatWon ? 1 : 0;
+  const seatBonus = (state.localSeatWon ? 0.4 : 0) + (state.regionalSeatWon ? 0.8 : 0);
   const attributeTerm = (state.attributes.charisma + state.attributes.integrity + state.attributes.intellect - 15) / 15;
   const civicTerm = (state.civicRecord - 50) / 50;
   const score = 1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm + 0.4 * civicTerm;
@@ -485,6 +598,8 @@ export function isGraduated(state: CareerState): boolean {
 
 const PARTY_STANDING_DECAY_RATE = 0.04;
 const IDEOLOGY_DRIFT_RATE = 0.08;
+const LOCAL_OFFICE_STIPEND = 20;
+const REGIONAL_OFFICE_STIPEND = 50;
 
 /**
  * Advances one career season: education and employment both apply their
@@ -527,6 +642,13 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
       attributes = addAttributes(attributes, job.attributeGainPerTurn);
       money += job.incomePerTurn;
     }
+  }
+
+  // An officeholder's stipend — regional supersedes local rather than stacking, since winning a regional seat means moving up, not moonlighting both.
+  if (state.regionalSeatWon) {
+    money += REGIONAL_OFFICE_STIPEND;
+  } else if (state.localSeatWon) {
+    money += LOCAL_OFFICE_STIPEND;
   }
 
   const partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;

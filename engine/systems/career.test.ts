@@ -11,8 +11,11 @@ import {
   attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
+  attemptRegionalRace,
   buildGraduationPayload,
   canApplyForJob,
+  canAttemptRegionalRace,
+  canGovernLocally,
   canProposeCitizenInitiative,
   canStartEducation,
   computeCareerAge,
@@ -20,6 +23,7 @@ import {
   computeNominationProbability,
   computePersonalAppeal,
   createCareer,
+  doLocalGovernance,
   doPartyWork,
   foundOwnParty,
   isGraduated,
@@ -369,6 +373,116 @@ describe('attemptLocalRace', () => {
     expect(after.localSeatWon).toBe(true);
     expect(after.localRaceHistory.length).toBeGreaterThan(0);
     expect(computeCareerStage(after)).toBe('local_officeholder');
+  });
+});
+
+describe('attemptRegionalRace', () => {
+  it('refuses without a local seat first, even with plenty of money', () => {
+    const state = makeCareer({ money: 10_000, localSeatWon: false });
+    expect(canAttemptRegionalRace(state)).toBe(false);
+    const { outcome } = attemptRegionalRace(state, ['Rival'], new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('refuses without enough campaign money, even with a local seat', () => {
+    const state = makeCareer({ money: 10, localSeatWon: true });
+    expect(canAttemptRegionalRace(state)).toBe(false);
+    const { outcome } = attemptRegionalRace(state, ['Rival'], new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ money: 500, localSeatWon: true });
+    const a = attemptRegionalRace(state, ['Rival A', 'Rival B'], new SeededRng(5));
+    const b = attemptRegionalRace(state, ['Rival A', 'Rival B'], new SeededRng(5));
+    expect(a).toEqual(b);
+  });
+
+  it('records the race and marks regionalSeatWon on a win, advancing the stage', () => {
+    const state = makeCareer({
+      money: 100_000,
+      localSeatWon: true,
+      attributes: { charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 },
+      partyStanding: 100,
+    });
+    const rng = new SeededRng(2);
+    let won = false;
+    let after = state;
+    for (let i = 0; i < 100 && !won; i++) {
+      const result = attemptRegionalRace(after, ['R1', 'R2'], rng);
+      after = result.state;
+      won = result.outcome!.won;
+    }
+    expect(won).toBe(true);
+    expect(after.regionalSeatWon).toBe(true);
+    expect(after.regionalRaceHistory.length).toBeGreaterThan(0);
+    expect(computeCareerStage(after)).toBe('regional_officeholder');
+  });
+});
+
+describe('doLocalGovernance', () => {
+  it('refuses without holding any elected seat', () => {
+    const state = makeCareer({ localSeatWon: false, regionalSeatWon: false });
+    expect(canGovernLocally(state)).toBe(false);
+    const { outcome } = doLocalGovernance(state, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('is available once a local seat is held', () => {
+    const state = makeCareer({ localSeatWon: true });
+    expect(canGovernLocally(state)).toBe(true);
+    const { outcome } = doLocalGovernance(state, new SeededRng(1));
+    expect(outcome).not.toBeNull();
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ localSeatWon: true });
+    const a = doLocalGovernance(state, new SeededRng(9));
+    const b = doLocalGovernance(state, new SeededRng(9));
+    expect(a).toEqual(b);
+  });
+
+  it('moves civic record and stays within [0, 100]', () => {
+    const state = makeCareer({ localSeatWon: true, civicRecord: 50 });
+    const { state: after, outcome } = doLocalGovernance(state, new SeededRng(3));
+    expect(after.civicRecord).toBe(state.civicRecord + outcome!.civicRecordDelta);
+    expect(after.civicRecord).toBeGreaterThanOrEqual(0);
+    expect(after.civicRecord).toBeLessThanOrEqual(100);
+  });
+
+  it('a more capable governor gets strong outcomes far more often than a weak one over many trials', () => {
+    const capable = makeCareer({ localSeatWon: true, attributes: { charisma: 5, intellect: 10, integrity: 10, network: 10, mediaSavvy: 5 } });
+    const inept = makeCareer({ localSeatWon: true, attributes: { charisma: 5, intellect: 1, integrity: 1, network: 1, mediaSavvy: 5 } });
+
+    const rngCapable = new SeededRng(13);
+    const rngInept = new SeededRng(13);
+    let capableStrong = 0;
+    let ineptStrong = 0;
+    for (let i = 0; i < 100; i++) {
+      if (doLocalGovernance(capable, rngCapable).outcome!.outcome === 'strong') capableStrong++;
+      if (doLocalGovernance(inept, rngInept).outcome!.outcome === 'strong') ineptStrong++;
+    }
+    expect(capableStrong).toBeGreaterThan(ineptStrong);
+  });
+});
+
+describe('officeholder stipend in advanceCareerTurn', () => {
+  it('pays no stipend without a seat', () => {
+    const state = makeCareer({ money: 100, localSeatWon: false, regionalSeatWon: false, jobId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.money).toBe(100);
+  });
+
+  it('pays a local stipend while holding only a local seat', () => {
+    const state = makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: false, jobId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.money).toBeGreaterThan(100);
+  });
+
+  it('pays a larger stipend once holding a regional seat instead of stacking both', () => {
+    const localOnly = advanceCareerTurn(makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: false, jobId: null }), PARTIES);
+    const regional = advanceCareerTurn(makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: true, jobId: null }), PARTIES);
+    expect(regional.money).toBeGreaterThan(localOnly.money);
   });
 });
 

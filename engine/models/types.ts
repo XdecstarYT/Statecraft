@@ -1186,7 +1186,13 @@ export interface PlayerPromise {
 
 export type EducationTrack = 'community_college' | 'state_university' | 'law_school' | 'trade_apprenticeship';
 
-export type CareerStage = 'student' | 'working' | 'party_volunteer' | 'local_officeholder' | 'graduated';
+export type CareerStage =
+  | 'student'
+  | 'working'
+  | 'party_volunteer'
+  | 'local_officeholder'
+  | 'regional_officeholder'
+  | 'graduated';
 
 export interface CareerEventLogEntry {
   turn: number;
@@ -1246,6 +1252,9 @@ export interface CareerState {
   partyStanding: number;
   localSeatWon: boolean;
   localRaceHistory: CareerLocalRaceRecord[];
+  /** A rung above local council — a state/regional legislature seat. Gated on having won a local seat first, so the ladder has to be climbed in order. */
+  regionalSeatWon: boolean;
+  regionalRaceHistory: CareerLocalRaceRecord[];
   nominationHistory: CareerNominationRecord[];
   /** 0..100 — a public track record built from filed citizen petitions, earned with no seat and no party required. Decays slowly like partyStanding. */
   civicRecord: number;

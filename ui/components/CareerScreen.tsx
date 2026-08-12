@@ -9,6 +9,7 @@ import {
   type CareerState,
   type CitizenInitiativeOutcome,
   type EducationTrack,
+  type GovernanceOutcome,
   type IdeologyPosition,
   type LocalRaceOutcome,
   type NominationOutcome,
@@ -21,11 +22,14 @@ import {
   CITIZEN_INITIATIVE_FAIL_FLAVOR,
   CITIZEN_INITIATIVE_PASS_FLAVOR,
   EDUCATION_START_FLAVOR,
+  GOVERNANCE_FLAVOR,
   LOCAL_RACE_LOSS_FLAVOR,
   LOCAL_RACE_WIN_FLAVOR,
   NOMINATION_REJECTION_FLAVOR,
   NOMINATION_SUCCESS_FLAVOR,
   PARTY_WORK_FLAVOR,
+  REGIONAL_RACE_LOSS_FLAVOR,
+  REGIONAL_RACE_WIN_FLAVOR,
   pickFlavorIndex,
 } from '../../content/career/flavor';
 import { useStatecraftStore } from '../store';
@@ -35,6 +39,7 @@ const STAGE_LABELS: Record<string, string> = {
   working: 'Working',
   party_volunteer: 'Party Volunteer',
   local_officeholder: 'Local Officeholder',
+  regional_officeholder: 'Regional Officeholder',
   graduated: 'Graduated',
 };
 
@@ -49,10 +54,14 @@ export function CareerScreen() {
   const careerFoundOwnPartyAction = useStatecraftStore((s) => s.careerFoundOwnPartyAction);
   const careerDoPartyWorkAction = useStatecraftStore((s) => s.careerDoPartyWorkAction);
   const careerAttemptLocalRaceAction = useStatecraftStore((s) => s.careerAttemptLocalRaceAction);
+  const careerAttemptRegionalRaceAction = useStatecraftStore((s) => s.careerAttemptRegionalRaceAction);
+  const careerDoLocalGovernanceAction = useStatecraftStore((s) => s.careerDoLocalGovernanceAction);
   const careerAttemptNominationAction = useStatecraftStore((s) => s.careerAttemptNominationAction);
   const careerAttemptCitizenInitiativeAction = useStatecraftStore((s) => s.careerAttemptCitizenInitiativeAction);
   const lastPartyWork = useStatecraftStore((s) => s.lastCareerPartyWorkOutcome);
   const lastLocalRace = useStatecraftStore((s) => s.lastCareerLocalRaceOutcome);
+  const lastRegionalRace = useStatecraftStore((s) => s.lastCareerRegionalRaceOutcome);
+  const lastGovernance = useStatecraftStore((s) => s.lastCareerGovernanceOutcome);
   const lastNomination = useStatecraftStore((s) => s.lastCareerNominationOutcome);
   const lastCitizenInitiative = useStatecraftStore((s) => s.lastCareerCitizenInitiativeOutcome);
 
@@ -160,6 +169,11 @@ export function CareerScreen() {
 
       <div className="panel-columns">
         <LocalRaceSection career={career} onAttempt={careerAttemptLocalRaceAction} lastOutcome={lastLocalRace} />
+        <RegionalRaceSection career={career} onAttempt={careerAttemptRegionalRaceAction} lastOutcome={lastRegionalRace} />
+      </div>
+
+      <div className="panel-columns">
+        <LocalGovernanceSection career={career} onGovern={careerDoLocalGovernanceAction} lastOutcome={lastGovernance} />
         <NominationSection
           career={career}
           probability={nominationProbability}
@@ -377,6 +391,101 @@ function LocalRaceSection({
               </li>
             ))}
         </ul>
+      )}
+    </section>
+  );
+}
+
+function RegionalRaceSection({
+  career,
+  onAttempt,
+  lastOutcome,
+}: {
+  career: CareerState;
+  onAttempt: () => void;
+  lastOutcome: LocalRaceOutcome | null;
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Regional Legislature Race</h2>
+      </div>
+      {!career.localSeatWon ? (
+        <p className="muted">Win a local council seat first — the ladder climbs in order.</p>
+      ) : (
+        <p className="muted">
+          {career.regionalSeatWon
+            ? 'You hold a regional legislature seat.'
+            : 'A tougher field than the local race. Costs $150 to run.'}
+        </p>
+      )}
+      <div className="bill-actions">
+        <button onClick={onAttempt} disabled={!career.localSeatWon || career.money < 150}>
+          Run for Regional Legislature
+        </button>
+      </div>
+      {lastOutcome && (
+        <p className={lastOutcome.won ? 'result-pass' : 'result-fail'}>
+          {(lastOutcome.won ? REGIONAL_RACE_WIN_FLAVOR : REGIONAL_RACE_LOSS_FLAVOR)[
+            pickFlavorIndex(`${career.turn}-regional`, (lastOutcome.won ? REGIONAL_RACE_WIN_FLAVOR : REGIONAL_RACE_LOSS_FLAVOR).length)
+          ]}{' '}
+          ({(lastOutcome.playerShare * 100).toFixed(0)}% of the vote against {lastOutcome.opponentNames.length} rival
+          {lastOutcome.opponentNames.length === 1 ? '' : 's'})
+        </p>
+      )}
+      {career.regionalRaceHistory.length > 0 && (
+        <ul className="scandal-list">
+          {career.regionalRaceHistory
+            .slice(-5)
+            .reverse()
+            .map((race, i) => (
+              <li key={i} className={`scandal-item status-${race.won ? 'resolved' : 'unresolved'}`}>
+                <span>
+                  Season {race.turn} — {race.won ? 'Won' : 'Lost'} — {(race.playerShare * 100).toFixed(0)}% of the vote
+                </span>
+              </li>
+            ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+function LocalGovernanceSection({
+  career,
+  onGovern,
+  lastOutcome,
+}: {
+  career: CareerState;
+  onGovern: () => void;
+  lastOutcome: GovernanceOutcome | null;
+}) {
+  const holdsOffice = career.localSeatWon || career.regionalSeatWon;
+  return (
+    <section className="panel">
+      <div className="panel-header">
+        <h2>Governing</h2>
+      </div>
+      {!holdsOffice ? (
+        <p className="muted">Win a seat to start actually governing — constituency work, committee votes, the real job.</p>
+      ) : (
+        <p className="muted">
+          {career.regionalSeatWon
+            ? 'Drawing a regional legislator\'s stipend each season.'
+            : 'Drawing a local councilmember\'s stipend each season.'}
+        </p>
+      )}
+      <div className="bill-actions">
+        <button onClick={onGovern} disabled={!holdsOffice}>
+          Do the Work of Governing
+        </button>
+      </div>
+      {lastOutcome && (
+        <p className={lastOutcome.outcome === 'setback' ? 'result-fail' : 'result-pass'}>
+          {GOVERNANCE_FLAVOR[lastOutcome.outcome][pickFlavorIndex(`${career.turn}-govern`, GOVERNANCE_FLAVOR[lastOutcome.outcome].length)]}{' '}
+          ({lastOutcome.civicRecordDelta >= 0 ? '+' : ''}
+          {lastOutcome.civicRecordDelta.toFixed(0)} civic record)
+        </p>
       )}
     </section>
   );

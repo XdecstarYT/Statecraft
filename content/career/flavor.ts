@@ -50,6 +50,41 @@ export const LOCAL_RACE_LOSS_FLAVOR: string[] = [
   'You shake the winner’s hand. It won’t be the last time you see them.',
 ];
 
+export const REGIONAL_RACE_WIN_FLAVOR: string[] = [
+  'The state party sends a bottle of something decent and a note: "Welcome up."',
+  'A bigger district, a bigger crowd, and your name actually on statewide ballots now.',
+  'The council seat feels like a lifetime ago. This is a real legislature.',
+  'A veteran colleague shakes your hand: "Don’t get comfortable. It only gets harder."',
+];
+
+export const REGIONAL_RACE_LOSS_FLAVOR: string[] = [
+  'The local seat carried you this far, but this field was out of your league — for now.',
+  'A better-funded incumbent outspent you three to one, and it showed.',
+  'You’re still the councilmember people know. Just not the legislator you wanted to be, yet.',
+  'The numbers never really moved all night. A long way back to the office.',
+];
+
+export const GOVERNANCE_FLAVOR: Record<'strong' | 'solid' | 'setback', string[]> = {
+  strong: [
+    'You pushed a genuinely popular fix through committee — potholes filled, a park reopened, whatever it took.',
+    'A constituent showed up just to say thank you. That doesn’t happen often.',
+    'You found the votes for something everyone said was dead. It passed.',
+    'The local paper called it "unusually competent governance." You’ll take it.',
+  ],
+  solid: [
+    'A quiet session — budget lines reviewed, a few constituent calls returned.',
+    'Nothing headline-worthy, just the actual work of holding office.',
+    'You sat through the hearings, read the reports, did the job.',
+    'A modest zoning dispute got resolved without anyone yelling. Progress.',
+  ],
+  setback: [
+    'A vote you championed died in committee, and you spent the week explaining why.',
+    'A budget line you fought for got cut anyway.',
+    'An angry town hall reminded you how thin the goodwill really is.',
+    'You missed a vote that mattered, and the opposition noticed.',
+  ],
+};
+
 export const NOMINATION_SUCCESS_FLAVOR: string[] = [
   'The party chair calls personally: "We’re putting your name forward."',
   'A closed-door meeting, a show of hands, and suddenly it’s real.',
