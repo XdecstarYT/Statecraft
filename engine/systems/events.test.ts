@@ -123,6 +123,9 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     emergencyPowers: 'none',
     coupHistory: [],
     juntaControl: false,
+    foreignDistricts: {},
+    foreignParties: {},
+    foreignDistrictResults: {},
     ...overrides,
   };
 }

@@ -57,6 +57,54 @@ function pointInRing(lng: number, lat: number, ring: number[][]): boolean {
 const seedCache = new Map<string, ElectorateSeed[] | null>();
 
 const MAX_ATTEMPTS_PER_POINT = 400;
+const MASK_RESOLUTION = 400;
+
+interface InsideMask {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
+/**
+ * Rasterizes the ring into an inside/outside bitmap ONCE via a native
+ * canvas fill (fast, optimized scanline rasterizer), so the rejection-
+ * sampling loop below can do an O(1) array lookup per candidate point
+ * instead of an O(ring-vertex-count) ray-cast — for a several-hundred-
+ * vertex coastline tested against up to hundreds of candidates per seed,
+ * that ray-cast was the dominant cost of seeding a large nation. Returns
+ * null outside a browser context (canvas unavailable), in which case the
+ * caller falls back to the exact ray-cast test directly.
+ */
+function buildInsideMask(ring: number[][], minLng: number, maxLng: number, minLat: number, maxLat: number): InsideMask | null {
+  if (typeof document === 'undefined') return null;
+  const spanLng = Math.max(0.0001, maxLng - minLng);
+  const spanLat = Math.max(0.0001, maxLat - minLat);
+  const aspect = spanLng / spanLat;
+  const width = Math.max(1, Math.round(aspect >= 1 ? MASK_RESOLUTION : MASK_RESOLUTION * aspect));
+  const height = Math.max(1, Math.round(aspect >= 1 ? MASK_RESOLUTION / aspect : MASK_RESOLUTION));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.beginPath();
+  ring.forEach(([lng, lat], i) => {
+    const x = ((lng - minLng) / spanLng) * width;
+    const y = ((maxLat - lat) / spanLat) * height;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.closePath();
+  ctx.fill();
+  return { data: ctx.getImageData(0, 0, width, height).data, width, height };
+}
+
+function isInsideMask(mask: InsideMask, minLng: number, maxLng: number, minLat: number, maxLat: number, lng: number, lat: number): boolean {
+  const x = Math.min(mask.width - 1, Math.max(0, Math.floor(((lng - minLng) / Math.max(0.0001, maxLng - minLng)) * mask.width)));
+  const y = Math.min(mask.height - 1, Math.max(0, Math.floor(((maxLat - lat) / Math.max(0.0001, maxLat - minLat)) * mask.height)));
+  return mask.data[(y * mask.width + x) * 4 + 3] > 0;
+}
 
 /**
  * Deterministically places one seed point per district somewhere inside the
@@ -97,6 +145,9 @@ export function computeElectorateSeedPoints(
 
   const rng = mulberry32(hashString(nationId) ^ districtIds.length);
   const points: { lng: number; lat: number }[] = [];
+  const mask = buildInsideMask(ring, minLng, maxLng, minLat, maxLat);
+  const isInside = (lng: number, lat: number) =>
+    mask ? isInsideMask(mask, minLng, maxLng, minLat, maxLat, lng, lat) : pointInRing(lng, lat, ring);
 
   // Physical (lngScale-corrected) diagonal of the bounding box, divided down
   // by roughly how many cells should fit across it — shrinks automatically
@@ -110,13 +161,18 @@ export function computeElectorateSeedPoints(
       for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_POINT && !placed; attempt++) {
         const lng = minLng + rng() * spanLng;
         const lat = minLat + rng() * spanLat;
-        if (!pointInRing(lng, lat, ring)) continue;
+        if (!isInside(lng, lat)) continue;
         const tooClose = points.some((p) => {
           const dx = (p.lng - lng) * lngScale;
           const dz = p.lat - lat;
           return Math.hypot(dx, dz) < minSpacing;
         });
         if (tooClose) continue;
+        // The mask is a coarse (400px) approximation — verify with the
+        // exact ray-cast before committing a seed, so accuracy near a
+        // coastline never depends on mask resolution. Cheap here since
+        // it's one exact check per ACCEPTED seed, not per candidate.
+        if (mask && !pointInRing(lng, lat, ring)) continue;
         points.push({ lng, lat });
         placed = true;
       }

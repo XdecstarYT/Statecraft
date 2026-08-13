@@ -1071,6 +1071,12 @@ export interface GameState {
   worldGovernments: WorldGovernment[];
   /** Bounded recent-history log of resolved foreign elections, newest last. */
   worldElectionHistory: WorldElectionResult[];
+  /** counterpartId -> that nation's own single-member districts, generated once at game creation from its seat count. See engine/systems/worldElections.ts. */
+  foreignDistricts: Record<string, District[]>;
+  /** counterpartId -> that nation's own party roster, evolving in seat count (never count/identity) as its own elections resolve. */
+  foreignParties: Record<string, Party[]>;
+  /** counterpartId -> that nation's most recent election's real per-district results, used to color its electorates on the globe. Absent until its first election resolves. */
+  foreignDistrictResults: Record<string, DistrictResult[]>;
   /** The player's own country's military profile — compared against a counterpart's in war resolution. */
   playerMilitary: MilitaryProfile;
   treaties: Treaty[];

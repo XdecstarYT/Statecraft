@@ -53,6 +53,8 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
 
   const selected = game.foreignCounterparts.find((c) => c.id === selectedId) ?? null;
   const selectedGovernment = selected ? game.worldGovernments.find((g) => g.counterpartId === selected.id) : null;
+  const selectedParties = selected ? game.foreignParties[selected.id] : null;
+  const selectedTotalSeats = selectedParties?.reduce((sum, p) => sum + p.seats, 0) ?? 0;
   const relation = selected ? game.foreignRelations[selected.id] ?? 0 : 0;
   const activeWar = selected
     ? game.wars.find((w) => w.counterpartId === selected.id && w.status === 'active')
@@ -137,6 +139,16 @@ export function WorldPanel({ selectedId, onSelect }: WorldPanelProps) {
               {selectedGovernment.nextElectionTurn - game.turn <= 0
                 ? 'due this week'
                 : `in ${selectedGovernment.nextElectionTurn - game.turn} week${selectedGovernment.nextElectionTurn - game.turn === 1 ? '' : 's'}`}
+            </p>
+          )}
+
+          {selectedParties && selectedParties.length > 0 && (
+            <p className="muted">
+              {selectedTotalSeats}-seat legislature:{' '}
+              {[...selectedParties]
+                .sort((a, b) => b.seats - a.seats)
+                .map((p) => `${p.name} ${p.seats}`)
+                .join(' · ')}
             </p>
           )}
 

@@ -4,7 +4,6 @@ import type { Feature, Geometry, MultiLineString, MultiPolygon, Polygon } from '
 import type { GeometryCollection, GeometryObject } from 'topojson-specification';
 import { findCountryGeoId, getCountryOuterRingLngLat, worldCountriesTopology } from '../../content/diplomacy/countryGeoIds';
 import { computeElectorateSeedPoints } from '../../content/diplomacy/electorateLayout';
-import { AUSTRALIA_COUNTRY, AUSTRALIA_DISTRICTS } from '../../content/countries/australia';
 import { resolveFPTPDistrict, type District, type ElectionOutcome, type ForeignCounterpart, type GameState } from '../../engine';
 import { computeMarkerAppearance, sumProduction, type GlobeFilter } from '../worldFilterAppearance';
 import { partyColor } from '../partyColor';
@@ -27,12 +26,6 @@ function project(lng: number, lat: number): [number, number] {
   const x = ((lng + 180) / 360) * TEXTURE_WIDTH;
   const y = ((90 - lat) / 180) * TEXTURE_HEIGHT;
   return [x, y];
-}
-
-function unproject(x: number, y: number): [number, number] {
-  const lng = (x / TEXTURE_WIDTH) * 360 - 180;
-  const lat = 90 - (y / TEXTURE_HEIGHT) * 180;
-  return [lng, lat];
 }
 
 /** Traces one ring/line (array of [lng, lat] points), breaking wherever consecutive points jump >180deg in longitude to avoid antimeridian streaks. */
@@ -124,6 +117,74 @@ interface ElectorateRaster {
   districtIds: string[];
 }
 
+/**
+ * Builds a spatial-hash-accelerated nearest-seed lookup: brute-force
+ * distance to every seed per pixel is O(pixels * seeds), which blows well
+ * past a second for a large nation's several-hundred-seat roster times its
+ * bounding box — this buckets seeds into a coarse grid sized so each
+ * bucket holds roughly one seed, and a query only widens its search ring
+ * until it's found candidates plus one extra ring for safety, instead of
+ * ever touching every seed. A tiny, cosmetically-invisible chance of
+ * picking a not-quite-nearest seed right at a cell boundary in exchange for
+ * roughly two orders of magnitude less work — this is a display cell
+ * assignment, not a real boundary survey (see this file's own doc comment).
+ */
+function buildSeedFinder(seedPx: [number, number][], originX: number, originY: number): (x: number, y: number) => number {
+  let seedMinX = Infinity;
+  let seedMaxX = -Infinity;
+  let seedMinY = Infinity;
+  let seedMaxY = -Infinity;
+  for (const [sx, sy] of seedPx) {
+    if (sx < seedMinX) seedMinX = sx;
+    if (sx > seedMaxX) seedMaxX = sx;
+    if (sy < seedMinY) seedMinY = sy;
+    if (sy > seedMaxY) seedMaxY = sy;
+  }
+  const seedArea = Math.max(1, (seedMaxX - seedMinX) * (seedMaxY - seedMinY));
+  const cellSize = Math.max(2, Math.sqrt(seedArea / Math.max(1, seedPx.length)));
+  const buckets = new Map<string, number[]>();
+  const bucketKey = (bx: number, by: number) => `${bx}:${by}`;
+  for (let i = 0; i < seedPx.length; i++) {
+    const bx = Math.floor((seedPx[i][0] - originX) / cellSize);
+    const by = Math.floor((seedPx[i][1] - originY) / cellSize);
+    const key = bucketKey(bx, by);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(i);
+    else buckets.set(key, [i]);
+  }
+
+  return (x: number, y: number): number => {
+    const bx = Math.floor((x - originX) / cellSize);
+    const by = Math.floor((y - originY) / cellSize);
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    let radius = 0;
+    let foundAtRadius = -1;
+    while (foundAtRadius === -1 || radius <= foundAtRadius + 1) {
+      for (let gy = by - radius; gy <= by + radius; gy++) {
+        for (let gx = bx - radius; gx <= bx + radius; gx++) {
+          if (radius > 0 && Math.max(Math.abs(gx - bx), Math.abs(gy - by)) !== radius) continue;
+          const bucket = buckets.get(bucketKey(gx, gy));
+          if (!bucket) continue;
+          for (const idx of bucket) {
+            const dx = seedPx[idx][0] - x;
+            const dy = seedPx[idx][1] - y;
+            const d = dx * dx + dy * dy;
+            if (d < bestDist) {
+              bestDist = d;
+              bestIdx = idx;
+            }
+          }
+          if (bucket.length > 0 && foundAtRadius === -1) foundAtRadius = radius;
+        }
+      }
+      radius++;
+      if (radius > 4000) break; // pathological safety valve — never expected in practice
+    }
+    return bestIdx;
+  };
+}
+
 const electorateRasterCache = new Map<string, ElectorateRaster | null>();
 
 function buildElectorateRaster(nationId: string, displayName: string, districtIds: string[]): ElectorateRaster | null {
@@ -157,26 +218,34 @@ function buildElectorateRaster(nationId: string, displayName: string, districtId
   const height = maxY - minY + 1;
 
   const seedPx = seeds.map((s) => project(s.lng, s.lat));
+  const findNearestSeed = buildSeedFinder(seedPx, minX, minY);
   const cellIndex = new Int16Array(width * height).fill(-1);
+
+  // "Inside the country's own ring" is tested via a native canvas fill —
+  // its scanline rasterizer is far faster than a manual per-pixel ray-cast
+  // against a several-hundred-vertex ring (which, done pixel-by-pixel
+  // across a large country's whole bounding box, was the actual cost
+  // behind a multi-second first World-tab render before this).
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = width;
+  maskCanvas.height = height;
+  const maskCtx = maskCanvas.getContext('2d')!;
+  maskCtx.beginPath();
+  ring.forEach(([lng, lat], i) => {
+    const [x, y] = project(lng, lat);
+    if (i === 0) maskCtx.moveTo(x - minX, y - minY);
+    else maskCtx.lineTo(x - minX, y - minY);
+  });
+  maskCtx.closePath();
+  maskCtx.fill();
+  const mask = maskCtx.getImageData(0, 0, width, height).data;
 
   for (let row = 0; row < height; row++) {
     const canvasY = minY + row;
     for (let col = 0; col < width; col++) {
+      if (mask[(row * width + col) * 4 + 3] === 0) continue;
       const canvasX = minX + col;
-      const [lng, lat] = unproject(canvasX + 0.5, canvasY + 0.5);
-      if (!pointInRingLocal(lng, lat, ring)) continue;
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      for (let i = 0; i < seedPx.length; i++) {
-        const dx = seedPx[i][0] - canvasX;
-        const dy = seedPx[i][1] - canvasY;
-        const d = dx * dx + dy * dy;
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = i;
-        }
-      }
-      cellIndex[row * width + col] = bestIdx;
+      cellIndex[row * width + col] = findNearestSeed(canvasX, canvasY);
     }
   }
 
@@ -194,18 +263,6 @@ function buildElectorateRaster(nationId: string, displayName: string, districtId
   const raster: ElectorateRaster = { minX, minY, width, height, cellIndex, boundary, districtIds: seeds.map((s) => s.districtId) };
   electorateRasterCache.set(cacheKey, raster);
   return raster;
-}
-
-/** Local ray-casting point-in-polygon test — kept alongside the raster builder rather than importing electorateLayout's private copy. */
-function pointInRingLocal(lng: number, lat: number, ring: number[][]): boolean {
-  let inside = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [lngI, latI] = ring[i];
-    const [lngJ, latJ] = ring[j];
-    const intersects = latI > lat !== latJ > lat && lng < ((lngJ - lngI) * (lat - latI)) / (latJ - latI) + lngI;
-    if (intersects) inside = !inside;
-  }
-  return inside;
 }
 
 const rgbParseCanvas = document.createElement('canvas');
@@ -260,15 +317,16 @@ function paintElectorates(
  * has a shape for but our roster has no data for (see countryGeoIds.ts)
  * render in a neutral "recognized, untracked" shade rather than being
  * silently omitted. The player's own country is never one of `nations`
- * (see Globe.tsx) — it gets its own distinct base color, plus, when it has
- * real geometry and single-member districts, a full electorate subdivision
- * colored by the last election's actual per-district winners. Australia
- * additionally gets a showcase electorate subdivision (real seat count/
- * names, boundary lines only — no fabricated foreign per-seat results)
- * even when it's just one of the AI-run foreign nations. Built fresh on
- * every call — cheap enough (one canvas, ~177 country polygons, electorate
- * cell *assignment* cached separately) to regenerate on every filter/
- * selection/game-data change rather than needing an internal cache.
+ * (see Globe.tsx) — it gets its own distinct base color. Every nation with
+ * real geometry and a recorded district roster — the player's own country
+ * AND, since engine/systems/worldElections.ts now runs a genuine per-seat
+ * FPTP election for all ~194 world nations, every one of them — gets a
+ * full electorate subdivision colored by that nation's own last election's
+ * real per-district winners (or, before its first election resolves, a
+ * flat boundary-only showcase of its real seat count). Built fresh on
+ * every call — cheap enough (one canvas, ~194 country polygons, electorate
+ * cell *assignment* cached separately per nation) to regenerate on every
+ * filter/selection/game-data change rather than needing an internal cache.
  */
 export function buildWorldPoliticalTexture(
   nations: ForeignCounterpart[],
@@ -295,9 +353,8 @@ export function buildWorldPoliticalTexture(
 
   const playerGeoId = game ? findCountryGeoId(game.country.id, game.country.name) : undefined;
   const nationAppearanceColor = new Map<string, string>();
-  const australiaGeoId = findCountryGeoId(AUSTRALIA_COUNTRY.id, AUSTRALIA_COUNTRY.name);
+  const nationFeature = new Map<string, Feature<Geometry>>();
   let playerFeature: Feature<Geometry> | undefined;
-  let australiaFeature: Feature<Geometry> | undefined;
 
   const countriesObject = worldCountriesTopology.objects.countries as GeometryCollection;
   const geometries = countriesObject.geometries;
@@ -308,7 +365,7 @@ export function buildWorldPoliticalTexture(
     const nation = geoIdToNation.get(geoId);
     const f = feature(worldCountriesTopology, geometry as GeometryObject) as Feature<Geometry>;
     if (geoId === playerGeoId) playerFeature = f;
-    if (geoId === australiaGeoId) australiaFeature = f;
+    if (nation) nationFeature.set(nation.id, f);
     if (nation) {
       const appearance = computeMarkerAppearance(filter, nation, game, maxProduction);
       const color = fillColorFor(appearance.hue);
@@ -326,6 +383,8 @@ export function buildWorldPoliticalTexture(
   ctx.strokeStyle = BORDER_COLOR;
   ctx.lineWidth = 1;
   strokeMultiLine(ctx, mesh(worldCountriesTopology, countriesObject) as MultiLineString);
+
+  const detailedFeatures: Feature<Geometry>[] = [];
 
   // Player's own electorates, colored by the last election's real per-district winners.
   if (game && playerGeoId) {
@@ -347,34 +406,54 @@ export function buildWorldPoliticalTexture(
           const winnerPartyId = winnerByDistrict.get(districtId);
           return winnerPartyId ? partyColor(winnerPartyId) : PLAYER_HOME_BASE_COLOR;
         });
+        if (playerFeature) detailedFeatures.push(playerFeature);
       }
     }
   }
 
-  // Australia showcase: real seat count/names, boundary lines only — no
-  // per-seat foreign election exists to color cells by, so every cell
-  // keeps the nation's own single appearance color and only the boundary
-  // darkening changes. Skipped when Australia IS the player's own country
-  // (already handled, in full, by the block above) — it simply won't be
-  // among `nations` in that case (see Globe.tsx / nationsExcluding).
-  const australiaColor = nationAppearanceColor.get(AUSTRALIA_COUNTRY.id);
-  if (australiaColor) {
-    const raster = buildElectorateRaster(
-      AUSTRALIA_COUNTRY.id,
-      AUSTRALIA_COUNTRY.name,
-      AUSTRALIA_DISTRICTS.map((d) => d.id)
-    );
-    if (raster) paintElectorates(ctx, raster, () => australiaColor);
+  // Every foreign nation's own electorates, colored by ITS OWN real last
+  // election's per-district winners (engine/systems/worldElections.ts runs
+  // a genuine per-seat FPTP race for every nation in the roster) — before
+  // that nation's first election resolves, cells fall back to its single
+  // appearance color with boundary lines only, same shape as the player's
+  // own pre-election state above.
+  if (game) {
+    for (const nation of nations) {
+      const districts = game.foreignDistricts[nation.id];
+      const color = nationAppearanceColor.get(nation.id);
+      if (!districts || districts.length === 0 || !color) continue;
+      const raster = buildElectorateRaster(
+        nation.id,
+        nation.name,
+        districts.map((d) => d.id)
+      );
+      if (!raster) continue;
+
+      const districtResults = game.foreignDistrictResults[nation.id];
+      const parties = game.foreignParties[nation.id];
+      const winnerByDistrict = new Map<string, string>();
+      if (districtResults) {
+        for (const result of districtResults) winnerByDistrict.set(result.districtId, resolveFPTPDistrict(result));
+      }
+      paintElectorates(ctx, raster, (districtId) => {
+        const winnerPartyId = winnerByDistrict.get(districtId);
+        if (!winnerPartyId) return color;
+        const party = parties?.find((p) => p.id === winnerPartyId);
+        return party ? partyColor(party.id) : color;
+      });
+
+      const f = nationFeature.get(nation.id);
+      if (f) detailedFeatures.push(f);
+    }
   }
 
   // Electorate painting overwrites raw pixels within each detailed
   // country's own bounding box, including the coastline stroke drawn just
-  // inside its edge — re-stroking just that country's outline restores a
-  // crisp border on top rather than leaving a half-erased coastline.
+  // inside its edge — re-stroking just those countries' outlines restores
+  // a crisp border on top rather than leaving a half-erased coastline.
   ctx.strokeStyle = BORDER_COLOR;
   ctx.lineWidth = 1;
-  if (playerFeature) strokePolygon(ctx, playerFeature);
-  if (australiaFeature && australiaFeature !== playerFeature) strokePolygon(ctx, australiaFeature);
+  for (const f of detailedFeatures) strokePolygon(ctx, f);
 
   const selectedNation = selectedId ? nations.find((n) => n.id === selectedId) : undefined;
   const selectedGeoId = selectedNation ? findCountryGeoId(selectedNation.id, selectedNation.name) : undefined;

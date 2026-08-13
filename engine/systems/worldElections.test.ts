@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
-import type { ForeignCounterpart, WorldGovernment } from '../models/types';
+import type { District, ForeignCounterpart, Party, VoterBloc, WorldGovernment } from '../models/types';
 import {
   WORLD_TERM_LENGTH_TURNS,
-  computeIncumbentRetentionProbability,
   computeRealignmentRelationDelta,
   driftApproval,
+  initializeForeignLegislatures,
   initializeWorldGovernments,
-  resolveWorldElection,
+  resolveForeignElection,
   runWorldElectionsTurn,
 } from './worldElections';
 
@@ -38,6 +38,31 @@ function makeGov(overrides: Partial<WorldGovernment> & { counterpartId: string }
   };
 }
 
+function makeDistricts(nationId: string, count: number): District[] {
+  return Array.from({ length: count }, (_, i) => ({ id: `${nationId}-d${i + 1}`, name: `District ${i + 1}` }));
+}
+
+function makeParties(nationId: string, seatShares: number[] = [42, 26, 18, 14]): Party[] {
+  const ideologies = [
+    { economic: 0, social: 0 },
+    { economic: 40, social: 30 },
+    { economic: -40, social: -30 },
+    { economic: 10, social: -50 },
+  ];
+  return seatShares.map((seats, i) => ({
+    id: `${nationId}-party-${i + 1}`,
+    name: i === 0 ? 'National Union' : `Opposition ${i}`,
+    ideology: ideologies[i],
+    seats,
+    factions: [{ name: 'Core', ideologyOffset: 0, size: seats }],
+  }));
+}
+
+const TEST_VOTER_BLOCS: VoterBloc[] = [
+  { id: 'bloc-a', name: 'Bloc A', size: 0.5, ideology: { economic: 20, social: 10 }, persuadability: 0.6, issueSalience: [] },
+  { id: 'bloc-b', name: 'Bloc B', size: 0.5, ideology: { economic: -20, social: -10 }, persuadability: 0.6, issueSalience: [] },
+];
+
 describe('initializeWorldGovernments', () => {
   const counterparts = [makeCounterpart({ id: 'alpha' }), makeCounterpart({ id: 'beta' })];
 
@@ -65,6 +90,41 @@ describe('initializeWorldGovernments', () => {
   });
 });
 
+describe('initializeForeignLegislatures', () => {
+  it('gives every nation a real district count and a 4-party roster summing to it', () => {
+    const counterparts = [
+      makeCounterpart({ id: 'united-states' }),
+      makeCounterpart({ id: 'some-generated-nation', military: { strength: 30, personnel: 40, techLevel: 30 } }),
+    ];
+    const governments = initializeWorldGovernments(counterparts, new SeededRng(1));
+    const { districts, parties } = initializeForeignLegislatures(counterparts, governments, new SeededRng(1));
+
+    expect(districts['united-states']).toHaveLength(435);
+    expect(parties['united-states']).toHaveLength(4);
+    const usSeatSum = parties['united-states'].reduce((sum, p) => sum + p.seats, 0);
+    expect(usSeatSum).toBe(435);
+
+    expect(districts['some-generated-nation'].length).toBeGreaterThan(0);
+    const genSeatSum = parties['some-generated-nation'].reduce((sum, p) => sum + p.seats, 0);
+    expect(genSeatSum).toBe(districts['some-generated-nation'].length);
+  });
+
+  it("the ruling party's name matches the recorded government's rulingPartyName", () => {
+    const counterparts = [makeCounterpart({ id: 'alpha' })];
+    const governments = initializeWorldGovernments(counterparts, new SeededRng(1));
+    const { parties } = initializeForeignLegislatures(counterparts, governments, new SeededRng(1));
+    expect(parties['alpha'][0].name).toBe(governments[0].rulingPartyName);
+  });
+
+  it('is deterministic given the same seed', () => {
+    const counterparts = [makeCounterpart({ id: 'alpha' }), makeCounterpart({ id: 'beta' })];
+    const governments = initializeWorldGovernments(counterparts, new SeededRng(1));
+    const a = initializeForeignLegislatures(counterparts, governments, new SeededRng(5));
+    const b = initializeForeignLegislatures(counterparts, governments, new SeededRng(5));
+    expect(a).toEqual(b);
+  });
+});
+
 describe('driftApproval', () => {
   it('stays within 5..95 bounds', () => {
     let gov = makeGov({ counterpartId: 'a', approval: 94 });
@@ -77,62 +137,96 @@ describe('driftApproval', () => {
   });
 });
 
-describe('computeIncumbentRetentionProbability', () => {
-  it('is higher for a more popular government', () => {
-    expect(computeIncumbentRetentionProbability(makeGov({ counterpartId: 'a', approval: 80 }))).toBeGreaterThan(
-      computeIncumbentRetentionProbability(makeGov({ counterpartId: 'a', approval: 20 }))
-    );
-  });
-
-  it('stays within 0.05..0.95', () => {
-    expect(computeIncumbentRetentionProbability(makeGov({ counterpartId: 'a', approval: 0 }))).toBeGreaterThanOrEqual(0.05);
-    expect(computeIncumbentRetentionProbability(makeGov({ counterpartId: 'a', approval: 100 }))).toBeLessThanOrEqual(0.95);
-  });
-});
-
-describe('resolveWorldElection', () => {
-  it('retains a popular incumbent far more often than an unpopular one across many seeds', () => {
+describe('resolveForeignElection', () => {
+  it('a party holding a much larger seat share tends to keep leading more often than not, across many seeds', () => {
     const counterpart = makeCounterpart({ id: 'alpha' });
-    let popularRetained = 0;
-    let unpopularRetained = 0;
-    const trials = 300;
+    const districts = makeDistricts('alpha', 60);
+    let leaderRetained = 0;
+    const trials = 100;
     for (let seed = 0; seed < trials; seed++) {
-      const popularGov = makeGov({ counterpartId: 'alpha', approval: 90, nextElectionTurn: 10 });
-      const unpopularGov = makeGov({ counterpartId: 'alpha', approval: 10, nextElectionTurn: 10 });
-      if (resolveWorldElection(counterpart, popularGov, new SeededRng(seed)).result.incumbentReturned) popularRetained++;
-      if (resolveWorldElection(counterpart, unpopularGov, new SeededRng(seed)).result.incumbentReturned) unpopularRetained++;
+      const parties = makeParties('alpha', [42, 6, 6, 6]);
+      const gov = makeGov({ counterpartId: 'alpha', approval: 60, nextElectionTurn: 10 });
+      const { result } = resolveForeignElection(counterpart, gov, districts, parties, TEST_VOTER_BLOCS, new SeededRng(seed));
+      if (result.incumbentReturned) leaderRetained++;
     }
-    expect(popularRetained).toBeGreaterThan(unpopularRetained);
+    expect(leaderRetained).toBeGreaterThan(trials / 2);
   });
 
   it('advances nextElectionTurn by a full term either way', () => {
     const counterpart = makeCounterpart({ id: 'alpha' });
+    const districts = makeDistricts('alpha', 40);
+    const parties = makeParties('alpha');
     const gov = makeGov({ counterpartId: 'alpha', nextElectionTurn: 10 });
-    const { government } = resolveWorldElection(counterpart, gov, new SeededRng(1));
+    const { government } = resolveForeignElection(counterpart, gov, districts, parties, TEST_VOTER_BLOCS, new SeededRng(1));
     expect(government.nextElectionTurn).toBe(10 + WORLD_TERM_LENGTH_TURNS);
     expect(government.lastElectionTurn).toBe(10);
   });
 
-  it('keeps the same party/leader/ideology when the incumbent is retained', () => {
+  it('district results exactly cover every district and seats sum to the district count', () => {
+    const counterpart = makeCounterpart({ id: 'alpha' });
+    const districts = makeDistricts('alpha', 50);
+    const parties = makeParties('alpha');
+    const gov = makeGov({ counterpartId: 'alpha', nextElectionTurn: 10 });
+    const { districtResults, parties: updatedParties } = resolveForeignElection(
+      counterpart,
+      gov,
+      districts,
+      parties,
+      TEST_VOTER_BLOCS,
+      new SeededRng(3)
+    );
+    expect(districtResults).toHaveLength(50);
+    expect(districtResults.map((r) => r.districtId).sort()).toEqual(districts.map((d) => d.id).sort());
+    expect(updatedParties.reduce((sum, p) => sum + p.seats, 0)).toBe(50);
+  });
+
+  it('keeps party ids/identities stable — an election reshuffles seat counts, never spawns or removes a party', () => {
+    const counterpart = makeCounterpart({ id: 'alpha' });
+    const districts = makeDistricts('alpha', 40);
+    const parties = makeParties('alpha');
+    const gov = makeGov({ counterpartId: 'alpha', nextElectionTurn: 10 });
+    const { parties: updatedParties } = resolveForeignElection(counterpart, gov, districts, parties, TEST_VOTER_BLOCS, new SeededRng(4));
+    expect(updatedParties.map((p) => p.id)).toEqual(parties.map((p) => p.id));
+    expect(updatedParties.map((p) => p.name)).toEqual(parties.map((p) => p.name));
+  });
+
+  it('keeps the same ideology when a dominant, popular incumbent is retained', () => {
     const counterpart = makeCounterpart({ id: 'alpha', ideology: { economic: 20, social: -10 } });
-    const gov = makeGov({ counterpartId: 'alpha', approval: 95, nextElectionTurn: 10 });
-    // seed chosen so retention rolls true given ~0.95 probability
-    const { counterpart: nextCounterpart, result } = resolveWorldElection(counterpart, gov, new SeededRng(2));
+    const districts = makeDistricts('alpha', 40);
+    const parties = makeParties('alpha', [70, 10, 10, 10]);
+    const gov = makeGov({ counterpartId: 'alpha', approval: 90, nextElectionTurn: 10 });
+    const { counterpart: nextCounterpart, result } = resolveForeignElection(
+      counterpart,
+      gov,
+      districts,
+      parties,
+      TEST_VOTER_BLOCS,
+      new SeededRng(1)
+    );
     expect(result.incumbentReturned).toBe(true);
     expect(nextCounterpart.ideology).toEqual(counterpart.ideology);
     expect(result.newPartyName).toBe(result.previousPartyName);
   });
 
-  it('jitters ideology and swaps party/leader on a regime change', () => {
+  it('jitters ideology and swaps the ruling party on a regime change', () => {
     const counterpart = makeCounterpart({ id: 'alpha', ideology: { economic: 20, social: -10 } });
+    const districts = makeDistricts('alpha', 40);
     const gov = makeGov({ counterpartId: 'alpha', approval: 5, nextElectionTurn: 10 });
     let sawChange = false;
     for (let seed = 0; seed < 100 && !sawChange; seed++) {
-      const { counterpart: nextCounterpart, result } = resolveWorldElection(counterpart, gov, new SeededRng(seed));
+      const parties = makeParties('alpha', [10, 70, 10, 10]);
+      const { counterpart: nextCounterpart, result } = resolveForeignElection(
+        counterpart,
+        gov,
+        districts,
+        parties,
+        TEST_VOTER_BLOCS,
+        new SeededRng(seed)
+      );
       if (!result.incumbentReturned) {
         sawChange = true;
         expect(nextCounterpart.ideology).not.toEqual(counterpart.ideology);
-        expect(result.newLeaderName).not.toBe(gov.leaderName);
+        expect(result.newPartyName).not.toBe(result.previousPartyName);
       }
     }
     expect(sawChange).toBe(true);
@@ -140,9 +234,11 @@ describe('resolveWorldElection', () => {
 
   it('is deterministic given the same seed and inputs', () => {
     const counterpart = makeCounterpart({ id: 'alpha' });
+    const districts = makeDistricts('alpha', 40);
+    const parties = makeParties('alpha');
     const gov = makeGov({ counterpartId: 'alpha', approval: 30, nextElectionTurn: 10 });
-    const a = resolveWorldElection(counterpart, gov, new SeededRng(99));
-    const b = resolveWorldElection(counterpart, gov, new SeededRng(99));
+    const a = resolveForeignElection(counterpart, gov, districts, parties, TEST_VOTER_BLOCS, new SeededRng(99));
+    const b = resolveForeignElection(counterpart, gov, districts, parties, TEST_VOTER_BLOCS, new SeededRng(99));
     expect(a).toEqual(b);
   });
 });
@@ -177,26 +273,75 @@ describe('runWorldElectionsTurn', () => {
   it('leaves governments whose term is not due untouched aside from approval drift', () => {
     const counterparts = [makeCounterpart({ id: 'alpha' })];
     const governments = [makeGov({ counterpartId: 'alpha', nextElectionTurn: 500 })];
-    const { governments: next, results } = runWorldElectionsTurn(counterparts, governments, {}, playerIdeology, 10, new SeededRng(1));
+    const foreignDistricts = { alpha: makeDistricts('alpha', 40) };
+    const foreignParties = { alpha: makeParties('alpha') };
+    const { governments: next, results } = runWorldElectionsTurn(
+      counterparts,
+      governments,
+      {},
+      foreignDistricts,
+      foreignParties,
+      TEST_VOTER_BLOCS,
+      playerIdeology,
+      10,
+      new SeededRng(1)
+    );
     expect(results).toHaveLength(0);
     expect(next[0].nextElectionTurn).toBe(500);
   });
 
-  it('resolves every government whose term is due this turn', () => {
+  it('resolves every government whose term is due this turn, producing real district results for each', () => {
     const counterparts = [makeCounterpart({ id: 'alpha' }), makeCounterpart({ id: 'beta' })];
     const governments = [
       makeGov({ counterpartId: 'alpha', nextElectionTurn: 10 }),
       makeGov({ counterpartId: 'beta', nextElectionTurn: 10 }),
     ];
-    const { results } = runWorldElectionsTurn(counterparts, governments, {}, playerIdeology, 10, new SeededRng(1));
+    const foreignDistricts = { alpha: makeDistricts('alpha', 40), beta: makeDistricts('beta', 30) };
+    const foreignParties = { alpha: makeParties('alpha'), beta: makeParties('beta') };
+    const { results, foreignDistrictResults, foreignParties: updatedParties } = runWorldElectionsTurn(
+      counterparts,
+      governments,
+      {},
+      foreignDistricts,
+      foreignParties,
+      TEST_VOTER_BLOCS,
+      playerIdeology,
+      10,
+      new SeededRng(1)
+    );
     expect(results).toHaveLength(2);
+    expect(foreignDistrictResults['alpha']).toHaveLength(40);
+    expect(foreignDistrictResults['beta']).toHaveLength(30);
+    expect(updatedParties['alpha'].reduce((sum, p) => sum + p.seats, 0)).toBe(40);
   });
 
   it('is deterministic given the same seed', () => {
     const counterparts = [makeCounterpart({ id: 'alpha' })];
     const governments = [makeGov({ counterpartId: 'alpha', nextElectionTurn: 10 })];
-    const a = runWorldElectionsTurn(counterparts, governments, {}, playerIdeology, 10, new SeededRng(7));
-    const b = runWorldElectionsTurn(counterparts, governments, {}, playerIdeology, 10, new SeededRng(7));
+    const foreignDistricts = { alpha: makeDistricts('alpha', 40) };
+    const foreignParties = { alpha: makeParties('alpha') };
+    const a = runWorldElectionsTurn(
+      counterparts,
+      governments,
+      {},
+      foreignDistricts,
+      foreignParties,
+      TEST_VOTER_BLOCS,
+      playerIdeology,
+      10,
+      new SeededRng(7)
+    );
+    const b = runWorldElectionsTurn(
+      counterparts,
+      governments,
+      {},
+      foreignDistricts,
+      foreignParties,
+      TEST_VOTER_BLOCS,
+      playerIdeology,
+      10,
+      new SeededRng(7)
+    );
     expect(a).toEqual(b);
   });
 });

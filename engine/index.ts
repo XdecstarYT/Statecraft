@@ -154,7 +154,12 @@ import {
   resolveScandalForcedExit,
   type MinisterNoConfidenceResult,
 } from './systems/cabinet';
-import { WORLD_ELECTION_HISTORY_LIMIT, initializeWorldGovernments, runWorldElectionsTurn } from './systems/worldElections';
+import {
+  WORLD_ELECTION_HISTORY_LIMIT,
+  initializeForeignLegislatures,
+  initializeWorldGovernments,
+  runWorldElectionsTurn,
+} from './systems/worldElections';
 import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
@@ -558,6 +563,11 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
   const committees = assignCommittees(politicians, parties, rng);
   const factionLeaderId = assignFactionLeaders(politicians, parties);
   const worldGovernments = initializeWorldGovernments(foreignCounterparts, rng);
+  const { districts: foreignDistricts, parties: foreignParties } = initializeForeignLegislatures(
+    foreignCounterparts,
+    worldGovernments,
+    rng
+  );
   const partyWhips = assignPartyWhips(politicians, parties);
 
   const baseState: GameState = {
@@ -578,6 +588,9 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     foreignRelations: {},
     worldGovernments,
     worldElectionHistory: [],
+    foreignDistricts,
+    foreignParties,
+    foreignDistrictResults: {},
     pendingCoalitionOffers: null,
     byElections: [],
     districtLeanDrift: {},
@@ -1790,14 +1803,18 @@ export function advanceTurn(state: GameState): GameState {
 export function runWorldElectionsForTurn(state: GameState, rng: SeededRng): GameState {
   const player = state.politicians.find((p) => p.isPlayer);
   const playerIdeology = player?.ideology ?? { economic: 0, social: 0 };
-  const { counterparts, governments, foreignRelations, results } = runWorldElectionsTurn(
-    state.foreignCounterparts,
-    state.worldGovernments,
-    state.foreignRelations,
-    playerIdeology,
-    state.turn,
-    rng
-  );
+  const { counterparts, governments, foreignRelations, foreignParties, foreignDistrictResults, results } =
+    runWorldElectionsTurn(
+      state.foreignCounterparts,
+      state.worldGovernments,
+      state.foreignRelations,
+      state.foreignDistricts,
+      state.foreignParties,
+      state.voterBlocs,
+      playerIdeology,
+      state.turn,
+      rng
+    );
   if (results.length === 0) return state;
   const worldElectionHistory = [...state.worldElectionHistory, ...results].slice(-WORLD_ELECTION_HISTORY_LIMIT);
   return {
@@ -1805,6 +1822,8 @@ export function runWorldElectionsForTurn(state: GameState, rng: SeededRng): Game
     foreignCounterparts: counterparts,
     worldGovernments: governments,
     foreignRelations,
+    foreignParties,
+    foreignDistrictResults: { ...state.foreignDistrictResults, ...foreignDistrictResults },
     worldElectionHistory,
   };
 }
