@@ -55,3 +55,88 @@ export function axialToPixel(q: number, r: number, hexSize: number): { x: number
   const y = hexSize * (Math.sqrt(3) * (r + q / 2));
   return { x, y };
 }
+
+/** A minimal shape of Province this module needs — avoids importing the full engine just for one field set. */
+export interface ProvinceGrouping {
+  id: string;
+  name: string;
+  districtIds: string[];
+}
+
+export interface ClusteredAxialCoord extends AxialCoord {
+  provinceId: string;
+  provinceName: string;
+  /** True on exactly one tile per province — the one nearest that province's own cluster center, used to place a single label. */
+  isProvinceAnchor: boolean;
+}
+
+/** Smallest ring count whose cumulative cell total (1 + 3k(k+1)) covers `count` districts. */
+function ringsNeeded(count: number): number {
+  let k = 0;
+  while (1 + 3 * k * (k + 1) < count) k++;
+  return k;
+}
+
+/**
+ * The same hex-ring spiral as computeDistrictLayout, but grouped by
+ * province first: every province gets its own local spiral, and those
+ * per-province clusters are themselves spiral-placed around a shared
+ * center — so the map reads as separated states/regions instead of one
+ * undifferentiated carpet of districts. Districts with no covering
+ * province (a PR legislature's provinces carry no districtIds at all, or
+ * fewer than two real groups exist) fall back to the flat, ungrouped
+ * spiral untouched.
+ */
+export function computeDistrictLayoutByProvince(
+  districtIds: string[],
+  provinces: ProvinceGrouping[]
+): ClusteredAxialCoord[] {
+  const provinceIdByDistrict = new Map<string, string>();
+  for (const province of provinces) {
+    for (const id of province.districtIds) provinceIdByDistrict.set(id, province.id);
+  }
+
+  const groupOrder: string[] = [];
+  const groups = new Map<string, { name: string; ids: string[] }>();
+  for (const id of districtIds) {
+    const provinceId = provinceIdByDistrict.get(id) ?? '__ungrouped__';
+    let group = groups.get(provinceId);
+    if (!group) {
+      group = { name: provinces.find((p) => p.id === provinceId)?.name ?? 'Unassigned', ids: [] };
+      groups.set(provinceId, group);
+      groupOrder.push(provinceId);
+    }
+    group.ids.push(id);
+  }
+
+  if (groupOrder.length <= 1) {
+    return computeDistrictLayout(districtIds).map((cell) => ({
+      ...cell,
+      provinceId: groupOrder[0] ?? '',
+      provinceName: groupOrder[0] ? (groups.get(groupOrder[0])?.name ?? '') : '',
+      isProvinceAnchor: false,
+    }));
+  }
+
+  const maxGroupSize = Math.max(...groupOrder.map((id) => groups.get(id)!.ids.length));
+  const clusterSpacing = ringsNeeded(maxGroupSize) * 2 + 3;
+  const centers = computeDistrictLayout(groupOrder);
+
+  const clustered: ClusteredAxialCoord[] = [];
+  groupOrder.forEach((provinceId, i) => {
+    const group = groups.get(provinceId)!;
+    const center = centers[i];
+    const localLayout = computeDistrictLayout(group.ids);
+    localLayout.forEach((cell, j) => {
+      clustered.push({
+        districtId: cell.districtId,
+        q: center.q * clusterSpacing + cell.q,
+        r: center.r * clusterSpacing + cell.r,
+        provinceId,
+        provinceName: group.name,
+        isProvinceAnchor: j === 0,
+      });
+    });
+  });
+  return clustered;
+}

@@ -333,6 +333,36 @@ export interface WorldGovernment {
   termsServed: number;
 }
 
+/**
+ * A domestic state/province's own governing administration — every province
+ * (see Province, above) elects its own governor on its own schedule,
+ * independent of the national legislature, the same staggered-election
+ * pattern WorldGovernment uses for foreign nations. See
+ * engine/systems/stateGovernance.ts.
+ */
+export interface StateGovernment {
+  provinceId: string;
+  provinceName: string;
+  governorName: string;
+  partyId: string;
+  /** 0..100 — drifts each turn; drives incumbent-retention odds at the next gubernatorial election. */
+  approval: number;
+  nextElectionTurn: number;
+  lastElectionTurn: number | null;
+  termsServed: number;
+}
+
+/** A resolved gubernatorial election — kept as a bounded recent-history log for the state governance UI. */
+export interface StateElectionResult {
+  provinceId: string;
+  provinceName: string;
+  turn: number;
+  incumbentPartyRetained: boolean;
+  previousPartyId: string;
+  newPartyId: string;
+  newGovernorName: string;
+}
+
 /** A resolved foreign election — kept as a bounded recent-history log for the World Elections UI. */
 export interface WorldElectionResult {
   counterpartId: string;
@@ -1181,6 +1211,10 @@ export interface GameState {
   coupHistory: CoupAttempt[];
   /** True once an attempted coup has actually succeeded — elections are suspended and Legacy scoring takes a severe hit until civilian rule is restored. */
   juntaControl: boolean;
+  /** One governing administration per province (see getProvinces), each on its own staggered election schedule. See engine/systems/stateGovernance.ts. */
+  stateGovernments: StateGovernment[];
+  /** Bounded recent-history log of resolved gubernatorial elections, newest last. */
+  stateElectionHistory: StateElectionResult[];
 }
 
 /**

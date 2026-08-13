@@ -1687,3 +1687,111 @@ button:disabled {
   background: var(--border-strong);
   border-radius: 999px;
 }
+
+/* ---------- Main menu ---------- */
+
+.main-menu-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  max-width: none;
+}
+
+.main-menu {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.1rem;
+  text-align: center;
+  padding: 2rem;
+}
+
+.main-menu-title {
+  font-size: 3rem;
+  margin: 0;
+  letter-spacing: -0.02em;
+  background: linear-gradient(135deg, var(--text-primary), var(--accent-text));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.main-menu-tagline {
+  color: var(--text-secondary);
+  margin: 0 0 0.5rem;
+  max-width: 32rem;
+}
+
+.main-menu-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 20rem;
+}
+
+.main-menu-button {
+  padding: 0.75rem 1.25rem;
+  font-size: 1rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.main-menu-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.main-menu-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.main-menu-settings {
+  margin-top: 0.75rem;
+}
+
+/* ---------- Modal overlay (changelog, etc.) ---------- */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 8, 14, 0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 200;
+  padding: 1.5rem;
+}
+
+.modal-panel {
+  max-width: 42rem;
+  width: 100%;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.changelog-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.changelog-entry h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.95rem;
+}
+
+.changelog-entry ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}

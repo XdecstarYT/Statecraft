@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { getCountrySilhouette } from '../../content/diplomacy/countryGeoIds';
-import { resolveFPTPDistrict, type District } from '../../engine';
-import { computeDistrictLayout, axialToPixel } from './hexLayout';
+import { getProvinces, resolveFPTPDistrict, type District } from '../../engine';
+import { axialToPixel, computeDistrictLayoutByProvince } from './hexLayout';
 import { useStatecraftStore } from '../store';
 
 const HEX_SIZE = 1;
@@ -24,6 +24,41 @@ function cosmeticHash01(key: string): number {
   let hash = 0;
   for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
   return (hash % 1000) / 1000;
+}
+
+/** A muted, stable backdrop color per province — deliberately lower saturation/lightness than partyColor's district tiles, so the plate reads as a neutral base a province's tiles sit on rather than competing with the (gameplay-real) party coloring above it. */
+function provincePlateColor(provinceId: string): THREE.Color {
+  let hash = 0;
+  for (let i = 0; i < provinceId.length; i++) hash = (hash * 31 + provinceId.charCodeAt(i)) >>> 0;
+  const hue = (hash % 360) / 360;
+  return new THREE.Color().setHSL(hue, 0.32, 0.14);
+}
+
+/** A camera-facing text label sprite, rendered once onto a canvas texture — used for province name tags floating over the map. */
+function createLabelSprite(text: string): THREE.Sprite {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d')!;
+  const fontSize = 42;
+  ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
+  const textWidth = ctx.measureText(text).width;
+  canvas.width = Math.ceil(textWidth + 40);
+  canvas.height = fontSize + 24;
+  ctx.font = `600 ${fontSize}px system-ui, sans-serif`;
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(8, 12, 20, 0.72)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#e8edf7';
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  const material = new THREE.SpriteMaterial({ map: texture, depthWrite: false, transparent: true });
+  const sprite = new THREE.Sprite(material);
+  const aspect = canvas.width / canvas.height;
+  const spriteHeight = 0.55;
+  sprite.scale.set(spriteHeight * aspect, spriteHeight, 1);
+  return sprite;
 }
 
 function hexTileGeometry(height: number): THREE.CylinderGeometry {
@@ -58,7 +93,8 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
     const container = containerRef.current;
     if (!container || districts.length === 0) return;
 
-    const layout = computeDistrictLayout(districts.map((d) => d.id));
+    const provinces = game ? getProvinces(game.country) : [];
+    const layout = computeDistrictLayoutByProvince(districts.map((d) => d.id), provinces);
     const districtsById = new Map(districts.map((d) => [d.id, d]));
 
     const width = container.clientWidth || 600;
@@ -189,6 +225,44 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
 
     tilesRef.current.clear();
 
+    // Group each province's own tiles to drop a low background plate + a
+    // floating name label beneath/above its cluster (see
+    // computeDistrictLayoutByProvince in hexLayout.ts) — a purely visual
+    // decluttering aid; per-seat party coloring below is unaffected. Skipped
+    // entirely when there's nothing real to group (a single province, or a
+    // PR legislature with no district-level provinces at all).
+    const provinceGroups = new Map<string, { name: string; positions: { x: number; z: number }[] }>();
+    for (const cell of layout) {
+      if (!cell.provinceId) continue;
+      const pos = axialToPixel(cell.q, cell.r, HEX_SIZE + HEX_GAP);
+      let group = provinceGroups.get(cell.provinceId);
+      if (!group) {
+        group = { name: cell.provinceName, positions: [] };
+        provinceGroups.set(cell.provinceId, group);
+      }
+      group.positions.push({ x: pos.x, z: pos.y });
+    }
+    if (provinceGroups.size > 1) {
+      provinceGroups.forEach((group, provinceId) => {
+        const centerX = group.positions.reduce((sum, p) => sum + p.x, 0) / group.positions.length;
+        const centerZ = group.positions.reduce((sum, p) => sum + p.z, 0) / group.positions.length;
+        const radius =
+          group.positions.reduce((m, p) => Math.max(m, Math.hypot(p.x - centerX, p.z - centerZ)), HEX_SIZE) + HEX_SIZE * 1.1;
+
+        const plate = new THREE.Mesh(
+          new THREE.CylinderGeometry(radius, radius, 0.08, 24),
+          new THREE.MeshPhongMaterial({ color: provincePlateColor(provinceId), shininess: 5 })
+        );
+        plate.position.set(centerX, -0.05, centerZ);
+        plate.receiveShadow = true;
+        scene.add(plate);
+
+        const label = createLabelSprite(group.name);
+        label.position.set(centerX, 1.0, centerZ);
+        scene.add(label);
+      });
+    }
+
     for (const cell of layout) {
       const { x, y: z } = axialToPixel(cell.q, cell.r, HEX_SIZE + HEX_GAP);
       const jitter = cosmeticHash01(cell.districtId);
@@ -264,6 +338,9 @@ export function CountryMapScene({ onSelectDistrict, selectedDistrictId }: Countr
           obj.geometry.dispose();
           if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
           else obj.material.dispose();
+        } else if (obj instanceof THREE.Sprite) {
+          obj.material.map?.dispose();
+          obj.material.dispose();
         }
       });
       if (container.contains(renderer.domElement)) container.removeChild(renderer.domElement);

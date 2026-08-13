@@ -42,6 +42,9 @@ import { CountryMap } from './components/CountryMap';
 import { ElectionResultsDrawer } from './components/ElectionResultsDrawer';
 import { ParliamentHemicycle } from './components/ParliamentHemicycle';
 import { CampaignPromisesPanel } from './components/CampaignPromisesPanel';
+import { StateGovernancePanel } from './components/StateGovernancePanel';
+import { ChangelogPanel } from './components/ChangelogPanel';
+import { MainMenu } from './components/MainMenu';
 import { TopHud } from './components/TopHud';
 import { TimelineScrubber } from './components/TimelineScrubber';
 import { AchievementsOverlay } from './components/AchievementsOverlay';
@@ -54,6 +57,7 @@ import { InternationalCourtPanel } from './components/InternationalCourtPanel';
 import { PowerDynamicsPanel } from './components/PowerDynamicsPanel';
 
 const TABS = [
+  { id: 'home', label: 'Home', icon: '🏠' },
   { id: 'legislature', label: 'Legislature', icon: '🏛️' },
   { id: 'opinion', label: 'Opinion & Campaign', icon: '📣' },
   { id: 'power', label: 'Power', icon: '🕴️' },
@@ -80,7 +84,7 @@ export default function App() {
   const saveGame = useStatecraftStore((s) => s.saveGame);
   const loadGame = useStatecraftStore((s) => s.loadGame);
 
-  const [activeTab, setActiveTab] = useState<TabId>('legislature');
+  const [activeTab, setActiveTab] = useState<TabId>('home');
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
   const [pendingScenarioId, setPendingScenarioId] = useState(SCENARIO_PRESETS[0].id);
@@ -94,6 +98,8 @@ export default function App() {
   const [bootstrapped, setBootstrapped] = useState(false);
   const [forceStartScreen, setForceStartScreen] = useState(false);
   const [selectedDistrictId, setSelectedDistrictId] = useState<string | null>(null);
+  const [menuVisible, setMenuVisible] = useState(true);
+  const [showChangelog, setShowChangelog] = useState(false);
 
   useEffect(() => {
     if (!bootstrapped) {
@@ -118,11 +124,30 @@ export default function App() {
   const showStartScreen = forceStartScreen || (!game && !career);
 
   if (showStartScreen) {
+    if (menuVisible) {
+      return (
+        <>
+          <MainMenu
+            onNewGame={() => setMenuVisible(false)}
+            onLoadGame={() => {
+              const loaded = loadGame();
+              flashStatus(loaded ? 'Loaded' : 'No save found');
+              if (loaded) setForceStartScreen(false);
+            }}
+            onOpenChangelog={() => setShowChangelog(true)}
+            hasSave={hasSavedGame() || hasSavedCareer()}
+            statusMessage={statusMessage}
+          />
+          {showChangelog && <ChangelogPanel onClose={() => setShowChangelog(false)} />}
+        </>
+      );
+    }
     return (
       <main className="app-shell">
         <header className="app-header">
           <h1>Statecraft</h1>
           <div className="header-actions">
+            <button onClick={() => setMenuVisible(true)}>Back to Menu</button>
             <AccessibilityPanel />
           </div>
         </header>
@@ -296,7 +321,14 @@ export default function App() {
           </span>
           {statusMessage && <span className="status-flash">{statusMessage}</span>}
           <div className="header-actions">
-            <button onClick={() => setForceStartScreen(true)}>New Game</button>
+            <button
+              onClick={() => {
+                setForceStartScreen(true);
+                setMenuVisible(true);
+              }}
+            >
+              New Game
+            </button>
             <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Game</button>
             <button
               onClick={() => {
@@ -318,12 +350,18 @@ export default function App() {
 
         <AchievementsOverlay />
 
-      {activeTab === 'legislature' && (
+      {activeTab === 'home' && (
         <>
           <CountryMap onSelectDistrict={setSelectedDistrictId} selectedDistrictId={selectedDistrictId} />
           <ElectionResultsDrawer />
           <ParliamentHemicycle />
           <CampaignPromisesPanel />
+          <StateGovernancePanel />
+        </>
+      )}
+
+      {activeTab === 'legislature' && (
+        <>
           <div className="panel-columns">
             <BillPanel />
             <ElectionPanel />

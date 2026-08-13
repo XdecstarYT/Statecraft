@@ -161,6 +161,11 @@ import {
   runWorldElectionsTurn,
 } from './systems/worldElections';
 import {
+  STATE_ELECTION_HISTORY_LIMIT,
+  initializeStateGovernments,
+  runStateGovernanceTurn,
+} from './systems/stateGovernance';
+import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
   MINE_UPGRADE_COST,
@@ -410,6 +415,7 @@ export * from './systems/promises';
 export * from './systems/committees';
 export * from './systems/factions';
 export * from './systems/worldElections';
+export * from './systems/stateGovernance';
 export * from './systems/byElections';
 export * from './systems/campaignFinance';
 export * from './systems/mediaEcosystem';
@@ -569,6 +575,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     rng
   );
   const partyWhips = assignPartyWhips(politicians, parties);
+  const stateGovernments = initializeStateGovernments(getProvinces(country), parties, rng);
 
   const baseState: GameState = {
     seed,
@@ -666,6 +673,8 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     emergencyPowers: 'none',
     coupHistory: [],
     juntaControl: false,
+    stateGovernments,
+    stateElectionHistory: [],
   };
 
   return resolveGovernment(baseState, rng);
@@ -1767,6 +1776,7 @@ export function advanceTurn(state: GameState): GameState {
   next = runSocialMediaTurn(next, rng);
   next = runMovementsTurn(next, rng);
   next = runWorldElectionsForTurn(next, rng);
+  next = runStateGovernanceForTurn(next, rng);
   next = runByElectionsTurn(next, rng);
   next = runCampaignFinanceTurn(next);
   next = runMediaEcosystemTurn(next);
@@ -1826,6 +1836,26 @@ export function runWorldElectionsForTurn(state: GameState, rng: SeededRng): Game
     foreignDistrictResults: { ...state.foreignDistrictResults, ...foreignDistrictResults },
     worldElectionHistory,
   };
+}
+
+/**
+ * Runs one turn of every domestic province's own gubernatorial election
+ * cycle (see stateGovernance.ts) — approval drift for every state
+ * government plus resolution for any whose term happens to be up this turn.
+ */
+export function runStateGovernanceForTurn(state: GameState, rng: SeededRng): GameState {
+  const { governments, results } = runStateGovernanceTurn(
+    getProvinces(state.country),
+    state.stateGovernments,
+    state.parties,
+    state.voterBlocs,
+    state.districtLeanDrift,
+    state.turn,
+    rng
+  );
+  if (results.length === 0) return { ...state, stateGovernments: governments };
+  const stateElectionHistory = [...state.stateElectionHistory, ...results].slice(-STATE_ELECTION_HISTORY_LIMIT);
+  return { ...state, stateGovernments: governments, stateElectionHistory };
 }
 
 /**

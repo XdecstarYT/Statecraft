@@ -213,10 +213,10 @@ describe('runNpcTurn via advanceTurn', () => {
   });
 
   it('resolves the player into the final tally on any NPC bill that reaches a vote, rather than skipping them', () => {
-    let state = createNewGame(21);
+    let state = createNewGame(1);
     const player = state.politicians.find((p) => p.isPlayer)!;
     let sawPlayerVote = false;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       state = advanceTurn(state);
       for (const bill of state.bills) {
         const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
