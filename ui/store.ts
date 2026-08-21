@@ -53,6 +53,26 @@ import {
   declareStateOfEmergencyAction as engineDeclareStateOfEmergency,
   declareMartialLawAction as engineDeclareMartialLaw,
   liftEmergencyPowersAction as engineLiftEmergencyPowers,
+  signBillAction as engineSignBill,
+  vetoBillAction as engineVetoBill,
+  attemptVetoOverrideAction as engineAttemptVetoOverride,
+  issueExecutiveOrderAction as engineIssueExecutiveOrder,
+  requiresExecutiveSignature,
+  sendToExecutiveReview,
+  proposeAmendmentAction as engineProposeAmendment,
+  voteOnAmendmentAction as engineVoteOnAmendment,
+  mediateInterstateDisputeAction as engineMediateInterstateDispute,
+  foundMediaOutletAction as engineFoundMediaOutlet,
+  investInOutletAction as engineInvestInOutlet,
+  foundCulturalInstitutionAction as engineFoundCulturalInstitution,
+  type SignatureActionOutcome,
+  type VetoOverrideActionOutcome,
+  type AmendmentActionOutcome,
+  type AmendmentChange,
+  type MediateDisputeOutcome,
+  type InterstateDisputeMediationChoice,
+  type MediaEmpireActionOutcome,
+  type EconomyDelta,
   type TribunalChargeType,
   nominateJusticeAction as engineNominateJustice,
   confirmJusticeAction as engineConfirmJustice,
@@ -315,6 +335,13 @@ interface StatecraftStore {
   lastTweetOutcome: TweetActionOutcome | null;
   lastEnterpriseOutcome: EnterpriseActionOutcome | null;
   lastIpoProceeds: number | null;
+  lastSignatureOutcome:
+    | (SignatureActionOutcome & { action: 'sign' | 'veto' | 'executive_order' })
+    | (VetoOverrideActionOutcome & { action: 'override' })
+    | null;
+  lastAmendmentOutcome: (AmendmentActionOutcome & { action: 'propose' | 'vote' }) | null;
+  lastDisputeOutcome: MediateDisputeOutcome | null;
+  lastMediaEmpireOutcome: (MediaEmpireActionOutcome & { action: 'found_outlet' | 'invest_outlet' | 'found_institution' }) | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -357,6 +384,10 @@ interface StatecraftStore {
   sendToFloor: (billId: string) => void;
   setStance: (billId: string, politicianId: string, stance: WhipStance) => void;
   holdFloorVote: (billId: string) => void;
+  signBillAction: (billId: string) => void;
+  vetoBillAction: (billId: string) => void;
+  attemptVetoOverrideAction: (billId: string) => void;
+  issueExecutiveOrderAction: (title: string, description: string, economyEffect?: EconomyDelta, playerApprovalEffect?: number) => void;
   addProvisionAction: (billId: string, description: string, budgetImpact: number) => void;
   removeProvisionAction: (billId: string, provisionId: string) => void;
   amendProvisionAction: (billId: string, provisionId: string, description: string, budgetImpact: number) => void;
@@ -468,6 +499,12 @@ interface StatecraftStore {
   declareStateOfEmergencyAction: () => void;
   declareMartialLawAction: () => void;
   liftEmergencyPowersAction: () => void;
+  proposeAmendmentAction: (title: string, description: string, change: AmendmentChange) => void;
+  voteOnAmendmentAction: (amendmentId: string) => void;
+  mediateInterstateDisputeAction: (disputeId: string, choice: InterstateDisputeMediationChoice) => void;
+  foundMediaOutletAction: (name: string, bias: IdeologyPosition) => void;
+  investInOutletAction: (outletId: string) => void;
+  foundCulturalInstitutionAction: (name: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
@@ -519,6 +556,10 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastTweetOutcome: null,
   lastEnterpriseOutcome: null,
   lastIpoProceeds: null,
+  lastSignatureOutcome: null,
+  lastAmendmentOutcome: null,
+  lastDisputeOutcome: null,
+  lastMediaEmpireOutcome: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -921,7 +962,15 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         rebellionResult.rebellions.length > 0 ? [...game.rebellions, ...rebellionResult.rebellions] : game.rebellions,
     };
     nextState = applyBillOutcomeToApproval(nextState, sponsor.id, result.passed);
-    nextState = enactPassedBill(nextState, updatedBill);
+    if (result.passed && requiresExecutiveSignature(game.country)) {
+      // Presidential/semi-presidential regimes: clearing the floor vote
+      // isn't enactment — the bill awaits the executive's own sign/veto
+      // decision (see signBillAction/vetoBillAction below).
+      const reviewBill = sendToExecutiveReview(updatedBill);
+      nextState = { ...nextState, bills: nextState.bills.map((b) => (b.id === billId ? reviewBill : b)) };
+    } else {
+      nextState = enactPassedBill(nextState, updatedBill);
+    }
     const { state: coveredState, coverage } = generateEventCoverage(
       nextState,
       result.passed ? 'bill_passed' : 'bill_failed',
@@ -934,6 +983,76 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastFloorResult: { ...result, billTitle: bill.title },
       lastCoverage: coverage,
     });
+  },
+
+  signBillAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineSignBill(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'sign' } });
+  },
+
+  vetoBillAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineVetoBill(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'veto' } });
+  },
+
+  attemptVetoOverrideAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineAttemptVetoOverride(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'override' } });
+  },
+
+  issueExecutiveOrderAction: (title, description, economyEffect, playerApprovalEffect) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineIssueExecutiveOrder(game, title, description, economyEffect, playerApprovalEffect);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'executive_order' } });
+  },
+
+  proposeAmendmentAction: (title, description, change) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineProposeAmendment(game, title, description, change);
+    set({ game: state, lastAmendmentOutcome: { ...outcome, action: 'propose' } });
+  },
+
+  voteOnAmendmentAction: (amendmentId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineVoteOnAmendment(game, amendmentId);
+    set({ game: state, lastAmendmentOutcome: { ...outcome, action: 'vote' } });
+  },
+
+  mediateInterstateDisputeAction: (disputeId, choice) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineMediateInterstateDispute(game, disputeId, choice);
+    set({ game: state, lastDisputeOutcome: outcome });
+  },
+
+  foundMediaOutletAction: (name, bias) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundMediaOutlet(game, name, bias);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'found_outlet' } });
+  },
+
+  investInOutletAction: (outletId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineInvestInOutlet(game, outletId);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'invest_outlet' } });
+  },
+
+  foundCulturalInstitutionAction: (name) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundCulturalInstitution(game, name);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'found_institution' } });
   },
 
   addProvisionAction: (billId, description, budgetImpact) => {

@@ -11,6 +11,16 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.15',
+    title: 'Federalism, the Constitution & the Executive',
+    highlights: [
+      'Every state now runs its own small legislature alongside its governor, seated by real D\'Hondt math, plus a federal tension score that can flare into interstate disputes — mediate toward one side, or broker a neutral settlement.',
+      'Added real constitutional amendments: propose a change to the electoral system, legislative term length, a house rule, or the regime type itself, and it lives or dies on a genuine two-thirds supermajority vote.',
+      'Presidential and semi-presidential regimes now have a real executive: a bill that clears the floor vote awaits your signature or veto, a veto can be overridden by the legislature, and you can issue bounded executive orders with no vote at all — on a real cooldown.',
+      'Added a Media & Culture Empire: found and grow your own press outlet, fund cultural institutions, and build a national soft-power score that gives your approval a small, sticky tailwind.',
+    ],
+  },
+  {
     version: '0.14',
     title: 'Home Screen, Main Menu & State Governments',
     highlights: [

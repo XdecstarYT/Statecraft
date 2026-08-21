@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import type { Party, Province, StateGovernment, VoterBloc } from '../models/types';
 import {
+  STATE_LEGISLATURE_SEATS,
   STATE_TERM_LENGTH_TURNS,
+  computeNationalRulingPartyId,
+  driftFederalTension,
   driftStateApproval,
   initializeStateGovernments,
   resolveStateElection,
@@ -22,6 +25,8 @@ function makeGov(overrides: Partial<StateGovernment> & { provinceId: string }): 
     nextElectionTurn: 100,
     lastElectionTurn: null,
     termsServed: 0,
+    legislatureSeats: {},
+    federalTension: 20,
     ...overrides,
   };
 }
@@ -196,5 +201,56 @@ describe('runStateGovernanceTurn', () => {
     const a = runStateGovernanceTurn(provinces, governments, makeParties(), TEST_VOTER_BLOCS, {}, 10, new SeededRng(7));
     const b = runStateGovernanceTurn(provinces, governments, makeParties(), TEST_VOTER_BLOCS, {}, 10, new SeededRng(7));
     expect(a).toEqual(b);
+  });
+
+  it('resolves a real D\'Hondt legislature seat allocation summing to STATE_LEGISLATURE_SEATS on election', () => {
+    const provinces = [makeProvince({ id: 'north', districtIds: ['north-d1', 'north-d2', 'north-d3'] })];
+    const governments = [makeGov({ provinceId: 'north', nextElectionTurn: 10 })];
+    const { governments: next } = runStateGovernanceTurn(
+      provinces,
+      governments,
+      makeParties(),
+      TEST_VOTER_BLOCS,
+      {},
+      10,
+      new SeededRng(1)
+    );
+    const totalSeats = Object.values(next[0].legislatureSeats).reduce((a, b) => a + b, 0);
+    expect(totalSeats).toBe(STATE_LEGISLATURE_SEATS);
+  });
+});
+
+describe('computeNationalRulingPartyId', () => {
+  it('picks the party with the most seats', () => {
+    const parties = makeParties([10, 70, 10, 10]);
+    expect(computeNationalRulingPartyId(parties)).toBe('party-2');
+  });
+
+  it('returns empty string for an empty roster', () => {
+    expect(computeNationalRulingPartyId([])).toBe('');
+  });
+});
+
+describe('driftFederalTension', () => {
+  it('stays within 0..100 bounds', () => {
+    let gov = makeGov({ provinceId: 'north', partyId: 'party-3', federalTension: 50 });
+    const rng = new SeededRng(1);
+    for (let i = 0; i < 200; i++) {
+      gov = driftFederalTension(gov, 'party-1', makeParties(), rng);
+      expect(gov.federalTension).toBeGreaterThanOrEqual(0);
+      expect(gov.federalTension).toBeLessThanOrEqual(100);
+    }
+  });
+
+  it('pulls tension toward a higher target when the governing party is ideologically farther from the national ruling party', () => {
+    const parties = makeParties();
+    const rng = new SeededRng(1);
+    let alignedGov = makeGov({ provinceId: 'aligned', partyId: 'party-1', federalTension: 20 });
+    let opposedGov = makeGov({ provinceId: 'opposed', partyId: 'party-3', federalTension: 20 });
+    for (let i = 0; i < 100; i++) {
+      alignedGov = driftFederalTension(alignedGov, 'party-1', parties, rng);
+      opposedGov = driftFederalTension(opposedGov, 'party-1', parties, rng);
+    }
+    expect(opposedGov.federalTension).toBeGreaterThan(alignedGov.federalTension);
   });
 });

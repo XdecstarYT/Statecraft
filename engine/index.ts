@@ -32,6 +32,9 @@ import type {
   RawResourceType,
   Company,
   CompanySector,
+  AmendmentChange,
+  ConstitutionalAmendment,
+  InterstateDisputeMediationChoice,
 } from './models/types';
 import { DEFAULT_HOUSE_RULES } from './models/types';
 import type { Difficulty } from './difficulty';
@@ -165,6 +168,31 @@ import {
   initializeStateGovernments,
   runStateGovernanceTurn,
 } from './systems/stateGovernance';
+import { mediateInterstateDispute, rollForInterstateDispute } from './systems/federalism';
+import {
+  applyAmendmentChange,
+  applyAmendmentVoteResult,
+  proposeAmendment,
+  resolveAmendmentVote,
+} from './systems/constitution';
+import {
+  applyVetoOverrideResult,
+  canIssueExecutiveOrder,
+  issueExecutiveOrder,
+  resolveVetoOverride,
+  signBill,
+  vetoBill,
+} from './systems/executive';
+import {
+  CULTURAL_INSTITUTION_FOUNDING_COST,
+  MEDIA_OUTLET_FOUNDING_COST,
+  advanceInstitutionPrestige,
+  advanceOutletReach,
+  advanceSoftPower,
+  foundCulturalInstitution,
+  foundMediaOutlet,
+  investInOutlet,
+} from './systems/mediaEmpire';
 import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
@@ -416,6 +444,10 @@ export * from './systems/committees';
 export * from './systems/factions';
 export * from './systems/worldElections';
 export * from './systems/stateGovernance';
+export * from './systems/federalism';
+export * from './systems/constitution';
+export * from './systems/executive';
+export * from './systems/mediaEmpire';
 export * from './systems/byElections';
 export * from './systems/campaignFinance';
 export * from './systems/mediaEcosystem';
@@ -675,6 +707,13 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     juntaControl: false,
     stateGovernments,
     stateElectionHistory: [],
+    interstateDisputes: [],
+    constitutionalAmendments: [],
+    executiveOrders: [],
+    lastExecutiveOrderTurn: null,
+    culturalInstitutions: [],
+    softPower: 0,
+    legislativeTermLengthTurns: TERM_LENGTH_TURNS,
   };
 
   return resolveGovernment(baseState, rng);
@@ -1777,10 +1816,12 @@ export function advanceTurn(state: GameState): GameState {
   next = runMovementsTurn(next, rng);
   next = runWorldElectionsForTurn(next, rng);
   next = runStateGovernanceForTurn(next, rng);
+  next = runFederalismTurn(next, rng);
   next = runByElectionsTurn(next, rng);
   next = runCampaignFinanceTurn(next);
   next = runMediaEcosystemTurn(next);
   next = runThinkTankTurn(next);
+  next = runMediaEmpireTurn(next, rng);
   next = runInternationalCourtTurn(next, rng);
   next = runInstabilityTurn(next, rng);
 
@@ -1856,6 +1897,40 @@ export function runStateGovernanceForTurn(state: GameState, rng: SeededRng): Gam
   if (results.length === 0) return { ...state, stateGovernments: governments };
   const stateElectionHistory = [...state.stateElectionHistory, ...results].slice(-STATE_ELECTION_HISTORY_LIMIT);
   return { ...state, stateGovernments: governments, stateElectionHistory };
+}
+
+/** Rolls for a new interstate dispute this turn (see federalism.ts) — most turns produce nothing. */
+export function runFederalismTurn(state: GameState, rng: SeededRng): GameState {
+  const dispute = rollForInterstateDispute(state.stateGovernments, state.interstateDisputes, state.turn, rng);
+  if (!dispute) return state;
+  return { ...state, interstateDisputes: [...state.interstateDisputes, dispute] };
+}
+
+const SOFT_POWER_APPROVAL_DECAY_TURNS = 6;
+
+/**
+ * Grows every player-owned media outlet's reach and every cultural
+ * institution's prestige, advances the resulting soft-power score toward
+ * its new target, and — once soft power actually rises past a neutral
+ * baseline — gives the player a small, decaying approval nudge (same
+ * pushApprovalEvent shape crime/infrastructure impacts already use), so
+ * building a media/culture empire is felt, not just displayed.
+ */
+export function runMediaEmpireTurn(state: GameState, rng: SeededRng): GameState {
+  const mediaOutlets = state.mediaOutlets.map(advanceOutletReach);
+  const culturalInstitutions = state.culturalInstitutions.map((inst) => advanceInstitutionPrestige(inst, rng));
+  const softPower = advanceSoftPower(state.softPower, mediaOutlets, culturalInstitutions);
+
+  let politicians = state.politicians;
+  const player = politicians.find((p) => p.isPlayer);
+  if (player && softPower > 50) {
+    const impact = (softPower - 50) / 25;
+    politicians = politicians.map((p) =>
+      p.id === player.id ? pushApprovalEvent(p, 'public', impact, SOFT_POWER_APPROVAL_DECAY_TURNS) : p
+    );
+  }
+
+  return { ...state, mediaOutlets, culturalInstitutions, softPower, politicians };
 }
 
 /**
@@ -3479,6 +3554,255 @@ export function enactPassedBill(state: GameState, bill: Bill): GameState {
   return applyBillCategoryEffect(withEconomy, bill);
 }
 
+/**
+ * EXECUTIVE SIGNATURE ACTIONS — presidential/semi-presidential regimes only
+ * (see executive.ts's requiresExecutiveSignature). A bill that clears the
+ * floor vote under such a regime lands in 'awaiting_signature' (see
+ * ui/store.ts's holdFloorVote) instead of enacting immediately; these three
+ * actions are how the player, as head of state, actually resolves it.
+ */
+export interface SignatureActionOutcome {
+  success: boolean;
+  reason?: 'bill_not_awaiting_signature' | 'bill_not_vetoed';
+}
+
+export function signBillAction(state: GameState, billId: string): { state: GameState; outcome: SignatureActionOutcome } {
+  const bill = state.bills.find((b) => b.id === billId);
+  if (!bill || bill.status !== 'awaiting_signature') {
+    return { state, outcome: { success: false, reason: 'bill_not_awaiting_signature' } };
+  }
+  const signed = signBill(bill);
+  const bills = state.bills.map((b) => (b.id === billId ? signed : b));
+  const enacted = enactPassedBill({ ...state, bills }, signed);
+  return { state: enacted, outcome: { success: true } };
+}
+
+export function vetoBillAction(state: GameState, billId: string): { state: GameState; outcome: SignatureActionOutcome } {
+  const bill = state.bills.find((b) => b.id === billId);
+  if (!bill || bill.status !== 'awaiting_signature') {
+    return { state, outcome: { success: false, reason: 'bill_not_awaiting_signature' } };
+  }
+  const vetoed = vetoBill(bill);
+  const bills = state.bills.map((b) => (b.id === billId ? vetoed : b));
+  return { state: { ...state, bills }, outcome: { success: true } };
+}
+
+export interface VetoOverrideActionOutcome extends SignatureActionOutcome {
+  yes?: number;
+  no?: number;
+  overridden?: boolean;
+}
+
+export function attemptVetoOverrideAction(state: GameState, billId: string): { state: GameState; outcome: VetoOverrideActionOutcome } {
+  const bill = state.bills.find((b) => b.id === billId);
+  if (!bill || bill.status !== 'vetoed') {
+    return { state, outcome: { success: false, reason: 'bill_not_vetoed' } };
+  }
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveVetoOverride(bill, state.politicians, state.relationships, state.favorBank, rng);
+  const resolvedBill = applyVetoOverrideResult(bill, result);
+  const bills = state.bills.map((b) => (b.id === billId ? resolvedBill : b));
+  let next: GameState = { ...state, bills, rngState: rng.getState() };
+  if (result.passed) next = enactPassedBill(next, resolvedBill);
+  return { state: next, outcome: { success: true, yes: result.yes, no: result.no, overridden: result.passed } };
+}
+
+/** A real, bounded, cooldown-gated unilateral action — see executive.ts. */
+export function issueExecutiveOrderAction(
+  state: GameState,
+  title: string,
+  description: string,
+  economyEffect?: EconomyDelta,
+  playerApprovalEffect?: number
+): { state: GameState; outcome: SignatureActionOutcome } {
+  if (!canIssueExecutiveOrder(state.country, state.turn, state.lastExecutiveOrderTurn)) {
+    return { state, outcome: { success: false, reason: 'bill_not_vetoed' } };
+  }
+  const order = issueExecutiveOrder(
+    { id: `order-${state.executiveOrders.length}-${state.turn}`, title, description, economyEffect, playerApprovalEffect },
+    state.turn
+  );
+  const economy = economyEffect ? applyImmediateEffect(state.economy, economyEffect) : state.economy;
+
+  let politicians = state.politicians;
+  const player = politicians.find((p) => p.isPlayer);
+  if (player && playerApprovalEffect) {
+    politicians = politicians.map((p) => (p.id === player.id ? pushApprovalEvent(p, 'public', playerApprovalEffect, 8) : p));
+  }
+
+  return {
+    state: {
+      ...state,
+      executiveOrders: [...state.executiveOrders, order],
+      lastExecutiveOrderTurn: state.turn,
+      economy,
+      politicians,
+    },
+    outcome: { success: true },
+  };
+}
+
+/**
+ * CONSTITUTIONAL AMENDMENT ACTIONS — see constitution.ts. A proposal always
+ * succeeds (it just enters the queue); the vote is the real gate.
+ */
+export interface AmendmentActionOutcome {
+  success: boolean;
+  reason?: 'amendment_not_found' | 'already_resolved';
+  passed?: boolean;
+}
+
+export function proposeAmendmentAction(
+  state: GameState,
+  title: string,
+  description: string,
+  change: AmendmentChange
+): { state: GameState; outcome: AmendmentActionOutcome; amendment: ConstitutionalAmendment | null } {
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const amendment = proposeAmendment({
+    id: `amendment-${state.constitutionalAmendments.length}-${state.turn}`,
+    title,
+    description,
+    change,
+    sponsorId: playerId,
+    turnProposed: state.turn,
+  });
+  return {
+    state: { ...state, constitutionalAmendments: [...state.constitutionalAmendments, amendment] },
+    outcome: { success: true },
+    amendment,
+  };
+}
+
+export function voteOnAmendmentAction(state: GameState, amendmentId: string): { state: GameState; outcome: AmendmentActionOutcome } {
+  const amendment = state.constitutionalAmendments.find((a) => a.id === amendmentId);
+  if (!amendment) return { state, outcome: { success: false, reason: 'amendment_not_found' } };
+  if (amendment.status !== 'proposed') return { state, outcome: { success: false, reason: 'already_resolved' } };
+
+  const rng = SeededRng.fromState(state.rngState);
+  const result = resolveAmendmentVote(amendment, state.politicians, state.relationships, state.favorBank, rng);
+  const resolved = applyAmendmentVoteResult(amendment, result, state.turn);
+  const constitutionalAmendments = state.constitutionalAmendments.map((a) => (a.id === amendmentId ? resolved : a));
+  let next: GameState = { ...state, constitutionalAmendments, rngState: rng.getState() };
+
+  if (result.passed) {
+    const applied = applyAmendmentChange(next.country, next.houseRules, amendment.change);
+    next = {
+      ...next,
+      country: applied.country,
+      houseRules: applied.houseRules,
+      legislativeTermLengthTurns: applied.termLengthTurns ?? next.legislativeTermLengthTurns,
+    };
+  }
+
+  return { state: next, outcome: { success: true, passed: result.passed } };
+}
+
+/** See federalism.ts — mediating an active interstate dispute toward one side or a neutral settlement. */
+export interface MediateDisputeOutcome {
+  success: boolean;
+  reason?: 'dispute_not_found' | 'already_resolved';
+}
+
+export function mediateInterstateDisputeAction(
+  state: GameState,
+  disputeId: string,
+  choice: InterstateDisputeMediationChoice
+): { state: GameState; outcome: MediateDisputeOutcome } {
+  const dispute = state.interstateDisputes.find((d) => d.id === disputeId);
+  if (!dispute) return { state, outcome: { success: false, reason: 'dispute_not_found' } };
+  if (dispute.status !== 'active') return { state, outcome: { success: false, reason: 'already_resolved' } };
+
+  const result = mediateInterstateDispute(dispute, choice, state.stateGovernments, state.turn);
+  const interstateDisputes = state.interstateDisputes.map((d) => (d.id === disputeId ? result.dispute : d));
+  const economy = applyImmediateEffect(state.economy, result.economyEffect);
+
+  let politicians = state.politicians;
+  const player = politicians.find((p) => p.isPlayer);
+  if (player) {
+    politicians = politicians.map((p) =>
+      p.id === player.id ? pushApprovalEvent(p, 'public', result.playerApprovalEffect, 4) : p
+    );
+  }
+
+  return {
+    state: { ...state, interstateDisputes, stateGovernments: result.governments, economy, politicians },
+    outcome: { success: true },
+  };
+}
+
+/**
+ * MEDIA & CULTURE EMPIRE ACTIONS — see mediaEmpire.ts. Every spend comes
+ * out of the player's own personal wealth, same as founding a company.
+ */
+export interface MediaEmpireActionOutcome {
+  success: boolean;
+  reason?: 'insufficient_wealth' | 'outlet_not_found' | 'not_owned';
+}
+
+export function foundMediaOutletAction(
+  state: GameState,
+  name: string,
+  bias: IdeologyPosition
+): { state: GameState; outcome: MediaEmpireActionOutcome } {
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const wealth = state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH;
+  if (wealth < MEDIA_OUTLET_FOUNDING_COST) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+  }
+  const outlet = foundMediaOutlet(`outlet-${state.mediaOutlets.length}-${state.turn}`, name, bias, playerId);
+  const personalWealth = { ...state.personalWealth, [playerId]: wealth - MEDIA_OUTLET_FOUNDING_COST };
+  return {
+    state: { ...state, mediaOutlets: [...state.mediaOutlets, outlet], personalWealth },
+    outcome: { success: true },
+  };
+}
+
+const OUTLET_INVESTMENT_COST = 50;
+
+export function investInOutletAction(state: GameState, outletId: string): { state: GameState; outcome: MediaEmpireActionOutcome } {
+  const outlet = state.mediaOutlets.find((o) => o.id === outletId);
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  if (!outlet) return { state, outcome: { success: false, reason: 'outlet_not_found' } };
+  if (outlet.ownerId !== playerId) return { state, outcome: { success: false, reason: 'not_owned' } };
+  const wealth = state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH;
+  if (wealth < OUTLET_INVESTMENT_COST) return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+
+  const updated = investInOutlet(outlet);
+  const mediaOutlets = state.mediaOutlets.map((o) => (o.id === outletId ? updated : o));
+  const personalWealth = { ...state.personalWealth, [playerId]: wealth - OUTLET_INVESTMENT_COST };
+  return { state: { ...state, mediaOutlets, personalWealth }, outcome: { success: true } };
+}
+
+export function foundCulturalInstitutionAction(
+  state: GameState,
+  name: string
+): { state: GameState; outcome: MediaEmpireActionOutcome } {
+  const playerId = state.politicians.find((p) => p.isPlayer)?.id ?? '';
+  const wealth = state.personalWealth[playerId] ?? BASE_PERSONAL_WEALTH;
+  if (wealth < CULTURAL_INSTITUTION_FOUNDING_COST) {
+    return { state, outcome: { success: false, reason: 'insufficient_wealth' } };
+  }
+  const rng = SeededRng.fromState(state.rngState);
+  const institution = foundCulturalInstitution(
+    `institution-${state.culturalInstitutions.length}-${state.turn}`,
+    name,
+    playerId,
+    state.turn,
+    rng
+  );
+  const personalWealth = { ...state.personalWealth, [playerId]: wealth - CULTURAL_INSTITUTION_FOUNDING_COST };
+  return {
+    state: {
+      ...state,
+      culturalInstitutions: [...state.culturalInstitutions, institution],
+      personalWealth,
+      rngState: rng.getState(),
+    },
+    outcome: { success: true },
+  };
+}
+
 export interface CorruptionAttemptOutcome {
   detected: boolean;
   favorGain: number;
@@ -3625,7 +3949,7 @@ export function runLegislativeElection(
     ...state,
     parties,
     districtLeanDrift,
-    nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
+    nextElectionTurn: state.turn + state.legislativeTermLengthTurns,
     rngState: rng.getState(),
   };
 
@@ -3686,7 +4010,7 @@ export function concludeElectionNightAction(state: GameState): GameState {
     ...state,
     parties,
     electionNight,
-    nextElectionTurn: state.turn + TERM_LENGTH_TURNS,
+    nextElectionTurn: state.turn + state.legislativeTermLengthTurns,
     rngState: rng.getState(),
   };
 

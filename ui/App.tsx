@@ -55,6 +55,10 @@ import { ThinkTankPanel } from './components/ThinkTankPanel';
 import { WhipDisciplinePanel } from './components/WhipDisciplinePanel';
 import { InternationalCourtPanel } from './components/InternationalCourtPanel';
 import { PowerDynamicsPanel } from './components/PowerDynamicsPanel';
+import { FederalismPanel } from './components/FederalismPanel';
+import { ConstitutionPanel } from './components/ConstitutionPanel';
+import { ExecutivePanel } from './components/ExecutivePanel';
+import { MediaEmpirePanel } from './components/MediaEmpirePanel';
 
 const TABS = [
   { id: 'home', label: 'Home', icon: '🏠' },
@@ -366,6 +370,7 @@ export default function App() {
             <BillPanel />
             <ElectionPanel />
           </div>
+          <ExecutivePanel />
           <PartyFoundingPanel />
           <WhipDisciplinePanel />
         </>
@@ -382,6 +387,7 @@ export default function App() {
             <CampaignFinancePanel />
             <MediaEcosystemPanel />
           </div>
+          <MediaEmpirePanel />
         </>
       )}
 
@@ -421,6 +427,8 @@ export default function App() {
             <SocialPolicyPanel />
           </div>
           <ThinkTankPanel />
+          <FederalismPanel />
+          <ConstitutionPanel />
         </>
       )}
 

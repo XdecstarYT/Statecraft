@@ -1,8 +1,9 @@
 import type { SeededRng } from '../rng';
 import { WEEKS_PER_YEAR } from '../calendar';
+import { clamp, ideologicalDistance, MAX_IDEOLOGICAL_DISTANCE } from '../ideology';
 import { generateName } from '../../content/names/pool';
-import { computeEffectiveDistrictLean, computeDistrictLean, computeIdeologicalVoteShares } from './elections';
-import type { IdeologyPosition, Party, Province, StateElectionResult, StateGovernment, VoterBloc } from '../models/types';
+import { allocateSeatsDHondt, computeEffectiveDistrictLean, computeDistrictLean, computeIdeologicalVoteShares } from './elections';
+import type { IdeologyPosition, Party, PartyVoteShare, Province, StateElectionResult, StateGovernment, VoterBloc } from '../models/types';
 
 /**
  * STATE / PROVINCE GOVERNANCE — every province a country's legislature
@@ -17,6 +18,16 @@ export const STATE_TERM_LENGTH_TURNS = WEEKS_PER_YEAR * 2;
 
 /** Bounds how much recent gubernatorial-election history the UI keeps. */
 export const STATE_ELECTION_HISTORY_LIMIT = 40;
+
+/** Fixed size for every province's own state legislature — small and real, not just a governor's office. */
+export const STATE_LEGISLATURE_SEATS = 9;
+const STATE_LEGISLATURE_THRESHOLD = 0.05;
+
+/** The national party currently holding the most seats — ties favor whichever party is listed first, same convention as resolveFPTPDistrict. */
+export function computeNationalRulingPartyId(parties: Party[]): string {
+  if (parties.length === 0) return '';
+  return parties.reduce((best, p) => (p.seats > best.seats ? p : best), parties[0]).id;
+}
 
 /** Deterministically staggers each province's first election so they don't all fire in lockstep. */
 function staggerOffset(provinceId: string): number {
@@ -36,6 +47,12 @@ function pickPartyWeightedBySeats(parties: Party[], rng: SeededRng): string {
   return parties[parties.length - 1].id;
 }
 
+/** Seeds a province's initial legislature seats straight off the national parties' own seat shares (no election has happened here yet). */
+function initialLegislatureSeats(parties: Party[]): Record<string, number> {
+  const votes: PartyVoteShare[] = parties.map((p) => ({ partyId: p.id, votes: Math.max(1, p.seats) }));
+  return allocateSeatsDHondt(votes, STATE_LEGISLATURE_SEATS, 0);
+}
+
 export function initializeStateGovernments(provinces: Province[], parties: Party[], rng: SeededRng): StateGovernment[] {
   return provinces.map((province) => ({
     provinceId: province.id,
@@ -46,6 +63,8 @@ export function initializeStateGovernments(provinces: Province[], parties: Party
     nextElectionTurn: 1 + staggerOffset(province.id),
     lastElectionTurn: null,
     termsServed: 0,
+    legislatureSeats: initialLegislatureSeats(parties),
+    federalTension: 10 + rng.nextInt(0, 20),
   }));
 }
 
@@ -53,6 +72,29 @@ export function initializeStateGovernments(provinces: Province[], parties: Party
 export function driftStateApproval(gov: StateGovernment, rng: SeededRng): StateGovernment {
   const delta = (rng.next() - 0.5) * 4;
   return { ...gov, approval: Math.max(5, Math.min(95, gov.approval + delta)) };
+}
+
+const FEDERAL_TENSION_PULL_RATE = 0.08;
+const FEDERAL_TENSION_NOISE = 3;
+
+/**
+ * FEDERALISM — federalTension isn't random: it's sticky-pulled (same
+ * decay-toward-target shape as opinion.ts's approval) toward how
+ * ideologically far this state's own ruling party sits from whichever
+ * national party currently holds the most seats. A governor from the
+ * player's own governing party runs low tension almost by construction; an
+ * opposition governor in a deeply divergent state runs persistently high.
+ */
+export function driftFederalTension(gov: StateGovernment, nationalRulingPartyId: string, parties: Party[], rng: SeededRng): StateGovernment {
+  const govParty = parties.find((p) => p.id === gov.partyId);
+  const nationalParty = parties.find((p) => p.id === nationalRulingPartyId);
+  const target =
+    govParty && nationalParty
+      ? clamp((ideologicalDistance(govParty.ideology, nationalParty.ideology) / MAX_IDEOLOGICAL_DISTANCE) * 100, 5, 95)
+      : 20;
+  const pull = (target - gov.federalTension) * FEDERAL_TENSION_PULL_RATE;
+  const noise = (rng.next() - 0.5) * FEDERAL_TENSION_NOISE;
+  return { ...gov, federalTension: clamp(gov.federalTension + pull + noise, 0, 100) };
 }
 
 /**
@@ -83,6 +125,12 @@ const INCUMBENT_APPROVAL_MOMENTUM_SCALE = 400;
  * nudge from the sitting governor's own approval and per-party noise.
  * Deterministic given the RNG's state.
  */
+interface GovernorRaceResolution {
+  winningPartyId: string;
+  /** Every party's final blended share — reused as-is to seat the state legislature via D'Hondt, so both races come out of the same underlying electorate. */
+  shares: Record<string, number>;
+}
+
 function resolveGovernorRace(
   province: Province,
   gov: StateGovernment,
@@ -90,11 +138,12 @@ function resolveGovernorRace(
   voterBlocs: VoterBloc[],
   districtLeanDrift: Record<string, IdeologyPosition>,
   rng: SeededRng
-): string {
+): GovernorRaceResolution {
   const lean = computeProvinceLean(province, districtLeanDrift);
   const ideologicalShares = voterBlocs.length > 0 ? computeIdeologicalVoteShares(parties, voterBlocs, lean) : null;
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
 
+  const shares: Record<string, number> = {};
   let bestPartyId = parties[0]?.id ?? gov.partyId;
   let bestShare = -Infinity;
   for (const party of parties) {
@@ -105,12 +154,13 @@ function resolveGovernorRace(
     const incumbencyBonus = party.id === gov.partyId ? (gov.approval - 50) / INCUMBENT_APPROVAL_MOMENTUM_SCALE : 0;
     const noise = (rng.next() - 0.5) * GOVERNOR_RACE_NOISE_SPREAD;
     const share = Math.max(0.01, baseShare + incumbencyBonus + noise);
+    shares[party.id] = share;
     if (share > bestShare) {
       bestShare = share;
       bestPartyId = party.id;
     }
   }
-  return bestPartyId;
+  return { winningPartyId: bestPartyId, shares };
 }
 
 export interface StateElectionResolution {
@@ -127,8 +177,14 @@ export function resolveStateElection(
   rng: SeededRng
 ): StateElectionResolution {
   const turn = gov.nextElectionTurn;
-  const winningPartyId = resolveGovernorRace(province, gov, parties, voterBlocs, districtLeanDrift, rng);
+  const { winningPartyId, shares } = resolveGovernorRace(province, gov, parties, voterBlocs, districtLeanDrift, rng);
   const incumbentPartyRetained = winningPartyId === gov.partyId;
+
+  const legislatureVotes: PartyVoteShare[] = parties.map((p) => ({
+    partyId: p.id,
+    votes: Math.round(Math.max(0, shares[p.id] ?? 0) * 100_000),
+  }));
+  const legislatureSeats = allocateSeatsDHondt(legislatureVotes, STATE_LEGISLATURE_SEATS, STATE_LEGISLATURE_THRESHOLD);
 
   const government: StateGovernment = {
     ...gov,
@@ -138,6 +194,7 @@ export function resolveStateElection(
     lastElectionTurn: turn,
     nextElectionTurn: turn + STATE_TERM_LENGTH_TURNS,
     termsServed: incumbentPartyRetained ? gov.termsServed + 1 : 1,
+    legislatureSeats,
   };
 
   return {
@@ -175,16 +232,20 @@ export function runStateGovernanceTurn(
 ): StateGovernanceTurnResult {
   const results: StateElectionResult[] = [];
   const provincesById = new Map(provinces.map((p) => [p.id, p]));
+  const nationalRulingPartyId = computeNationalRulingPartyId(parties);
 
-  const nextGovernments = governments.map((gov) => driftStateApproval(gov, rng)).map((gov) => {
-    if (gov.nextElectionTurn !== turn) return gov;
-    const province = provincesById.get(gov.provinceId);
-    if (!province || parties.length === 0) return gov;
+  const nextGovernments = governments
+    .map((gov) => driftStateApproval(gov, rng))
+    .map((gov) => driftFederalTension(gov, nationalRulingPartyId, parties, rng))
+    .map((gov) => {
+      if (gov.nextElectionTurn !== turn) return gov;
+      const province = provincesById.get(gov.provinceId);
+      if (!province || parties.length === 0) return gov;
 
-    const resolved = resolveStateElection(province, gov, parties, voterBlocs, districtLeanDrift, rng);
-    results.push(resolved.result);
-    return resolved.government;
-  });
+      const resolved = resolveStateElection(province, gov, parties, voterBlocs, districtLeanDrift, rng);
+      results.push(resolved.result);
+      return resolved.government;
+    });
 
   return { governments: nextGovernments, results };
 }

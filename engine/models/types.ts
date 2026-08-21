@@ -98,7 +98,9 @@ export type BillStatus =
   | 'passed'
   | 'failed'
   | 'vetoed'
-  | 'struck_down';
+  | 'struck_down'
+  /** Presidential/semi-presidential regimes only: cleared the floor vote but not yet enacted — awaiting the executive's signature or veto. See engine/systems/executive.ts. */
+  | 'awaiting_signature';
 
 /**
  * Which national system, if any, a passed bill nudges beyond the generic
@@ -131,6 +133,8 @@ export interface Bill {
   filibustered?: boolean;
   /** Set once the bill clears (or dies in) committee — see engine/systems/committees.ts. Optional for saves predating this field. */
   committeeResult?: CommitteeVoteResult;
+  /** Presidential/semi-presidential regimes only — see engine/systems/executive.ts. Absent (treated as 'none') for parliamentary regimes and saves predating this field. */
+  vetoStatus?: VetoStatus;
 }
 
 /**
@@ -250,6 +254,10 @@ export interface MediaOutlet {
   bias: IdeologyPosition;
   /** Fraction of the public this outlet reaches, 0..1. */
   reach: number;
+  /** Set only for player-founded outlets (see mediaEmpire.ts) — undefined for the pre-authored starter press. */
+  ownerId?: string;
+  /** 0..100 — invested growth capability for a player-owned outlet; scales how fast its reach grows each turn. */
+  investedCapability?: number;
 }
 
 /**
@@ -350,6 +358,10 @@ export interface StateGovernment {
   nextElectionTurn: number;
   lastElectionTurn: number | null;
   termsServed: number;
+  /** partyId -> seats in this province's own small state legislature, resolved by D'Hondt alongside each gubernatorial election. See engine/systems/federalism.ts. */
+  legislatureSeats: Record<string, number>;
+  /** 0..100 — how sharply this state's own politics diverge from the national ruling party; drives interstate disputes and adds pressure to secession sentiment. */
+  federalTension: number;
 }
 
 /** A resolved gubernatorial election — kept as a bounded recent-history log for the state governance UI. */
@@ -361,6 +373,97 @@ export interface StateElectionResult {
   previousPartyId: string;
   newPartyId: string;
   newGovernorName: string;
+}
+
+/**
+ * FEDERALISM — an interstate dispute between two of the player's own
+ * provinces, spawned with likelihood weighted by each state's own
+ * federalTension. The player can mediate it toward one side or stay
+ * neutral, each with a real, bounded consequence rather than flavor text
+ * alone. See engine/systems/federalism.ts.
+ */
+export type InterstateDisputeType = 'resource' | 'border' | 'trade' | 'political';
+export type InterstateDisputeStatus = 'active' | 'resolved';
+export type InterstateDisputeMediationChoice = 'favor_a' | 'favor_b' | 'neutral';
+
+export interface InterstateDispute {
+  id: string;
+  stateAId: string;
+  stateBId: string;
+  type: InterstateDisputeType;
+  status: InterstateDisputeStatus;
+  turnStarted: number;
+  turnResolved?: number;
+  resolution?: InterstateDisputeMediationChoice;
+}
+
+/**
+ * CONSTITUTIONAL REFORM — the player can propose a real amendment to the
+ * country's own founding rules (electoral system, term length, a house
+ * rule, or the regime type itself), which then needs a supermajority floor
+ * vote (same whip-count math as an ordinary bill, just a higher bar) to
+ * actually take effect. See engine/systems/constitution.ts.
+ */
+export type AmendmentChangeType = 'electoral_system' | 'term_length' | 'house_rule' | 'regime_type';
+
+/** Exactly one of these fields is populated, matching `type`. */
+export interface AmendmentChange {
+  type: AmendmentChangeType;
+  electoralSystem?: ElectoralSystem;
+  termLengthTurns?: number;
+  houseRule?: keyof HouseRules;
+  houseRuleValue?: boolean;
+  regimeType?: Country['regimeType'];
+}
+
+export type AmendmentStatus = 'proposed' | 'passed' | 'failed';
+
+export interface ConstitutionalAmendment {
+  id: string;
+  title: string;
+  description: string;
+  change: AmendmentChange;
+  sponsorId: string;
+  status: AmendmentStatus;
+  whipCount: Record<string, WhipStance>;
+  turnProposed: number;
+  turnResolved?: number;
+  votesFor?: number;
+  votesAgainst?: number;
+}
+
+/**
+ * EXECUTIVE POWERS — presidential/semi-presidential regimes (see
+ * Country.regimeType) get a head of state distinct from ordinary floor-vote
+ * politics: a passed bill can be vetoed, a veto can be overridden by the
+ * same supermajority an amendment needs, and the executive can issue a
+ * bounded, cooldown-gated order without the legislature at all. See
+ * engine/systems/executive.ts.
+ */
+export type VetoStatus = 'none' | 'vetoed' | 'overridden' | 'sustained';
+
+export interface ExecutiveOrder {
+  id: string;
+  title: string;
+  description: string;
+  economyEffect?: EconomyDelta;
+  playerApprovalEffect?: number;
+  turnIssued: number;
+}
+
+/**
+ * MEDIA & CULTURE EMPIRE — beyond courting the pre-authored press (see
+ * MediaOutlet, media.ts), the player can found and grow their own outlet,
+ * and fund cultural institutions that build a national soft-power score.
+ * See engine/systems/mediaEmpire.ts.
+ */
+export interface CulturalInstitution {
+  id: string;
+  name: string;
+  founderId: string;
+  turnFounded: number;
+  /** 0..100 — prestige; scales its contribution to national soft power. */
+  prestige: number;
 }
 
 /** A resolved foreign election — kept as a bounded recent-history log for the World Elections UI. */
@@ -1215,6 +1318,20 @@ export interface GameState {
   stateGovernments: StateGovernment[];
   /** Bounded recent-history log of resolved gubernatorial elections, newest last. */
   stateElectionHistory: StateElectionResult[];
+  /** Active and resolved interstate disputes between the player's own provinces. See engine/systems/federalism.ts. */
+  interstateDisputes: InterstateDispute[];
+  /** Proposed and resolved constitutional amendments. See engine/systems/constitution.ts. */
+  constitutionalAmendments: ConstitutionalAmendment[];
+  /** Logged executive orders the player has issued. See engine/systems/executive.ts. */
+  executiveOrders: ExecutiveOrder[];
+  /** The turn the player last issued an executive order, gating the cooldown. Null before the first one. */
+  lastExecutiveOrderTurn: number | null;
+  /** Funded cultural institutions. See engine/systems/mediaEmpire.ts. */
+  culturalInstitutions: CulturalInstitution[];
+  /** 0..100 — national soft power, built by player-owned media reach and cultural institution prestige; nudges foreign relations drift and tribunal leniency. */
+  softPower: number;
+  /** The player's own legislature's term length in turns — defaults to TERM_LENGTH_TURNS (engine/index.ts), real-changeable via a 'term_length' constitutional amendment. */
+  legislativeTermLengthTurns: number;
 }
 
 /**
