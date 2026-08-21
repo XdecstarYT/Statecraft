@@ -4,10 +4,12 @@ import type { Party, Politician } from '../models/types';
 import {
   DEFAULT_CONFIDENCE_WEIGHTS,
   computeCoalitionIdeology,
+  computeCoalitionOffers,
   computeConfidenceSupportProbability,
   formCoalition,
   formGovernment,
   hasOutrightMajority,
+  resolveCoalitionOffer,
   resolveConfidenceVote,
 } from './coalition';
 
@@ -181,5 +183,93 @@ describe('formGovernment', () => {
     const parties = [makeParty({ id: 'a', seats: 100 })];
     const politicians = [makePolitician({ id: 'm1', partyId: 'a' })];
     expect(() => formGovernment(parties, politicians, {}, {}, 1, new SeededRng(1))).toThrow();
+  });
+});
+
+describe('computeCoalitionOffers', () => {
+  it('returns no offers when one party holds an outright majority', () => {
+    const parties = [makeParty({ id: 'a', seats: 60 }), makeParty({ id: 'player', seats: 40 })];
+    expect(computeCoalitionOffers(parties, 'player')).toEqual([]);
+  });
+
+  it('returns no offers when the player party holds no seats', () => {
+    const parties = [makeParty({ id: 'a', seats: 40 }), makeParty({ id: 'b', seats: 35 }), makeParty({ id: 'player', seats: 0 })];
+    expect(computeCoalitionOffers(parties, 'player')).toEqual([]);
+  });
+
+  it('returns no offers when the player party is itself the natural formateur', () => {
+    const parties = [makeParty({ id: 'player', seats: 45 }), makeParty({ id: 'b', seats: 35 }), makeParty({ id: 'c', seats: 20 })];
+    expect(computeCoalitionOffers(parties, 'player')).toEqual([]);
+  });
+
+  it('offers "join" and "opposition" when the player is pivotal to a hung parliament', () => {
+    const parties = [
+      makeParty({ id: 'formateur', seats: 40, ideology: { economic: 10, social: 10 } }),
+      makeParty({ id: 'player', seats: 15, ideology: { economic: 15, social: 15 } }),
+      makeParty({ id: 'c', seats: 30, ideology: { economic: -50, social: -50 } }),
+      makeParty({ id: 'd', seats: 15, ideology: { economic: -40, social: -40 } }),
+    ];
+    const offers = computeCoalitionOffers(parties, 'player');
+    expect(offers.map((o) => o.id)).toEqual(['join', 'opposition']);
+    const joinOffer = offers.find((o) => o.id === 'join')!;
+    expect(joinOffer.memberPartyIds).toContain('player');
+    expect(joinOffer.memberPartyIds).toContain('formateur');
+    expect(joinOffer.offeredPortfolio).not.toBeNull();
+    const oppositionOffer = offers.find((o) => o.id === 'opposition')!;
+    expect(oppositionOffer.memberPartyIds).not.toContain('player');
+  });
+
+  it('the join offer always reaches a majority of the full chamber', () => {
+    const parties = [
+      makeParty({ id: 'formateur', seats: 38, ideology: { economic: 5, social: 5 } }),
+      makeParty({ id: 'player', seats: 20, ideology: { economic: 8, social: 8 } }),
+      makeParty({ id: 'c', seats: 22, ideology: { economic: -60, social: -60 } }),
+      makeParty({ id: 'd', seats: 20, ideology: { economic: -55, social: -55 } }),
+    ];
+    const offers = computeCoalitionOffers(parties, 'player');
+    const joinOffer = offers.find((o) => o.id === 'join')!;
+    expect(joinOffer.seatsHeld).toBeGreaterThan(joinOffer.totalSeats / 2);
+  });
+});
+
+describe('resolveCoalitionOffer', () => {
+  it('forms a government from the chosen offer, with the formateur party leader as PM', () => {
+    const parties = [
+      makeParty({ id: 'formateur', seats: 40, ideology: { economic: 10, social: 10 } }),
+      makeParty({ id: 'player', seats: 15, ideology: { economic: 15, social: 15 } }),
+      makeParty({ id: 'c', seats: 30, ideology: { economic: -50, social: -50 } }),
+    ];
+    const politicians = [
+      makePolitician({ id: 'leader-formateur', partyId: 'formateur', ideology: { economic: 10, social: 10 } }),
+      makePolitician({ id: 'leader-player', partyId: 'player', ideology: { economic: 15, social: 15 } }),
+      makePolitician({ id: 'leader-c', partyId: 'c', ideology: { economic: -50, social: -50 } }),
+    ];
+    const partyLeaderId = { formateur: 'leader-formateur', player: 'leader-player', c: 'leader-c' };
+    const offers = computeCoalitionOffers(parties, 'player');
+    const joinOffer = offers.find((o) => o.id === 'join')!;
+
+    const coalition = resolveCoalitionOffer(joinOffer, parties, politicians, partyLeaderId, {}, 10, new SeededRng(1));
+    expect(coalition.formateurPartyId).toBe('formateur');
+    expect(coalition.primeMinisterId).toBe('leader-formateur');
+    expect(coalition.memberPartyIds).toContain('player');
+  });
+
+  it('forms an opposition government excluding the player party when that offer is chosen', () => {
+    const parties = [
+      makeParty({ id: 'formateur', seats: 40, ideology: { economic: 10, social: 10 } }),
+      makeParty({ id: 'player', seats: 15, ideology: { economic: 15, social: 15 } }),
+      makeParty({ id: 'c', seats: 30, ideology: { economic: -50, social: -50 } }),
+    ];
+    const politicians = [
+      makePolitician({ id: 'leader-formateur', partyId: 'formateur', ideology: { economic: 10, social: 10 } }),
+      makePolitician({ id: 'leader-player', partyId: 'player', ideology: { economic: 15, social: 15 } }),
+      makePolitician({ id: 'leader-c', partyId: 'c', ideology: { economic: -50, social: -50 } }),
+    ];
+    const partyLeaderId = { formateur: 'leader-formateur', player: 'leader-player', c: 'leader-c' };
+    const offers = computeCoalitionOffers(parties, 'player');
+    const oppositionOffer = offers.find((o) => o.id === 'opposition')!;
+
+    const coalition = resolveCoalitionOffer(oppositionOffer, parties, politicians, partyLeaderId, {}, 10, new SeededRng(1));
+    expect(coalition.memberPartyIds).not.toContain('player');
   });
 });

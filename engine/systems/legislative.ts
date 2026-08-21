@@ -19,6 +19,8 @@ export interface WhipWeights {
   favors: number;
   /** Weight on the aggregate interest-group lobbying pressure term (see lobbying.ts). */
   lobbying: number;
+  /** Weight on the per-member faction-discipline term (see factions.ts's computeFactionTerm). */
+  faction: number;
 }
 
 /**
@@ -34,6 +36,7 @@ export const DEFAULT_WHIP_WEIGHTS: WhipWeights = {
   partyLine: 1.0,
   favors: 0.6,
   lobbying: 0.7,
+  faction: 0.5,
 };
 
 /**
@@ -42,7 +45,11 @@ export const DEFAULT_WHIP_WEIGHTS: WhipWeights = {
  * is the bill-level aggregate from engine/systems/lobbying.ts's
  * computeLobbyingPressure — a single term shared by every undecided member
  * rather than a per-member one, since interest groups lobby the chamber as a
- * whole rather than individual members.
+ * whole rather than individual members. `factionTerm` is this specific
+ * member's faction-discipline term from engine/systems/factions.ts's
+ * computeFactionTerm — 0 (its default) for content without defined
+ * factions, so callers that don't pass it get identical behavior to before
+ * factions existed.
  */
 export function computeSupportProbability(
   member: Politician,
@@ -51,7 +58,8 @@ export function computeSupportProbability(
   favorBankScore: number,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
   maxFavors: number = MAX_FAVORS,
-  lobbyingPressure = 0
+  lobbyingPressure = 0,
+  factionTerm = 0
 ): number {
   const distance = ideologicalDistance(member.ideology, sponsor.ideology);
   // 1 (perfectly aligned) .. -1 (maximally opposed)
@@ -63,13 +71,16 @@ export function computeSupportProbability(
   const favorsTerm = maxFavors > 0 ? Math.max(0, Math.min(1, favorBankScore / maxFavors)) : 0;
   // -1 (chamber-wide lobbying against) .. 1 (chamber-wide lobbying for)
   const lobbyingTerm = Math.max(-1, Math.min(1, lobbyingPressure));
+  // -1 (faction defects from sponsor) .. 1 (faction & its leader are bought in)
+  const factionTermClamped = Math.max(-1, Math.min(1, factionTerm));
 
   const supportScore =
     weights.ideology * ideologyTerm +
     weights.relationship * relationshipTerm +
     weights.partyLine * partyLineTerm +
     weights.favors * favorsTerm +
-    weights.lobbying * lobbyingTerm;
+    weights.lobbying * lobbyingTerm +
+    weights.faction * factionTermClamped;
 
   return sigmoid(supportScore);
 }
@@ -133,7 +144,8 @@ export function pollWhipCount(
   relationships: Record<string, number>,
   favorBank: Record<string, number>,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
-  lobbyingPressure = 0
+  lobbyingPressure = 0,
+  factionTerms: Record<string, number> = {}
 ): WhipProjection[] {
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
   if (!sponsor) {
@@ -156,7 +168,8 @@ export function pollWhipCount(
         favorBankScore,
         weights,
         MAX_FAVORS,
-        lobbyingPressure
+        lobbyingPressure,
+        factionTerms[member.id] ?? 0
       );
       return { politicianId: member.id, stance: 'undecided' as const, projectedProbability };
     });
@@ -182,7 +195,8 @@ export function resolveFloorVote(
   favorBank: Record<string, number>,
   rng: SeededRng,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
-  lobbyingPressure = 0
+  lobbyingPressure = 0,
+  factionTerms: Record<string, number> = {}
 ): FloorVoteResult {
   assertStatus(bill, 'floor');
   if (bill.filibustered) {
@@ -215,7 +229,8 @@ export function resolveFloorVote(
         favorBankScore,
         weights,
         MAX_FAVORS,
-        lobbyingPressure
+        lobbyingPressure,
+        factionTerms[member.id] ?? 0
       );
       vote = resolveVote(probability, rng);
     }
@@ -302,7 +317,8 @@ export function attemptCloture(
   rng: SeededRng,
   weights: WhipWeights = DEFAULT_WHIP_WEIGHTS,
   lobbyingPressure = 0,
-  threshold: number = CLOTURE_THRESHOLD
+  threshold: number = CLOTURE_THRESHOLD,
+  factionTerms: Record<string, number> = {}
 ): { bill: Bill; result: ClotureResult } {
   assertStatus(bill, 'floor');
   const sponsor = politicians.find((p) => p.id === bill.sponsorId);
@@ -328,7 +344,8 @@ export function attemptCloture(
         favorBankScore,
         weights,
         MAX_FAVORS,
-        lobbyingPressure
+        lobbyingPressure,
+        factionTerms[member.id] ?? 0
       );
       votesYes = resolveVote(probability, rng) === 'yes';
     }
@@ -360,4 +377,18 @@ export function computeBillEconomyEffect(bill: Bill): EconomyDelta {
   const budgetBalance = netImpact / BUDGET_IMPACT_SCALE;
   const gdpGrowth = -netImpact / (BUDGET_IMPACT_SCALE * 4);
   return { budgetBalance, gdpGrowth };
+}
+
+/**
+ * Same net-fiscal-direction math as computeBillEconomyEffect, sign-flipped
+ * into "how much this bill invests in its own category" — positive for a
+ * net-spending bill, negative for a net-savings/austerity one. Consumed by
+ * engine/index.ts's applyBillCategoryEffect to size the bill's nudge to
+ * whichever specific system its category maps to (crime, pollution, life
+ * expectancy, ...), same no-free-lunch shape as the economy effect: real
+ * spending helps the domain, cuts hurt it.
+ */
+export function computeBillDomainMagnitude(bill: Bill): number {
+  const netImpact = bill.provisions.reduce((sum, p) => sum + p.budgetImpact, 0);
+  return -netImpact / BUDGET_IMPACT_SCALE;
 }

@@ -1,6 +1,6 @@
 import { SeededRng } from '../rng';
-import { MAX_IDEOLOGICAL_DISTANCE, ideologicalDistance } from '../ideology';
-import type { District, DistrictResult, IdeologyPosition, Party, PartyVoteShare } from '../models/types';
+import { MAX_IDEOLOGICAL_DISTANCE, clamp, clampAxis, ideologicalAlignment, ideologicalDistance } from '../ideology';
+import type { District, DistrictResult, IdeologyPosition, Party, PartyVoteShare, VoterBloc } from '../models/types';
 
 export type { DistrictResult, PartyVoteShare } from '../models/types';
 
@@ -36,26 +36,153 @@ export function resolveFPTPElection(
   return seats;
 }
 
+const NEUTRAL_LEAN: IdeologyPosition = { economic: 0, social: 0 };
+const MAX_DISTRICT_LEAN = 22;
+
 /**
- * Generates a plausible vote split for one district from each party's
- * national standing (current seat share, as a stand-in for polling support)
- * plus per-district random noise. `momentum` (default 1 for every party)
- * lets a party's real-world performance — e.g. the player's own approval —
- * scale its vote share up or down. Deterministic given the RNG's state.
+ * A district's persistent ideological character — some districts genuinely
+ * lean one way or another, same as real electorates do. Purely a hash of
+ * the district's own id, not the seeded game RNG: it never varies run to
+ * run for the same district (more strongly reproducible than a seeded
+ * value would be, and consistent with how the district hex-map layout in
+ * ui/components/hexLayout.ts is also id-derived, not randomized).
+ */
+export function computeDistrictLean(districtId: string): IdeologyPosition {
+  let hash = 0;
+  for (let i = 0; i < districtId.length; i++) hash = (hash * 31 + districtId.charCodeAt(i)) >>> 0;
+  const economic = ((hash % 1000) / 1000 - 0.5) * 2 * MAX_DISTRICT_LEAN;
+  const social = (((Math.floor(hash / 1000) % 1000) / 1000) - 0.5) * 2 * MAX_DISTRICT_LEAN;
+  return { economic, social };
+}
+
+/** How far a single redistricting pass can nudge one district's lean on either axis. */
+const REDISTRICTING_DRIFT_STEP = 6;
+/** Total accumulated drift (on top of the district's base hash-derived lean) never exceeds this. */
+const MAX_REDISTRICTING_DRIFT = 18;
+
+/**
+ * REDISTRICTING — a district's boundaries aren't frozen forever in reality,
+ * and neither is its electorate's makeup; each legislative term nudges
+ * every district's lean a bounded step in a random direction (a seeded
+ * random walk, not a fresh reroll), so the map's partisan geography
+ * gradually shifts across a long game instead of staying static. `drift` is
+ * the accumulated delta on top of computeDistrictLean's base value, keyed
+ * by district id; districts with no entry yet start from zero.
+ */
+export function redistrict(
+  districtIds: string[],
+  drift: Record<string, IdeologyPosition>,
+  rng: SeededRng
+): Record<string, IdeologyPosition> {
+  const next = { ...drift };
+  for (const id of districtIds) {
+    const current = next[id] ?? NEUTRAL_LEAN;
+    next[id] = {
+      economic: clamp(current.economic + (rng.next() - 0.5) * 2 * REDISTRICTING_DRIFT_STEP, -MAX_REDISTRICTING_DRIFT, MAX_REDISTRICTING_DRIFT),
+      social: clamp(current.social + (rng.next() - 0.5) * 2 * REDISTRICTING_DRIFT_STEP, -MAX_REDISTRICTING_DRIFT, MAX_REDISTRICTING_DRIFT),
+    };
+  }
+  return next;
+}
+
+/** The district's base hash-derived lean plus any accumulated redistricting drift, clamped to a sane combined range. */
+export function computeEffectiveDistrictLean(districtId: string, drift: Record<string, IdeologyPosition>): IdeologyPosition {
+  const base = computeDistrictLean(districtId);
+  const d = drift[districtId] ?? NEUTRAL_LEAN;
+  const combinedMax = MAX_DISTRICT_LEAN + MAX_REDISTRICTING_DRIFT;
+  return {
+    economic: clamp(base.economic + d.economic, -combinedMax, combinedMax),
+    social: clamp(base.social + d.social, -combinedMax, combinedMax),
+  };
+}
+
+/**
+ * How one ideological position's worth of voters splits across parties, by
+ * relative closeness — a standard spatial-voting model. Every party gets a
+ * nonzero floor share (nothing is ever a mathematically guaranteed zero),
+ * and shares always sum to ~1 across the given party list.
+ */
+export function computeBlocPartyShares(parties: Party[], voterIdeology: IdeologyPosition): Record<string, number> {
+  const shares: Record<string, number> = {};
+  if (parties.length === 0) return shares;
+  const alignments = parties.map((p) => Math.max(0.02, ideologicalAlignment(p.ideology, voterIdeology)) ** 2);
+  const total = alignments.reduce((a, b) => a + b, 0);
+  parties.forEach((p, i) => {
+    shares[p.id] = alignments[i] / total;
+  });
+  return shares;
+}
+
+/**
+ * Blends computeBlocPartyShares across every voter bloc, weighted by bloc
+ * size, with an optional district-level lean nudging each bloc's effective
+ * position before alignment is scored — so the same national bloc mix can
+ * still produce a genuinely different result in a district that leans away
+ * from (or into) a given bloc's usual position. Returns ~0 for every party
+ * when there are no blocs to weight by (the caller falls back to the
+ * incumbency-only model in that case).
+ */
+export function computeIdeologicalVoteShares(
+  parties: Party[],
+  voterBlocs: VoterBloc[],
+  lean: IdeologyPosition = NEUTRAL_LEAN
+): Record<string, number> {
+  const totals: Record<string, number> = {};
+  for (const p of parties) totals[p.id] = 0;
+  const totalBlocSize = voterBlocs.reduce((sum, b) => sum + b.size, 0);
+  if (totalBlocSize <= 0) return totals;
+
+  for (const bloc of voterBlocs) {
+    const effectiveIdeology: IdeologyPosition = {
+      economic: clampAxis(bloc.ideology.economic + lean.economic),
+      social: clampAxis(bloc.ideology.social + lean.social),
+    };
+    const blocShares = computeBlocPartyShares(parties, effectiveIdeology);
+    const weight = bloc.size / totalBlocSize;
+    for (const p of parties) totals[p.id] += (blocShares[p.id] ?? 0) * weight;
+  }
+  return totals;
+}
+
+const IDEOLOGY_WEIGHT = 0.55;
+
+/**
+ * Generates a plausible vote split for one district, blending two real
+ * signals: each party's actual ideological fit with the district's voters
+ * (see computeIdeologicalVoteShares — the district's own persistent lean
+ * genuinely shifts this) and its current national standing (seat share, as
+ * a stand-in for incumbency/name recognition), plus a smaller residual of
+ * per-district random noise than a purely-random model would need, since
+ * real signal now drives most of the district-to-district variation.
+ * `momentum` (default 1 for every party) lets a party's real-world
+ * performance — e.g. the player's own approval — scale its vote share up
+ * or down on top of that. Deterministic given the RNG's state. Falls back
+ * to the pre-ideology incumbency+noise-only model when no voterBlocs are
+ * supplied (e.g. a custom nation authored without any).
  */
 export function generateDistrictVotes(
   district: District,
   parties: Party[],
   turnout: number,
   rng: SeededRng,
-  momentum: Record<string, number> = {}
+  momentum: Record<string, number> = {},
+  voterBlocs: VoterBloc[] = [],
+  districtLeanDrift: Record<string, IdeologyPosition> = {}
 ): DistrictResult {
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
   const votesByParty: Record<string, number> = {};
+  const ideologicalShares =
+    voterBlocs.length > 0
+      ? computeIdeologicalVoteShares(parties, voterBlocs, computeEffectiveDistrictLean(district.id, districtLeanDrift))
+      : null;
 
   for (const party of parties) {
-    const baseShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
-    const noise = (rng.next() - 0.5) * 0.3; // +/- 15 points of district-level swing
+    const incumbencyShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
+    const baseShare = ideologicalShares
+      ? IDEOLOGY_WEIGHT * ideologicalShares[party.id] + (1 - IDEOLOGY_WEIGHT) * incumbencyShare
+      : incumbencyShare;
+    const noiseSpread = ideologicalShares ? 0.15 : 0.3;
+    const noise = (rng.next() - 0.5) * noiseSpread;
     const share = Math.max(0.01, baseShare + noise) * (momentum[party.id] ?? 1);
     votesByParty[party.id] = Math.round(share * turnout);
   }
@@ -105,20 +232,30 @@ export function allocateSeatsDHondt(
 }
 
 /**
- * Generates each party's national vote total from current seat share plus
- * noise. `momentum` (default 1 for every party) lets a party's real-world
- * performance scale its vote share up or down.
+ * Generates each party's national vote total, same ideology/incumbency
+ * blend as generateDistrictVotes but with no district lean (there's no
+ * single district to lean) — the whole electorate's real bloc mix drives
+ * it directly. `momentum` (default 1 for every party) lets a party's
+ * real-world performance scale its vote share up or down on top of that.
+ * Falls back to the pre-ideology incumbency+noise-only model when no
+ * voterBlocs are supplied.
  */
 export function generateNationalVotes(
   parties: Party[],
   turnout: number,
   rng: SeededRng,
-  momentum: Record<string, number> = {}
+  momentum: Record<string, number> = {},
+  voterBlocs: VoterBloc[] = []
 ): PartyVoteShare[] {
   const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
+  const ideologicalShares = voterBlocs.length > 0 ? computeIdeologicalVoteShares(parties, voterBlocs) : null;
   return parties.map((party) => {
-    const baseShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
-    const noise = (rng.next() - 0.5) * 0.2; // +/- 10 points of national swing
+    const incumbencyShare = totalSeats > 0 ? party.seats / totalSeats : 1 / parties.length;
+    const baseShare = ideologicalShares
+      ? IDEOLOGY_WEIGHT * ideologicalShares[party.id] + (1 - IDEOLOGY_WEIGHT) * incumbencyShare
+      : incumbencyShare;
+    const noiseSpread = ideologicalShares ? 0.1 : 0.2;
+    const noise = (rng.next() - 0.5) * noiseSpread;
     const share = Math.max(0.005, baseShare + noise) * (momentum[party.id] ?? 1);
     return { partyId: party.id, votes: Math.round(share * turnout) };
   });

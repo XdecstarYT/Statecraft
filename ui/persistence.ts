@@ -146,6 +146,36 @@ export function loadAccessibilitySettings(): AccessibilitySettings {
   }
 }
 
+const AI_SETTINGS_KEY = 'statecraft-ai-settings-v1';
+
+/**
+ * Client-only preference for the optional AI bill-analysis feature (see
+ * engine/systems/aiPolicyAnalysis.ts and netlify/functions/ai-bill-analysis.mts).
+ * Deliberately NOT part of GameState/save files: it's a per-browser opt-in
+ * toggle for a network feature, not simulation state, and the game must
+ * replay identically regardless of whether it's on.
+ */
+export interface AiSettings {
+  enabled: boolean;
+}
+
+export const DEFAULT_AI_SETTINGS: AiSettings = { enabled: false };
+
+export function saveAiSettings(settings: AiSettings): void {
+  localStorage.setItem(AI_SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export function loadAiSettings(): AiSettings {
+  const raw = localStorage.getItem(AI_SETTINGS_KEY);
+  if (!raw) return DEFAULT_AI_SETTINGS;
+  try {
+    const parsed = JSON.parse(raw);
+    return { ...DEFAULT_AI_SETTINGS, ...parsed };
+  } catch {
+    return DEFAULT_AI_SETTINGS;
+  }
+}
+
 const ONBOARDING_KEY = 'statecraft-onboarding-dismissed-v1';
 
 export function hasSeenOnboarding(): boolean {

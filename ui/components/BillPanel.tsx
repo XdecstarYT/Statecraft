@@ -1,6 +1,102 @@
-import { useState } from 'react';
-import { computeLobbyingPressure, pollWhipCount, type Bill } from '../../engine';
+import { useEffect, useState } from 'react';
+import {
+  computeFactionTerms,
+  computeLobbyingPressure,
+  findCommitteeForBill,
+  findMemberFaction,
+  pollWhipCount,
+  type Bill,
+  type BillCategory,
+} from '../../engine';
 import { useStatecraftStore } from '../store';
+import { loadAiSettings, saveAiSettings, type AiSettings } from '../persistence';
+
+const CATEGORY_LABELS: Record<BillCategory, string> = {
+  economic: 'Economic',
+  healthcare: 'Healthcare',
+  education: 'Education',
+  welfare: 'Welfare',
+  defense: 'Defense',
+  environment: 'Environment',
+  justice_safety: 'Justice & Safety',
+  infrastructure: 'Infrastructure',
+  research_technology: 'Research & Tech',
+};
+
+function CategoryBadge({ category }: { category?: BillCategory }) {
+  if (!category) return null;
+  return <span className={`bill-category-badge bill-category-${category}`}>{CATEGORY_LABELS[category]}</span>;
+}
+
+/**
+ * Toggle for the optional AI bill-analysis feature (see ui/ai/policyAdvisor.ts
+ * and engine/systems/aiPolicyAnalysis.ts). Off by default, per-browser only —
+ * not part of GameState/saves. When on, a passed bill gets an extra network
+ * call to a Netlify function that proxies Groq for a short narrative and a
+ * small, clamped adjustment layered on top of the bill's real deterministic
+ * effect; the game works identically with this off.
+ */
+function AiAdvisorToggle() {
+  const [settings, setSettings] = useState<AiSettings>(() => loadAiSettings());
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    saveAiSettings(settings);
+  }, [settings]);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="ghost-button" onClick={() => setOpen((v) => !v)}>
+        AI Advisor {settings.enabled ? '(On)' : '(Off)'}
+      </button>
+      {open && (
+        <div className="panel" style={{ position: 'absolute', right: 0, top: '2.2rem', zIndex: 20, width: '280px' }}>
+          <div className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={settings.enabled}
+                onChange={(e) => setSettings((s) => ({ ...s, enabled: e.target.checked }))}
+              />
+              Enable AI policy analysis
+            </label>
+            <p className="muted" style={{ fontSize: '0.85em' }}>
+              When on, each newly enacted law gets a short AI-written analysis and a small, bounded nudge to the
+              economy/approval — layered on top of the game's real, deterministic bill effects, never in place of
+              them. Requires network access; the game plays identically with this off.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiAnalysisNote({ billId }: { billId: string }) {
+  const game = useStatecraftStore((s) => s.game);
+  const pendingBillId = useStatecraftStore((s) => s.aiAnalysisPendingBillId);
+  const error = useStatecraftStore((s) => s.aiAnalysisError);
+  if (!game) return null;
+
+  const analysis = game.aiBillAnalyses.find((a) => a.billId === billId);
+  if (analysis) {
+    return (
+      <p className="muted ai-analysis-note">
+        <span className="law-badge" style={{ opacity: 0.8 }}>AI</span> {analysis.narrative}
+      </p>
+    );
+  }
+  if (pendingBillId === billId) {
+    return <p className="muted ai-analysis-note">Requesting AI analysis…</p>;
+  }
+  if (error && pendingBillId === null) {
+    // Only the most recently attempted bill's error is tracked; showing it
+    // here for every law without a note would misattribute stale failures,
+    // so this stays silent unless we can't tell which bill it belongs to.
+    return null;
+  }
+  return null;
+}
 
 export function BillPanel() {
   const game = useStatecraftStore((s) => s.game);
@@ -18,7 +114,10 @@ export function BillPanel() {
     <section className="panel">
       <div className="panel-header">
         <h2>Legislation</h2>
-        <button onClick={proposeNewBill}>Draft From Template</button>
+        <div className="row-actions">
+          <AiAdvisorToggle />
+          <button onClick={proposeNewBill}>Draft From Template</button>
+        </div>
       </div>
 
       {lastFloorResult && (
@@ -58,6 +157,7 @@ export function BillPanel() {
                 <div className="bill-summary">
                   <span className="bill-title">
                     <span className="law-badge">LAW</span> {law.title}
+                    <CategoryBadge category={law.category} />
                     <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>
                   </span>
                 </div>
@@ -68,6 +168,7 @@ export function BillPanel() {
                     </li>
                   ))}
                 </ul>
+                <AiAnalysisNote billId={law.id} />
               </li>
             );
           })}
@@ -81,10 +182,12 @@ function CustomBillForm() {
   const proposeCustomBill = useStatecraftStore((s) => s.proposeCustomBill);
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
+  const [category, setCategory] = useState<BillCategory>('economic');
   const [provisions, setProvisions] = useState([{ description: '', budgetImpact: 0 }]);
 
   function reset() {
     setTitle('');
+    setCategory('economic');
     setProvisions([{ description: '', budgetImpact: 0 }]);
     setOpen(false);
   }
@@ -106,7 +209,7 @@ function CustomBillForm() {
   function submit() {
     const valid = title.trim().length > 0 && provisions.some((p) => p.description.trim().length > 0);
     if (!valid) return;
-    proposeCustomBill(title, provisions);
+    proposeCustomBill(title, category, provisions);
     reset();
   }
 
@@ -129,6 +232,22 @@ function CustomBillForm() {
           placeholder="e.g. National Broadband Act"
         />
       </label>
+
+      <label>
+        Category
+        <select value={category} onChange={(e) => setCategory(e.target.value as BillCategory)}>
+          {(Object.keys(CATEGORY_LABELS) as BillCategory[]).map((c) => (
+            <option key={c} value={c}>
+              {CATEGORY_LABELS[c]}
+            </option>
+          ))}
+        </select>
+      </label>
+      <p className="muted category-hint">
+        {category === 'economic'
+          ? 'Only moves the budget and growth, like every bill does.'
+          : `Net spending here also nudges ${CATEGORY_LABELS[category].toLowerCase()} outcomes directly — net cuts hurt them.`}
+      </p>
 
       <div className="provision-rows">
         {provisions.map((p, i) => (
@@ -198,6 +317,7 @@ function BillRow({
 
   const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
   const isPlayerBill = sponsor?.isPlayer ?? false;
+  const committee = findCommitteeForBill(game.committees, bill);
 
   const projections =
     expanded && sponsor
@@ -207,7 +327,8 @@ function BillRow({
           game.relationships,
           game.favorBank,
           undefined,
-          computeLobbyingPressure(game.interestGroups, bill, sponsor)
+          computeLobbyingPressure(game.interestGroups, bill, sponsor),
+          computeFactionTerms(game.politicians, sponsor, game.parties, game.relationships, game.favorBank, game.factionLeaderId)
         )
       : [];
 
@@ -220,6 +341,7 @@ function BillRow({
       <div className="bill-summary" onClick={onToggle}>
         <span className="bill-title">
           {bill.title}
+          <CategoryBadge category={bill.category} />
           {!isPlayerBill && <span className="muted"> — sponsored by {sponsor?.name ?? 'Unknown'}</span>}
         </span>
         <span className={`bill-status status-${bill.status}`}>{bill.status}</span>
@@ -227,6 +349,15 @@ function BillRow({
 
       {expanded && (
         <div className="bill-detail">
+          {committee && (
+            <p className="muted">
+              Committee of jurisdiction: {committee.name}
+              {bill.committeeResult &&
+                (bill.committeeResult.passed
+                  ? ` — cleared ${bill.committeeResult.yes}-${bill.committeeResult.no}`
+                  : ` — killed in committee ${bill.committeeResult.no}-${bill.committeeResult.yes}`)}
+            </p>
+          )}
           <ul className="provision-list">
             {bill.provisions.map((p) => (
               <li key={p.id}>
@@ -316,6 +447,7 @@ function BillRow({
                 <tr>
                   <th>Member</th>
                   <th>Party</th>
+                  <th>Faction</th>
                   <th>Stance</th>
                   <th>Projected Yes %</th>
                   <th>Actions</th>
@@ -325,10 +457,18 @@ function BillRow({
                 {projections.map((proj) => {
                   const politician = game.politicians.find((p) => p.id === proj.politicianId)!;
                   const party = game.parties.find((p) => p.id === politician.partyId);
+                  const faction = party ? findMemberFaction(politician, party) : undefined;
+                  const isFactionLeader = faction
+                    ? game.factionLeaderId[`${party!.id}:${faction.name}`] === politician.id
+                    : false;
                   return (
                     <tr key={proj.politicianId}>
                       <td>{politician.name}</td>
                       <td>{party?.name ?? politician.partyId}</td>
+                      <td>
+                        {faction ? faction.name : <span className="muted">—</span>}
+                        {isFactionLeader && <span className="muted"> (leader)</span>}
+                      </td>
                       <td className={`stance-${proj.stance}`}>{proj.stance}</td>
                       <td>{(proj.projectedProbability * 100).toFixed(0)}%</td>
                       <td className="row-actions">

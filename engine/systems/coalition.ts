@@ -1,7 +1,7 @@
 import type { SeededRng } from '../rng';
 import { clamp, ideologicalAlignment, ideologicalDistance } from '../ideology';
 import { relationshipKey } from './legislative';
-import type { Coalition, IdeologyPosition, Party, Politician } from '../models/types';
+import type { CabinetPortfolio, Coalition, CoalitionOffer, IdeologyPosition, Party, Politician } from '../models/types';
 
 /** True once a single party alone holds a strict majority of the legislature's seats. */
 export function hasOutrightMajority(parties: Party[]): boolean {
@@ -138,13 +138,16 @@ export function resolveConfidenceVote(
 }
 
 /**
- * The full post-election government-formation pipeline: assembles the
- * coalition, picks its Prime Minister (the formateur party's recorded
- * leader), and immediately puts it to a confidence vote — a coalition that
- * loses the vote starts life already 'collapsed' rather than 'governing',
- * a real and immediate stake rather than a formality.
+ * The shared second half of government formation once membership is
+ * already decided (whether by formCoalition's own greedy pick or by the
+ * player resolving a CoalitionOffer below): picks the Prime Minister (the
+ * formateur party's recorded leader) and immediately puts the government to
+ * a confidence vote — one that loses starts life already 'collapsed'
+ * rather than 'governing', a real and immediate stake rather than a
+ * formality.
  */
-export function formGovernment(
+export function formGovernmentFromMembership(
+  membership: CoalitionMembership,
   parties: Party[],
   politicians: Politician[],
   partyLeaderId: Record<string, string>,
@@ -152,7 +155,7 @@ export function formGovernment(
   turn: number,
   rng: SeededRng
 ): Coalition {
-  const { memberPartyIds, formateurPartyId } = formCoalition(parties);
+  const { memberPartyIds, formateurPartyId } = membership;
   const primeMinisterId = partyLeaderId[formateurPartyId];
   const primeMinister = politicians.find((p) => p.id === primeMinisterId);
   if (!primeMinister) {
@@ -165,14 +168,7 @@ export function formGovernment(
     .filter((p) => memberPartyIds.includes(p.id))
     .reduce((sum, p) => sum + p.seats, 0);
 
-  const result = resolveConfidenceVote(
-    { memberPartyIds, formateurPartyId },
-    politicians,
-    primeMinister,
-    coalitionIdeology,
-    relationships,
-    rng
-  );
+  const result = resolveConfidenceVote(membership, politicians, primeMinister, coalitionIdeology, relationships, rng);
 
   return {
     id: `coalition-${turn}`,
@@ -186,4 +182,113 @@ export function formGovernment(
     confidenceVotesAgainst: result.votesAgainst,
     formedTurn: turn,
   };
+}
+
+/**
+ * The full post-election government-formation pipeline: assembles the
+ * coalition via formCoalition's own greedy pick, then hands off to
+ * formGovernmentFromMembership. This is the auto-resolve path used
+ * whenever there's no real player choice to make (see computeCoalitionOffers
+ * for when there is).
+ */
+export function formGovernment(
+  parties: Party[],
+  politicians: Politician[],
+  partyLeaderId: Record<string, string>,
+  relationships: Record<string, number>,
+  turn: number,
+  rng: SeededRng
+): Coalition {
+  return formGovernmentFromMembership(formCoalition(parties), parties, politicians, partyLeaderId, relationships, turn, rng);
+}
+
+const OFFER_PORTFOLIO_BY_RANK: CabinetPortfolio[] = ['finance', 'foreignAffairs', 'justice', 'defense'];
+
+/**
+ * COALITION NEGOTIATION — when no party holds an outright majority and the
+ * player's own party isn't the natural formateur (the largest party), the
+ * player is genuinely pivotal to how government forms: they can join the
+ * formateur's coalition (for a real cabinet portfolio, roughly scaled to
+ * their party's seat rank within it) or decline and let the rest of
+ * parliament govern without them — a real choice with a real outcome,
+ * rather than the greedy auto-pick silently deciding for them. Returns an
+ * empty list whenever there's nothing to negotiate (an outright majority
+ * exists, the player's party holds no seats, or the player's party is
+ * itself the natural formateur and already leads by default).
+ */
+export function computeCoalitionOffers(parties: Party[], playerPartyId: string): CoalitionOffer[] {
+  if (hasOutrightMajority(parties)) return [];
+  const totalSeats = parties.reduce((sum, p) => sum + p.seats, 0);
+  if (totalSeats <= 0) return [];
+  const playerParty = parties.find((p) => p.id === playerPartyId);
+  if (!playerParty || playerParty.seats <= 0) return [];
+
+  const sorted = [...parties].sort((a, b) => b.seats - a.seats);
+  const naturalFormateur = sorted[0];
+  if (naturalFormateur.id === playerPartyId) return [];
+
+  const joinMembers = [naturalFormateur.id, playerPartyId];
+  let joinSeats = parties.filter((p) => joinMembers.includes(p.id)).reduce((sum, p) => sum + p.seats, 0);
+  const joinRemaining = sorted
+    .filter((p) => !joinMembers.includes(p.id))
+    .sort((a, b) => ideologicalDistance(a.ideology, naturalFormateur.ideology) - ideologicalDistance(b.ideology, naturalFormateur.ideology));
+  for (const party of joinRemaining) {
+    if (joinSeats > totalSeats / 2) break;
+    joinMembers.push(party.id);
+    joinSeats += party.seats;
+  }
+
+  const joinRank = [...parties]
+    .filter((p) => joinMembers.includes(p.id))
+    .sort((a, b) => b.seats - a.seats)
+    .findIndex((p) => p.id === playerPartyId);
+  const offeredPortfolio = OFFER_PORTFOLIO_BY_RANK[Math.min(Math.max(joinRank, 0), OFFER_PORTFOLIO_BY_RANK.length - 1)];
+
+  const oppositionParties = parties.filter((p) => p.id !== playerPartyId);
+  const oppositionFormation = formCoalition(oppositionParties);
+  const oppositionSeats = parties
+    .filter((p) => oppositionFormation.memberPartyIds.includes(p.id))
+    .reduce((sum, p) => sum + p.seats, 0);
+
+  return [
+    {
+      id: 'join',
+      label: `Join a coalition led by ${naturalFormateur.id}`,
+      memberPartyIds: joinMembers,
+      formateurPartyId: naturalFormateur.id,
+      seatsHeld: joinSeats,
+      totalSeats,
+      offeredPortfolio,
+    },
+    {
+      id: 'opposition',
+      label: 'Decline and sit in opposition',
+      memberPartyIds: oppositionFormation.memberPartyIds,
+      formateurPartyId: oppositionFormation.formateurPartyId,
+      seatsHeld: oppositionSeats,
+      totalSeats,
+      offeredPortfolio: null,
+    },
+  ];
+}
+
+/** Resolves the player's chosen CoalitionOffer into a real Coalition via the same confidence-vote pipeline as the auto-resolve path. */
+export function resolveCoalitionOffer(
+  offer: CoalitionOffer,
+  parties: Party[],
+  politicians: Politician[],
+  partyLeaderId: Record<string, string>,
+  relationships: Record<string, number>,
+  turn: number,
+  rng: SeededRng
+): Coalition {
+  return formGovernmentFromMembership(
+    { memberPartyIds: offer.memberPartyIds, formateurPartyId: offer.formateurPartyId },
+    parties,
+    politicians,
+    partyLeaderId,
+    relationships,
+    turn,
+    rng
+  );
 }

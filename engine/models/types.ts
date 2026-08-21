@@ -98,17 +98,68 @@ export type BillStatus =
   | 'passed'
   | 'failed'
   | 'vetoed'
-  | 'struck_down';
+  | 'struck_down'
+  /** Presidential/semi-presidential regimes only: cleared the floor vote but not yet enacted — awaiting the executive's signature or veto. See engine/systems/executive.ts. */
+  | 'awaiting_signature';
+
+/**
+ * Which national system, if any, a passed bill nudges beyond the generic
+ * budget/growth effect every bill already carries — see
+ * engine/index.ts's applyBillCategoryEffect. 'economic' (and bills with no
+ * category at all, e.g. saves from before this existed) only ever get the
+ * generic effect.
+ */
+export type BillCategory =
+  | 'economic'
+  | 'healthcare'
+  | 'education'
+  | 'welfare'
+  | 'defense'
+  | 'environment'
+  | 'justice_safety'
+  | 'infrastructure'
+  | 'research_technology';
 
 export interface Bill {
   id: string;
   title: string;
+  /** Optional so bills from saves predating this field, and tests that don't care about it, stay valid — treated the same as 'economic' (no domain effect) when absent. */
+  category?: BillCategory;
   provisions: BillProvision[];
   sponsorId: string;
   status: BillStatus;
   whipCount: Record<string, WhipStance>;
   /** A minority bloc is holding the floor vote hostage — see engine/systems/legislative.ts's invokeFilibuster/attemptCloture. Floor votes cannot resolve while true. */
   filibustered?: boolean;
+  /** Set once the bill clears (or dies in) committee — see engine/systems/committees.ts. Optional for saves predating this field. */
+  committeeResult?: CommitteeVoteResult;
+  /** Presidential/semi-presidential regimes only — see engine/systems/executive.ts. Absent (treated as 'none') for parliamentary regimes and saves predating this field. */
+  vetoStatus?: VetoStatus;
+}
+
+/**
+ * A standing committee with real jurisdiction and real members — bills
+ * must clear a committee vote (see engine/systems/committees.ts) before
+ * reaching the floor, using the same whip-count math as a floor vote but
+ * restricted to the committee's own membership.
+ */
+export interface Committee {
+  id: string;
+  name: string;
+  /** Which bill categories fall under this committee's jurisdiction. */
+  areas: BillCategory[];
+  /** politicianIds assigned to this committee. */
+  memberIds: string[];
+  /** politicianId of the presiding chair — always one of memberIds. */
+  chairId: string;
+}
+
+export interface CommitteeVoteResult {
+  committeeId: string;
+  committeeName: string;
+  yes: number;
+  no: number;
+  passed: boolean;
 }
 
 /**
@@ -203,6 +254,10 @@ export interface MediaOutlet {
   bias: IdeologyPosition;
   /** Fraction of the public this outlet reaches, 0..1. */
   reach: number;
+  /** Set only for player-founded outlets (see mediaEmpire.ts) — undefined for the pre-authored starter press. */
+  ownerId?: string;
+  /** 0..100 — invested growth capability for a player-owned outlet; scales how fast its reach grows each turn. */
+  investedCapability?: number;
 }
 
 /**
@@ -268,6 +323,173 @@ export interface ForeignCounterpart {
   trade: TradeProfile;
   /** Approximate capital-city coordinates, for the world map. */
   location: { lat: number; lng: number };
+}
+
+/**
+ * A foreign nation's current ruling government — real, seeded-deterministic
+ * elections happen on a schedule for every nation in the world roster, not
+ * just the player's own country. See engine/systems/worldElections.ts.
+ */
+export interface WorldGovernment {
+  counterpartId: string;
+  rulingPartyName: string;
+  leaderName: string;
+  /** 0..100 — drifts each turn; drives incumbent-retention odds at the next election. */
+  approval: number;
+  nextElectionTurn: number;
+  lastElectionTurn: number | null;
+  termsServed: number;
+}
+
+/**
+ * A domestic state/province's own governing administration — every province
+ * (see Province, above) elects its own governor on its own schedule,
+ * independent of the national legislature, the same staggered-election
+ * pattern WorldGovernment uses for foreign nations. See
+ * engine/systems/stateGovernance.ts.
+ */
+export interface StateGovernment {
+  provinceId: string;
+  provinceName: string;
+  governorName: string;
+  partyId: string;
+  /** 0..100 — drifts each turn; drives incumbent-retention odds at the next gubernatorial election. */
+  approval: number;
+  nextElectionTurn: number;
+  lastElectionTurn: number | null;
+  termsServed: number;
+  /** partyId -> seats in this province's own small state legislature, resolved by D'Hondt alongside each gubernatorial election. See engine/systems/federalism.ts. */
+  legislatureSeats: Record<string, number>;
+  /** 0..100 — how sharply this state's own politics diverge from the national ruling party; drives interstate disputes and adds pressure to secession sentiment. */
+  federalTension: number;
+}
+
+/** A resolved gubernatorial election — kept as a bounded recent-history log for the state governance UI. */
+export interface StateElectionResult {
+  provinceId: string;
+  provinceName: string;
+  turn: number;
+  incumbentPartyRetained: boolean;
+  previousPartyId: string;
+  newPartyId: string;
+  newGovernorName: string;
+}
+
+/**
+ * FEDERALISM — an interstate dispute between two of the player's own
+ * provinces, spawned with likelihood weighted by each state's own
+ * federalTension. The player can mediate it toward one side or stay
+ * neutral, each with a real, bounded consequence rather than flavor text
+ * alone. See engine/systems/federalism.ts.
+ */
+export type InterstateDisputeType = 'resource' | 'border' | 'trade' | 'political';
+export type InterstateDisputeStatus = 'active' | 'resolved';
+export type InterstateDisputeMediationChoice = 'favor_a' | 'favor_b' | 'neutral';
+
+export interface InterstateDispute {
+  id: string;
+  stateAId: string;
+  stateBId: string;
+  type: InterstateDisputeType;
+  status: InterstateDisputeStatus;
+  turnStarted: number;
+  turnResolved?: number;
+  resolution?: InterstateDisputeMediationChoice;
+}
+
+/**
+ * CONSTITUTIONAL REFORM — the player can propose a real amendment to the
+ * country's own founding rules (electoral system, term length, a house
+ * rule, or the regime type itself), which then needs a supermajority floor
+ * vote (same whip-count math as an ordinary bill, just a higher bar) to
+ * actually take effect. See engine/systems/constitution.ts.
+ */
+export type AmendmentChangeType = 'electoral_system' | 'term_length' | 'house_rule' | 'regime_type';
+
+/** Exactly one of these fields is populated, matching `type`. */
+export interface AmendmentChange {
+  type: AmendmentChangeType;
+  electoralSystem?: ElectoralSystem;
+  termLengthTurns?: number;
+  houseRule?: keyof HouseRules;
+  houseRuleValue?: boolean;
+  regimeType?: Country['regimeType'];
+}
+
+export type AmendmentStatus = 'proposed' | 'passed' | 'failed';
+
+export interface ConstitutionalAmendment {
+  id: string;
+  title: string;
+  description: string;
+  change: AmendmentChange;
+  sponsorId: string;
+  status: AmendmentStatus;
+  whipCount: Record<string, WhipStance>;
+  turnProposed: number;
+  turnResolved?: number;
+  votesFor?: number;
+  votesAgainst?: number;
+}
+
+/**
+ * EXECUTIVE POWERS — presidential/semi-presidential regimes (see
+ * Country.regimeType) get a head of state distinct from ordinary floor-vote
+ * politics: a passed bill can be vetoed, a veto can be overridden by the
+ * same supermajority an amendment needs, and the executive can issue a
+ * bounded, cooldown-gated order without the legislature at all. See
+ * engine/systems/executive.ts.
+ */
+export type VetoStatus = 'none' | 'vetoed' | 'overridden' | 'sustained';
+
+export interface ExecutiveOrder {
+  id: string;
+  title: string;
+  description: string;
+  economyEffect?: EconomyDelta;
+  playerApprovalEffect?: number;
+  turnIssued: number;
+}
+
+/**
+ * MEDIA & CULTURE EMPIRE — beyond courting the pre-authored press (see
+ * MediaOutlet, media.ts), the player can found and grow their own outlet,
+ * and fund cultural institutions that build a national soft-power score.
+ * See engine/systems/mediaEmpire.ts.
+ */
+export interface CulturalInstitution {
+  id: string;
+  name: string;
+  founderId: string;
+  turnFounded: number;
+  /** 0..100 — prestige; scales its contribution to national soft power. */
+  prestige: number;
+}
+
+/** A resolved foreign election — kept as a bounded recent-history log for the World Elections UI. */
+export interface WorldElectionResult {
+  counterpartId: string;
+  turn: number;
+  incumbentReturned: boolean;
+  previousPartyName: string;
+  newPartyName: string;
+  newLeaderName: string;
+  ideologyShift: { economic: number; social: number };
+}
+
+/**
+ * A single-seat special election, triggered when a sitting (non-player)
+ * legislator resigns their seat outright over an unresolved hard scandal.
+ * See engine/systems/byElections.ts.
+ */
+export interface ByElection {
+  id: string;
+  vacatedPartyId: string;
+  vacatedPoliticianId: string;
+  vacatedTurn: number;
+  resolutionTurn: number;
+  resolved: boolean;
+  winnerPartyId?: string;
 }
 
 export type TradeDealStatus = 'proposed' | 'active' | 'cancelled';
@@ -438,9 +660,13 @@ export interface ElectionNightState {
 
 export type CabinetPortfolio = 'finance' | 'defense' | 'foreignAffairs' | 'justice';
 
+/** A senior minister heads the portfolio; a junior minister assists them with a smaller version of the same effect. */
+export type CabinetRank = 'senior' | 'junior';
+
 export interface CabinetAppointment {
   portfolio: CabinetPortfolio;
   politicianId: string;
+  rank: CabinetRank;
 }
 
 export type InterestGroupFocus =
@@ -531,6 +757,22 @@ export interface Coalition {
   confidenceVotesFor: number;
   confidenceVotesAgainst: number;
   formedTurn: number;
+}
+
+/**
+ * One concrete choice offered to the player when their party is pivotal to
+ * a hung parliament — join a specific coalition (with a portfolio on
+ * offer) or let the rest of parliament govern without them. See
+ * engine/systems/coalition.ts's computeCoalitionOffers.
+ */
+export interface CoalitionOffer {
+  id: 'join' | 'opposition';
+  label: string;
+  memberPartyIds: string[];
+  formateurPartyId: string;
+  seatsHeld: number;
+  totalSeats: number;
+  offeredPortfolio: CabinetPortfolio | null;
 }
 
 export type EndorserType = 'celebrity' | 'union' | 'newspaper';
@@ -664,6 +906,45 @@ export interface EventLogEntry {
 }
 
 /**
+ * One option on a dilemma — a real, named response with its own bounded
+ * consequences, not just a flavor label. Every field mirrors a channel a
+ * crisis event can already move (see CrisisEventDef); delayedEconomyEffect
+ * is the one genuinely new piece, letting a choice's real bite land a few
+ * turns after the (possibly very different) immediate effect — same lag
+ * queue applyBillCategoryEffect's economy sibling already uses.
+ */
+export interface DilemmaChoice {
+  id: string;
+  label: string;
+  description: string;
+  economyEffect?: EconomyDelta;
+  playerApprovalEffect?: number;
+  foreignRelationEffect?: { counterpartId: string; delta: number };
+  delayedEconomyEffect?: { turnsRemaining: number; delta: EconomyDelta };
+}
+
+/** A pre-authored dilemma template — see content/events/dilemmaTable.ts and engine/systems/dilemmas.ts. */
+export interface DilemmaDef {
+  id: string;
+  category: CrisisCategory;
+  title: string;
+  description: string;
+  baseWeight: number;
+  choices: DilemmaChoice[];
+}
+
+/** A dilemma currently awaiting the player's decision — at most one at a time. See engine/systems/dilemmas.ts's resolveDilemmaChoice. */
+export interface ActiveDilemma {
+  id: string;
+  defId: string;
+  category: CrisisCategory;
+  title: string;
+  description: string;
+  choices: DilemmaChoice[];
+  turnRaised: number;
+}
+
+/**
  * JUDICIARY — a real check-and-balance: the player nominates justices to a
  * fixed-size court, the legislature confirms (or rejects) them by vote, and
  * once seated the court can strike down a passed bill on judicial review —
@@ -767,6 +1048,26 @@ export interface SocialPolicyState {
   literacyRate: number;
   /** 0..100. */
   povertyRate: number;
+}
+
+/**
+ * AI POLICY ANALYSIS — an optional, additive enrichment layer for a passed
+ * bill: a real network call (client-side, proxied through a Netlify
+ * function so no API key ever reaches the browser) asks an LLM for a
+ * short plain-language analysis plus a small suggested economic/approval
+ * adjustment, which is clamped to a safe bounded range and applied on top
+ * of the bill's already-computed deterministic effect — never in place of
+ * it. This is the one deliberate, flagged exception to this project's
+ * no-runtime-LLM rule (see CLAUDE.md); the core seeded simulation and its
+ * replay guarantee are entirely unaffected when the AI call is disabled,
+ * unavailable, or simply never invoked. See engine/systems/aiPolicyAnalysis.ts.
+ */
+export interface AiBillAnalysis {
+  billId: string;
+  narrative: string;
+  economyEffect: EconomyDelta;
+  playerApprovalEffect: number;
+  turnRequested: number;
 }
 
 /**
@@ -920,6 +1221,15 @@ export interface GameState {
   foreignCounterparts: ForeignCounterpart[];
   /** counterpartId -> disposition -100..100. */
   foreignRelations: Record<string, number>;
+  worldGovernments: WorldGovernment[];
+  /** Bounded recent-history log of resolved foreign elections, newest last. */
+  worldElectionHistory: WorldElectionResult[];
+  /** counterpartId -> that nation's own single-member districts, generated once at game creation from its seat count. See engine/systems/worldElections.ts. */
+  foreignDistricts: Record<string, District[]>;
+  /** counterpartId -> that nation's own party roster, evolving in seat count (never count/identity) as its own elections resolve. */
+  foreignParties: Record<string, Party[]>;
+  /** counterpartId -> that nation's most recent election's real per-district results, used to color its electorates on the globe. Absent until its first election resolves. */
+  foreignDistrictResults: Record<string, DistrictResult[]>;
   /** The player's own country's military profile — compared against a counterpart's in war resolution. */
   playerMilitary: MilitaryProfile;
   treaties: Treaty[];
@@ -933,6 +1243,8 @@ export interface GameState {
   interestGroups: InterestGroup[];
   /** partyId -> the politician currently leading it. Used by leadership challenges and (later) coalition PM selection. */
   partyLeaderId: Record<string, string>;
+  /** "partyId:factionName" -> the politician representing that faction. See engine/systems/factions.ts. */
+  factionLeaderId: Record<string, string>;
   /** At most one leadership contest in flight at a time. Null between challenges. */
   leadershipChallenge: LeadershipChallenge | null;
   /** 0..100 — the player's own intelligence-agency strength, grown via investInIntelligence. Lowers detection risk and raises success odds on covert operations. */
@@ -940,6 +1252,11 @@ export interface GameState {
   covertOperations: CovertOperationRecord[];
   /** The current governing coalition, or null when a single party holds an outright majority and none was needed. */
   coalition: Coalition | null;
+  /** Real, player-facing coalition offers awaiting a choice — populated instead of auto-resolving whenever the player's own party is pivotal to a hung parliament. Null the rest of the time. See engine/systems/coalition.ts's computeCoalitionOffers. */
+  pendingCoalitionOffers: CoalitionOffer[] | null;
+  byElections: ByElection[];
+  /** districtId -> accumulated redistricting drift on top of its base hash-derived lean. See engine/systems/elections.ts's redistrict. */
+  districtLeanDrift: Record<string, IdeologyPosition>;
   secessionistMovements: SecessionistMovement[];
   ballotInitiatives: BallotInitiative[];
   /** politicianId -> number of terms served as head of government (Prime Minister or majority-party leader). See engine/systems/succession.ts. */
@@ -953,6 +1270,8 @@ export interface GameState {
   personalWealth: Record<string, number>;
   /** At most one convened international summit resolution at a time, awaiting the player's vote. Null between summits. */
   activeSummit: SummitResolution | null;
+  /** At most one dilemma awaiting the player's choice at a time. Null between dilemmas. See engine/systems/dilemmas.ts. */
+  activeDilemma: ActiveDilemma | null;
   /** One-time milestone achievement ids recorded the moment they happen (can't be reconstructed from a state snapshot alone). See engine/systems/achievements.ts. */
   milestones: string[];
   houseRules: HouseRules;
@@ -983,6 +1302,210 @@ export interface GameState {
   difficulty: Difficulty;
   /** Economy snapshot at game creation — the baseline legacy scoring measures change against. */
   startingEconomy: EconomyState;
+  /** Campaign promises the player has made against a real, already-tracked stat. See engine/systems/promises.ts. */
+  playerPromises: PlayerPromise[];
+  /** Standing committees every bill must clear before reaching the floor. See engine/systems/committees.ts. */
+  committees: Committee[];
+  /** Individual/PAC/corporate/union donors courtable for campaign funds. See engine/systems/campaignFinance.ts. */
+  donors: Donor[];
+  /** War chest raised from donors, spendable on guaranteed-effect ad blitzes. */
+  campaignFunds: number;
+  /** Named journalists who can be courted, dig up scandals, or fact-check disinformation. See engine/systems/mediaEcosystem.ts. */
+  journalists: Journalist[];
+  /** Ideological policy institutes courtable for credibility and Overton-window influence. See engine/systems/thinkTanks.ts. */
+  thinkTanks: ThinkTank[];
+  /** The national ideological center of gravity — drifts as think tanks publish reports, and its distance from the player's own ideology exerts a small ongoing approval pressure. */
+  overtonWindow: IdeologyPosition;
+  /** One named whip per party, tracking caucus discipline. See engine/systems/whipDiscipline.ts. */
+  partyWhips: PartyWhip[];
+  /** politicianId -> 0..100 loyalty to their own party leadership; low loyalty raises rebellion risk. Defaults to a neutral baseline when absent. */
+  partyLoyalty: Record<string, number>;
+  /** Logged instances of a party's own members defying its whipped floor-vote stance in large numbers. */
+  rebellions: BackbenchRebellion[];
+  /** International tribunal cases — filed against foreign leaders or, rarely, the player. See engine/systems/internationalCourt.ts. */
+  tribunalCases: TribunalCase[];
+  /** Active multilateral sanctions regimes, distinct from the bilateral imposeSanctions in diplomacy.ts. */
+  sanctionsRegimes: SanctionsRegime[];
+  /** Political families accumulating prestige across generations. See engine/systems/dynasties.ts. */
+  dynasties: PoliticalDynasty[];
+  /** 'none' outside a crisis; a real, severe status once declared or seized. See engine/systems/instability.ts. */
+  emergencyPowers: EmergencyPowersStatus;
+  /** Logged coup attempts against the player's government. */
+  coupHistory: CoupAttempt[];
+  /** True once an attempted coup has actually succeeded — elections are suspended and Legacy scoring takes a severe hit until civilian rule is restored. */
+  juntaControl: boolean;
+  /** One governing administration per province (see getProvinces), each on its own staggered election schedule. See engine/systems/stateGovernance.ts. */
+  stateGovernments: StateGovernment[];
+  /** Bounded recent-history log of resolved gubernatorial elections, newest last. */
+  stateElectionHistory: StateElectionResult[];
+  /** Active and resolved interstate disputes between the player's own provinces. See engine/systems/federalism.ts. */
+  interstateDisputes: InterstateDispute[];
+  /** Proposed and resolved constitutional amendments. See engine/systems/constitution.ts. */
+  constitutionalAmendments: ConstitutionalAmendment[];
+  /** Logged executive orders the player has issued. See engine/systems/executive.ts. */
+  executiveOrders: ExecutiveOrder[];
+  /** The turn the player last issued an executive order, gating the cooldown. Null before the first one. */
+  lastExecutiveOrderTurn: number | null;
+  /** Funded cultural institutions. See engine/systems/mediaEmpire.ts. */
+  culturalInstitutions: CulturalInstitution[];
+  /** 0..100 — national soft power, built by player-owned media reach and cultural institution prestige; nudges foreign relations drift and tribunal leniency. */
+  softPower: number;
+  /** The player's own legislature's term length in turns — defaults to TERM_LENGTH_TURNS (engine/index.ts), real-changeable via a 'term_length' constitutional amendment. */
+  legislativeTermLengthTurns: number;
+  /** Bounded recent-history log of AI-enriched bill analyses, newest last. See engine/systems/aiPolicyAnalysis.ts. */
+  aiBillAnalyses: AiBillAnalysis[];
+}
+
+/**
+ * CAMPAIGN FINANCE & DONORS — see engine/systems/campaignFinance.ts.
+ */
+
+export type DonorType = 'individual' | 'corporation' | 'union' | 'pac';
+
+export interface Donor {
+  id: string;
+  name: string;
+  type: DonorType;
+  ideology: IdeologyPosition;
+  /** 1..100 — scales the size of a solicited contribution. */
+  wealth: number;
+  /** -100..100 — warmth toward the player; drifts to 0 each turn unless reinforced. */
+  disposition: number;
+}
+
+/**
+ * MEDIA ECOSYSTEM & DISINFORMATION — see engine/systems/mediaEcosystem.ts.
+ */
+
+export interface Journalist {
+  id: string;
+  name: string;
+  outletId: string;
+  ideology: IdeologyPosition;
+  /** 0..100 — reputation; a high-credibility journalist's exposés and fact-checks land harder. */
+  credibility: number;
+  /** -100..100 — rapport with the player, courted the same way as a donor or interest group. */
+  disposition: number;
+  /** 0..1 — how actively this journalist is currently digging into the player. Feeds corruption.ts's investigativePressure. */
+  scrutiny: number;
+}
+
+/**
+ * THINK TANKS & POLICY INSTITUTES — see engine/systems/thinkTanks.ts.
+ */
+
+export interface ThinkTank {
+  id: string;
+  name: string;
+  ideology: IdeologyPosition;
+  /** 0..100 — prestige; scales how far a published report actually moves the Overton window. */
+  prestige: number;
+  /** -100..100 — warmth toward the player, courted like a donor. */
+  disposition: number;
+}
+
+/**
+ * WHIP DISCIPLINE & BACKBENCH REBELLIONS — see engine/systems/whipDiscipline.ts.
+ */
+
+export interface PartyWhip {
+  partyId: string;
+  politicianId: string;
+  /** 0..100 — how tightly this whip currently controls the caucus; rises when discipline holds, falls after rebellions. */
+  disciplineScore: number;
+}
+
+/** Logged when a large enough share of a party's own members defy its majority floor-vote stance. */
+export interface BackbenchRebellion {
+  id: string;
+  billId: string;
+  partyId: string;
+  rebelIds: string[];
+  turn: number;
+}
+
+/**
+ * INTERNATIONAL COURTS & SANCTIONS — a multilateral body distinct from the
+ * bilateral imposeSanctions in diplomacy.ts. See
+ * engine/systems/internationalCourt.ts.
+ */
+
+export type TribunalChargeType = 'war_crimes' | 'corruption' | 'crimes_against_humanity';
+export type TribunalCaseStatus = 'investigating' | 'convicted' | 'acquitted';
+
+export interface TribunalCase {
+  id: string;
+  /** A real foreign counterpart id, or the sentinel 'player' when the tribunal is scrutinizing the player's own government. */
+  targetId: string;
+  chargeType: TribunalChargeType;
+  turnFiled: number;
+  status: TribunalCaseStatus;
+  turnResolved?: number;
+}
+
+export type SanctionsRegimeStatus = 'active' | 'lifted';
+
+export interface SanctionsRegime {
+  id: string;
+  targetId: string;
+  turnImposed: number;
+  status: SanctionsRegimeStatus;
+  /** 1..3 — scales the economy effect when the player is the target. */
+  severity: number;
+}
+
+/**
+ * POLITICAL DYNASTIES & SUCCESSION — see engine/systems/dynasties.ts.
+ */
+
+export interface PoliticalDynasty {
+  id: string;
+  familyName: string;
+  founderPoliticianId: string;
+  memberIds: string[];
+  /** 0..100 — accumulated prestige; a high-prestige dynasty's heirs start with a real attribute head start. */
+  prestige: number;
+}
+
+/**
+ * COUPS, JUNTAS & EMERGENCY POWERS — see engine/systems/instability.ts.
+ */
+
+export type EmergencyPowersStatus = 'none' | 'state_of_emergency' | 'martial_law';
+
+export type CoupInstigator = 'military' | 'rival_party' | 'popular_uprising';
+export type CoupOutcome = 'succeeded' | 'foiled';
+
+export interface CoupAttempt {
+  id: string;
+  turn: number;
+  outcome: CoupOutcome;
+  instigator: CoupInstigator;
+}
+
+/**
+ * A campaign promise tied to one real, continuously-tracked stat (GDP
+ * growth, crime rate, etc.) rather than free text — progress is derived
+ * purely from how far that stat has moved in the promised direction since
+ * the promise was made, never a fabricated number. See
+ * engine/systems/promises.ts.
+ */
+export type PromiseMetric =
+  | 'gdpGrowth'
+  | 'unemployment'
+  | 'inflation'
+  | 'debtToGdp'
+  | 'budgetBalance'
+  | 'crimeRate'
+  | 'pollutionIndex'
+  | 'publicApproval';
+
+export interface PlayerPromise {
+  id: string;
+  metric: PromiseMetric;
+  madeTurn: number;
+  /** The metric's real value at the moment the promise was made — progress is measured against this. */
+  baselineValue: number;
 }
 
 /**
@@ -997,7 +1520,13 @@ export interface GameState {
 
 export type EducationTrack = 'community_college' | 'state_university' | 'law_school' | 'trade_apprenticeship';
 
-export type CareerStage = 'student' | 'working' | 'party_volunteer' | 'local_officeholder' | 'graduated';
+export type CareerStage =
+  | 'student'
+  | 'working'
+  | 'party_volunteer'
+  | 'local_officeholder'
+  | 'regional_officeholder'
+  | 'graduated';
 
 export interface CareerEventLogEntry {
   turn: number;
@@ -1018,6 +1547,19 @@ export interface CareerNominationRecord {
   turn: number;
   selected: boolean;
   probability: number;
+}
+
+/**
+ * A citizen petition/local ballot initiative filed before ever holding
+ * office or even joining a party — the "still make laws while not elected"
+ * path through career mode. Resolved immediately against a randomly-seeded
+ * local electorate, the same way attemptLocalRace resolves a mini-election.
+ */
+export interface CareerCitizenInitiativeRecord {
+  turn: number;
+  title: string;
+  passed: boolean;
+  supportShare: number;
 }
 
 export interface CareerState {
@@ -1044,6 +1586,22 @@ export interface CareerState {
   partyStanding: number;
   localSeatWon: boolean;
   localRaceHistory: CareerLocalRaceRecord[];
+  /** A rung above local council — a state/regional legislature seat. Gated on having won a local seat first, so the ladder has to be climbed in order. */
+  regionalSeatWon: boolean;
+  regionalRaceHistory: CareerLocalRaceRecord[];
   nominationHistory: CareerNominationRecord[];
+  /** 0..100 — a public track record built from filed citizen petitions, earned with no seat and no party required. Decays slowly like partyStanding. */
+  civicRecord: number;
+  citizenInitiatives: CareerCitizenInitiativeRecord[];
+  /** 0..100 — short-lived campaign buzz from canvassing/media blitzes, factored into race and nomination appeal. Decays fast, unlike party standing or civic record. */
+  campaignMomentum: number;
+  /** Set once a local-party leadership bid succeeds — a real foothold inside the party machine, not just standing with it. Grants a partyStanding floor and a nomination-odds bonus. */
+  partyOfficer: boolean;
+  /** 0..100 — physical/mental wellbeing. Overloading education+job+party+office drains it; low health scales down attribute gains from work and education (burnout). */
+  health: number;
+  relationshipStatus: CareerRelationshipStatus;
+  hasChildren: boolean;
   eventLog: CareerEventLogEntry[];
 }
+
+export type CareerRelationshipStatus = 'single' | 'dating' | 'married' | 'divorced';

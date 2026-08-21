@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { CABINET_PORTFOLIOS, computeRunningTally, getProvinces, type CabinetPortfolio } from '../../engine';
+import { CABINET_PORTFOLIOS, computeRunningTally, getProvinces, type CabinetPortfolio, type CabinetRank } from '../../engine';
 import { useStatecraftStore } from '../store';
 
 const PORTFOLIO_LABELS: Record<CabinetPortfolio, string> = {
@@ -9,16 +9,20 @@ const PORTFOLIO_LABELS: Record<CabinetPortfolio, string> = {
   justice: 'Justice',
 };
 
+const RANKS: CabinetRank[] = ['senior', 'junior'];
+const RANK_LABELS: Record<CabinetRank, string> = { senior: 'Minister', junior: 'Junior Minister' };
+
 export function ElectionPanel() {
   const game = useStatecraftStore((s) => s.game);
-  const lastElection = useStatecraftStore((s) => s.lastElection);
   const runElection = useStatecraftStore((s) => s.runElection);
   const startElectionNightAction = useStatecraftStore((s) => s.startElectionNightAction);
   const reportNextProvinceAction = useStatecraftStore((s) => s.reportNextProvinceAction);
   const concludeElectionNightAction = useStatecraftStore((s) => s.concludeElectionNightAction);
   const dismissElectionNightAction = useStatecraftStore((s) => s.dismissElectionNightAction);
-  const appointToCabinetAction = useStatecraftStore((s) => s.appointToCabinetAction);
+  const reshuffleCabinetAction = useStatecraftStore((s) => s.reshuffleCabinetAction);
   const removeFromCabinetAction = useStatecraftStore((s) => s.removeFromCabinetAction);
+  const attemptMinisterNoConfidenceAction = useStatecraftStore((s) => s.attemptMinisterNoConfidenceAction);
+  const lastMinisterNoConfidenceOutcome = useStatecraftStore((s) => s.lastMinisterNoConfidenceOutcome);
 
   const [selectedAppointee, setSelectedAppointee] = useState<Record<string, string>>({});
 
@@ -127,12 +131,6 @@ export function ElectionPanel() {
         </div>
       </div>
 
-      {lastElection && (
-        <p className="muted">
-          Last election ({lastElection.system}) allocated {Object.values(lastElection.seatsWon).reduce((a, b) => a + b, 0)} seats.
-        </p>
-      )}
-
       <div className="whip-table-wrap">
         <table className="whip-table">
           <thead>
@@ -161,6 +159,34 @@ export function ElectionPanel() {
       <h3 className="subheading">Government</h3>
       <GovernmentStatus />
 
+      {game.byElections.length > 0 && (
+        <>
+          <h3 className="subheading">By-Elections</h3>
+          <ul className="scandal-list">
+            {[...game.byElections]
+              .reverse()
+              .slice(0, 8)
+              .map((be) => {
+                const vacatedParty = game.parties.find((p) => p.id === be.vacatedPartyId);
+                const winnerParty = be.winnerPartyId ? game.parties.find((p) => p.id === be.winnerPartyId) : null;
+                const weeksUntil = be.resolutionTurn - game.turn;
+                return (
+                  <li key={be.id} className={`scandal-item status-${be.resolved ? 'resolved' : 'unresolved'}`}>
+                    <span>
+                      {vacatedParty?.name ?? be.vacatedPartyId} seat vacated (turn {be.vacatedTurn}) —{' '}
+                      {be.resolved
+                        ? `held by ${winnerParty?.name ?? be.winnerPartyId}`
+                        : weeksUntil > 0
+                          ? `special election in ${weeksUntil} week${weeksUntil === 1 ? '' : 's'}`
+                          : 'special election due'}
+                    </span>
+                  </li>
+                );
+              })}
+          </ul>
+        </>
+      )}
+
       <h3 className="subheading">Cabinet</h3>
       {cabinetCandidates.length === 0 ? (
         <p className="muted">No party members available to appoint.</p>
@@ -175,37 +201,66 @@ export function ElectionPanel() {
               </tr>
             </thead>
             <tbody>
-              {CABINET_PORTFOLIOS.map((portfolio) => {
-                const appointment = game.cabinet.find((c) => c.portfolio === portfolio);
-                const minister = appointment
-                  ? game.politicians.find((p) => p.id === appointment.politicianId)
-                  : null;
-                const selected = selectedAppointee[portfolio] ?? cabinetCandidates[0]?.id ?? '';
-                return (
-                  <tr key={portfolio}>
-                    <td>{PORTFOLIO_LABELS[portfolio]}</td>
-                    <td>{minister ? minister.name : <span className="muted">Vacant</span>}</td>
-                    <td className="row-actions">
-                      <select
-                        value={selected}
-                        onChange={(e) =>
-                          setSelectedAppointee((s) => ({ ...s, [portfolio]: e.target.value }))
-                        }
-                      >
-                        {cabinetCandidates.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                      <button onClick={() => appointToCabinetAction(portfolio, selected)}>Appoint</button>
-                      {minister && (
-                        <button onClick={() => removeFromCabinetAction(portfolio)}>Remove</button>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
+              {CABINET_PORTFOLIOS.flatMap((portfolio) =>
+                RANKS.map((rank) => {
+                  const seatKey = `${portfolio}:${rank}`;
+                  const appointment = game.cabinet.find((c) => c.portfolio === portfolio && c.rank === rank);
+                  const minister = appointment
+                    ? game.politicians.find((p) => p.id === appointment.politicianId)
+                    : null;
+                  const selected = selectedAppointee[seatKey] ?? cabinetCandidates[0]?.id ?? '';
+                  const outcome =
+                    minister && lastMinisterNoConfidenceOutcome?.targetId === minister.id
+                      ? lastMinisterNoConfidenceOutcome
+                      : null;
+                  return (
+                    <tr key={seatKey}>
+                      <td>
+                        {PORTFOLIO_LABELS[portfolio]}
+                        <span className="muted"> ({RANK_LABELS[rank]})</span>
+                      </td>
+                      <td>
+                        {minister ? minister.name : <span className="muted">Vacant</span>}
+                        {outcome && (
+                          <div className={outcome.removed ? 'result-pass' : 'result-fail'}>
+                            {outcome.removed
+                              ? `No confidence carried (${outcome.result.votesFor}/${outcome.result.totalCount})`
+                              : `No confidence failed (${outcome.result.votesFor}/${outcome.result.totalCount})`}
+                          </div>
+                        )}
+                      </td>
+                      <td className="row-actions">
+                        <select
+                          value={selected}
+                          onChange={(e) =>
+                            setSelectedAppointee((s) => ({ ...s, [seatKey]: e.target.value }))
+                          }
+                        >
+                          {cabinetCandidates.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                        <button onClick={() => reshuffleCabinetAction(portfolio, rank, selected)}>
+                          {minister ? 'Reshuffle' : 'Appoint'}
+                        </button>
+                        {minister && (
+                          <button onClick={() => removeFromCabinetAction(portfolio, rank)}>Remove</button>
+                        )}
+                        {minister && !minister.isPlayer && (
+                          <button
+                            className="danger-button"
+                            onClick={() => attemptMinisterNoConfidenceAction(minister.id)}
+                          >
+                            Move No Confidence
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -218,10 +273,34 @@ function GovernmentStatus() {
   const game = useStatecraftStore((s) => s.game);
   const attemptImpeachmentAction = useStatecraftStore((s) => s.attemptImpeachmentAction);
   const lastImpeachmentOutcome = useStatecraftStore((s) => s.lastImpeachmentOutcome);
+  const resolveCoalitionOfferAction = useStatecraftStore((s) => s.resolveCoalitionOfferAction);
   if (!game) return null;
 
   const { coalition } = game;
   const player = game.politicians.find((p) => p.isPlayer);
+
+  if (game.pendingCoalitionOffers && game.pendingCoalitionOffers.length > 0) {
+    return (
+      <div className="billboard-slide">
+        <span className="status-floor bill-status">Coalition Talks</span>
+        <p className="muted">
+          No party holds an outright majority, and your party is pivotal to who governs. Choose:
+        </p>
+        <div className="dilemma-choices">
+          {game.pendingCoalitionOffers.map((offer) => (
+            <div key={offer.id} className="dilemma-choice">
+              <div className="dilemma-choice-header">{offer.label}</div>
+              <p className="muted">
+                {offer.seatsHeld}/{offer.totalSeats} seats
+                {offer.offeredPortfolio && ` — offered the ${offer.offeredPortfolio} portfolio`}
+              </p>
+              <button onClick={() => resolveCoalitionOfferAction(offer.id)}>Choose</button>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   if (!coalition) {
     const majorityParty = game.parties.find((p) => p.seats > game.parties.reduce((sum, x) => sum + x.seats, 0) / 2);

@@ -24,6 +24,7 @@ import { SummitPanel } from './components/SummitPanel';
 import { WorldTab } from './components/WorldTab';
 import { EventLogPanel } from './components/EventLogPanel';
 import { LegacyPanel } from './components/LegacyPanel';
+import { StatisticsPanel } from './components/StatisticsPanel';
 import { OnboardingBanner } from './components/OnboardingBanner';
 import { AccessibilityPanel } from './components/AccessibilityPanel';
 import { IndustryPanel } from './components/IndustryPanel';
@@ -37,20 +38,43 @@ import { EnvironmentPanel } from './components/EnvironmentPanel';
 import { InfrastructurePanel } from './components/InfrastructurePanel';
 import { ChirpPanel } from './components/ChirpPanel';
 import { MovementsPanel } from './components/MovementsPanel';
+import { CountryMap } from './components/CountryMap';
+import { ElectionResultsDrawer } from './components/ElectionResultsDrawer';
+import { ParliamentHemicycle } from './components/ParliamentHemicycle';
+import { CampaignPromisesPanel } from './components/CampaignPromisesPanel';
+import { StateGovernancePanel } from './components/StateGovernancePanel';
+import { ChangelogPanel } from './components/ChangelogPanel';
+import { MainMenu } from './components/MainMenu';
+import { TopHud } from './components/TopHud';
+import { TimelineScrubber } from './components/TimelineScrubber';
+import { AchievementsOverlay } from './components/AchievementsOverlay';
+import { DilemmaPanel } from './components/DilemmaPanel';
+import { CampaignFinancePanel } from './components/CampaignFinancePanel';
+import { MediaEcosystemPanel } from './components/MediaEcosystemPanel';
+import { ThinkTankPanel } from './components/ThinkTankPanel';
+import { WhipDisciplinePanel } from './components/WhipDisciplinePanel';
+import { InternationalCourtPanel } from './components/InternationalCourtPanel';
+import { PowerDynamicsPanel } from './components/PowerDynamicsPanel';
+import { FederalismPanel } from './components/FederalismPanel';
+import { ConstitutionPanel } from './components/ConstitutionPanel';
+import { ExecutivePanel } from './components/ExecutivePanel';
+import { MediaEmpirePanel } from './components/MediaEmpirePanel';
 
 const TABS = [
-  { id: 'legislature', label: 'Legislature' },
-  { id: 'opinion', label: 'Opinion & Campaign' },
-  { id: 'power', label: 'Power' },
-  { id: 'world', label: 'World' },
-  { id: 'industry', label: 'Industry' },
-  { id: 'markets', label: 'Markets' },
-  { id: 'governance', label: 'Governance' },
-  { id: 'society', label: 'Society' },
-  { id: 'chirp', label: 'Chirp' },
-  { id: 'events', label: 'Events' },
-  { id: 'lab', label: 'Electoral Lab' },
-  { id: 'legacy', label: 'Legacy' },
+  { id: 'home', label: 'Home', icon: '🏠' },
+  { id: 'legislature', label: 'Legislature', icon: '🏛️' },
+  { id: 'opinion', label: 'Opinion & Campaign', icon: '📣' },
+  { id: 'power', label: 'Power', icon: '🕴️' },
+  { id: 'world', label: 'World', icon: '🌍' },
+  { id: 'industry', label: 'Industry', icon: '🏭' },
+  { id: 'markets', label: 'Markets', icon: '📊' },
+  { id: 'governance', label: 'Governance', icon: '⚖️' },
+  { id: 'society', label: 'Society', icon: '🏙️' },
+  { id: 'chirp', label: 'Chirp', icon: '🐦' },
+  { id: 'events', label: 'Events', icon: '📰' },
+  { id: 'lab', label: 'Electoral Lab', icon: '🗳️' },
+  { id: 'statistics', label: 'Statistics', icon: '📈' },
+  { id: 'legacy', label: 'Legacy', icon: '🏆' },
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
@@ -64,7 +88,7 @@ export default function App() {
   const saveGame = useStatecraftStore((s) => s.saveGame);
   const loadGame = useStatecraftStore((s) => s.loadGame);
 
-  const [activeTab, setActiveTab] = useState<TabId>('legislature');
+  const [activeTab, setActiveTab] = useState<TabId>('home');
   const [pendingDifficulty, setPendingDifficulty] = useState<Difficulty>('standard');
   const [pendingCountryId, setPendingCountryId] = useState(STARTER_COUNTRY_OPTIONS[0].id);
   const [pendingScenarioId, setPendingScenarioId] = useState(SCENARIO_PRESETS[0].id);
@@ -77,6 +101,9 @@ export default function App() {
   const [statusMessage, setStatusMessage] = useState('');
   const [bootstrapped, setBootstrapped] = useState(false);
   const [forceStartScreen, setForceStartScreen] = useState(false);
+  const [selectedDistrictId, setSelectedDistrictId] = useState<string | null>(null);
+  const [menuVisible, setMenuVisible] = useState(true);
+  const [showChangelog, setShowChangelog] = useState(false);
 
   useEffect(() => {
     if (!bootstrapped) {
@@ -101,11 +128,30 @@ export default function App() {
   const showStartScreen = forceStartScreen || (!game && !career);
 
   if (showStartScreen) {
+    if (menuVisible) {
+      return (
+        <>
+          <MainMenu
+            onNewGame={() => setMenuVisible(false)}
+            onLoadGame={() => {
+              const loaded = loadGame();
+              flashStatus(loaded ? 'Loaded' : 'No save found');
+              if (loaded) setForceStartScreen(false);
+            }}
+            onOpenChangelog={() => setShowChangelog(true)}
+            hasSave={hasSavedGame() || hasSavedCareer()}
+            statusMessage={statusMessage}
+          />
+          {showChangelog && <ChangelogPanel onClose={() => setShowChangelog(false)} />}
+        </>
+      );
+    }
     return (
       <main className="app-shell">
         <header className="app-header">
           <h1>Statecraft</h1>
           <div className="header-actions">
+            <button onClick={() => setMenuVisible(true)}>Back to Menu</button>
             <AccessibilityPanel />
           </div>
         </header>
@@ -255,42 +301,68 @@ export default function App() {
   if (!game) return null;
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
-        <h1>Statecraft</h1>
-        <span className="seed-tag">
-          Seed: {game.seed} &middot; {game.difficulty}
-        </span>
-        {statusMessage && <span className="status-flash">{statusMessage}</span>}
-        <div className="header-actions">
-          <button onClick={() => setForceStartScreen(true)}>New Game</button>
-          <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Game</button>
-          <button
-            onClick={() => {
-              flashStatus(loadGame() ? 'Loaded' : 'No save found');
-            }}
-          >
-            Load Game
-          </button>
-          <AccessibilityPanel />
-        </div>
-      </header>
-
-      <OnboardingBanner />
-
-      <Dashboard />
-
-      <nav className="app-tabs">
+    <div className="app-shell-layout">
+      <nav className="app-sidebar">
+        <div className="app-sidebar-brand">SC</div>
         {TABS.map((tab) => (
           <button
             key={tab.id}
             className={activeTab === tab.id ? 'active' : ''}
             onClick={() => setActiveTab(tab.id)}
+            title={tab.label}
           >
-            {tab.label}
+            <span className="app-sidebar-icon">{tab.icon}</span>
+            <span className="app-sidebar-label">{tab.label}</span>
           </button>
         ))}
       </nav>
+
+      <main className="app-shell app-main">
+        <header className="app-header">
+          <h1>Statecraft</h1>
+          <span className="seed-tag">
+            Seed: {game.seed} &middot; {game.difficulty}
+          </span>
+          {statusMessage && <span className="status-flash">{statusMessage}</span>}
+          <div className="header-actions">
+            <button
+              onClick={() => {
+                setForceStartScreen(true);
+                setMenuVisible(true);
+              }}
+            >
+              New Game
+            </button>
+            <button onClick={() => { saveGame(); flashStatus('Saved'); }}>Save Game</button>
+            <button
+              onClick={() => {
+                flashStatus(loadGame() ? 'Loaded' : 'No save found');
+              }}
+            >
+              Load Game
+            </button>
+          </div>
+        </header>
+
+        <TopHud />
+
+        <OnboardingBanner />
+
+        <DilemmaPanel />
+
+        <Dashboard />
+
+        <AchievementsOverlay />
+
+      {activeTab === 'home' && (
+        <>
+          <CountryMap onSelectDistrict={setSelectedDistrictId} selectedDistrictId={selectedDistrictId} />
+          <ElectionResultsDrawer />
+          <ParliamentHemicycle />
+          <CampaignPromisesPanel />
+          <StateGovernancePanel />
+        </>
+      )}
 
       {activeTab === 'legislature' && (
         <>
@@ -298,7 +370,9 @@ export default function App() {
             <BillPanel />
             <ElectionPanel />
           </div>
+          <ExecutivePanel />
           <PartyFoundingPanel />
+          <WhipDisciplinePanel />
         </>
       )}
 
@@ -309,6 +383,11 @@ export default function App() {
             <MediaPanel />
           </div>
           <MovementsPanel />
+          <div className="panel-columns">
+            <CampaignFinancePanel />
+            <MediaEcosystemPanel />
+          </div>
+          <MediaEmpirePanel />
         </>
       )}
 
@@ -322,12 +401,14 @@ export default function App() {
           <SecessionPanel />
           <UnrestPanel />
           <BallotInitiativePanel />
+          <PowerDynamicsPanel />
         </>
       )}
       {activeTab === 'world' && (
         <>
           <WorldTab />
           <SummitPanel />
+          <InternationalCourtPanel />
         </>
       )}
 
@@ -345,6 +426,9 @@ export default function App() {
             <DemographicsPanel />
             <SocialPolicyPanel />
           </div>
+          <ThinkTankPanel />
+          <FederalismPanel />
+          <ConstitutionPanel />
         </>
       )}
 
@@ -367,7 +451,11 @@ export default function App() {
           <PollingPanel />
         </>
       )}
+      {activeTab === 'statistics' && <StatisticsPanel />}
       {activeTab === 'legacy' && <LegacyPanel />}
-    </main>
+      </main>
+
+      <TimelineScrubber />
+    </div>
   );
 }

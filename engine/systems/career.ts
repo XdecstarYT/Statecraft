@@ -1,8 +1,10 @@
 import type { SeededRng } from '../rng';
 import { clamp, ideologicalDistance, MAX_IDEOLOGICAL_DISTANCE } from '../ideology';
 import type {
+  CareerCitizenInitiativeRecord,
   CareerLocalRaceRecord,
   CareerNominationRecord,
+  CareerRelationshipStatus,
   CareerStage,
   CareerState,
   EducationTrack,
@@ -48,6 +50,7 @@ function addAttributes(base: PoliticianAttributes, delta: Partial<PoliticianAttr
 /** Derives the display stage from what's actually been achieved, rather than tracking it as separate mutable state. */
 export function computeCareerStage(state: CareerState): CareerStage {
   if (state.nominationHistory.some((n) => n.selected)) return 'graduated';
+  if (state.regionalSeatWon) return 'regional_officeholder';
   if (state.localSeatWon) return 'local_officeholder';
   if (state.partyId) return 'party_volunteer';
   if (state.jobId) return 'working';
@@ -92,7 +95,16 @@ export function createCareer(seed: number, rng: SeededRng, name: string, country
     partyStanding: 0,
     localSeatWon: false,
     localRaceHistory: [],
+    regionalSeatWon: false,
+    regionalRaceHistory: [],
     nominationHistory: [],
+    civicRecord: 0,
+    citizenInitiatives: [],
+    campaignMomentum: 0,
+    partyOfficer: false,
+    health: 80,
+    relationshipStatus: 'single',
+    hasChildren: false,
     eventLog: [],
   };
   return withStage(state);
@@ -293,6 +305,132 @@ export function doPartyWork(state: CareerState, rng: SeededRng): { state: Career
 }
 
 /**
+ * PARTY LEADERSHIP — the difference between being well-liked in the party
+ * and actually holding a lever inside its machine. A one-shot bid, gated
+ * on standing built up through doPartyWork, that installs the player as a
+ * local party officer on success: a permanent standing floor and a real
+ * nomination-odds bonus, not just another temporary boost.
+ */
+
+export const PARTY_OFFICER_STANDING_REQUIREMENT = 60;
+const PARTY_OFFICER_STANDING_FLOOR = 40;
+const PARTY_LEADERSHIP_BID_SETBACK = -10;
+
+export function canSeekPartyLeadership(state: CareerState): boolean {
+  return !!state.partyId && !state.partyOfficer && state.partyStanding >= PARTY_OFFICER_STANDING_REQUIREMENT;
+}
+
+export interface PartyLeadershipOutcome {
+  won: boolean;
+  probability: number;
+}
+
+/** Probability leans heavily on standing (the delegates who'll actually vote for you), with network and charisma as secondary factors. */
+export function computePartyLeadershipProbability(state: CareerState): number {
+  const standingTerm = (state.partyStanding - 50) / 50;
+  const attributeTerm = (state.attributes.network + state.attributes.charisma - 10) / 10;
+  const score = 1.6 * standingTerm + 0.6 * attributeTerm;
+  return clamp(sigmoid(score), 0.05, 0.9);
+}
+
+export function attemptPartyLeadershipBid(
+  state: CareerState,
+  rng: SeededRng
+): { state: CareerState; outcome: PartyLeadershipOutcome | null } {
+  if (!canSeekPartyLeadership(state)) {
+    return { state, outcome: null };
+  }
+
+  const probability = computePartyLeadershipProbability(state);
+  const won = rng.next() < probability;
+  const partyStanding = won ? state.partyStanding : clamp(state.partyStanding + PARTY_LEADERSHIP_BID_SETBACK, 0, 100);
+
+  return {
+    state: withStage({ ...state, partyOfficer: state.partyOfficer || won, partyStanding, rngState: rng.getState() }),
+    outcome: { won, probability },
+  };
+}
+
+/**
+ * REAL CAMPAIGN MECHANICS — short-lived buzz built between race attempts.
+ * Canvassing is cheap and leans on charisma/network; a media blitz is
+ * expensive and leans on media savvy/charisma. Both feed campaignMomentum,
+ * which factors into computePersonalAppeal for local/regional races and
+ * the national nomination alike.
+ */
+
+export type CampaignActivityType = 'canvass' | 'media_blitz';
+
+export interface CampaignActivityConfig {
+  id: CampaignActivityType;
+  label: string;
+  cost: number;
+}
+
+export const CAMPAIGN_ACTIVITIES: Record<CampaignActivityType, CampaignActivityConfig> = {
+  canvass: { id: 'canvass', label: 'Canvass the District', cost: 15 },
+  media_blitz: { id: 'media_blitz', label: 'Run a Media Blitz', cost: 80 },
+};
+
+function computeCampaignSkill(attributes: PoliticianAttributes, activityType: CampaignActivityType): number {
+  if (activityType === 'media_blitz') {
+    return clamp((attributes.mediaSavvy + attributes.charisma) / 20, 0, 1);
+  }
+  return clamp((attributes.charisma + attributes.network) / 20, 0, 1);
+}
+
+export type CampaignActivityOutcomeTier = 'strong' | 'solid' | 'setback';
+
+export interface CampaignActivityOutcome {
+  activityType: CampaignActivityType;
+  outcome: CampaignActivityOutcomeTier;
+  momentumDelta: number;
+}
+
+const CAMPAIGN_STRONG_DELTA = 14;
+const CAMPAIGN_SOLID_DELTA = 6;
+const CAMPAIGN_SETBACK_DELTA = -4;
+
+export function canRunCampaignActivity(state: CareerState, activityType: CampaignActivityType): boolean {
+  return state.money >= CAMPAIGN_ACTIVITIES[activityType].cost;
+}
+
+export function runCampaignActivity(
+  state: CareerState,
+  activityType: CampaignActivityType,
+  rng: SeededRng
+): { state: CareerState; outcome: CampaignActivityOutcome | null } {
+  if (!canRunCampaignActivity(state, activityType)) {
+    return { state, outcome: null };
+  }
+
+  const config = CAMPAIGN_ACTIVITIES[activityType];
+  const skill = computeCampaignSkill(state.attributes, activityType);
+  const pStrong = 0.15 + skill * 0.35;
+  const pSetback = 0.25 - skill * 0.2;
+  const roll = rng.next();
+
+  let outcome: CampaignActivityOutcomeTier;
+  let momentumDelta: number;
+  if (roll < pStrong) {
+    outcome = 'strong';
+    momentumDelta = CAMPAIGN_STRONG_DELTA;
+  } else if (roll < 1 - pSetback) {
+    outcome = 'solid';
+    momentumDelta = CAMPAIGN_SOLID_DELTA;
+  } else {
+    outcome = 'setback';
+    momentumDelta = CAMPAIGN_SETBACK_DELTA;
+  }
+
+  const campaignMomentum = clamp(state.campaignMomentum + momentumDelta, 0, 100);
+  return {
+    state: withStage({ ...state, money: state.money - config.cost, campaignMomentum, rngState: rng.getState() }),
+    outcome: { activityType, outcome, momentumDelta },
+  };
+}
+
+/**
  * LOCAL COUNCIL RACE
  */
 
@@ -305,11 +443,24 @@ export interface LocalRaceOutcome {
 
 const LOCAL_RACE_CAMPAIGN_COST = 60;
 
-/** Ideology fit and personal appeal (attributes + party standing) both matter — neither alone is enough. */
-export function computePersonalAppeal(attributes: PoliticianAttributes, partyStanding: number): number {
+/**
+ * Ideology fit and personal appeal (attributes + party standing + a public
+ * civic record + short-lived campaign momentum) all matter — neither alone
+ * is enough. civicRecord and campaignMomentum are optional so callers that
+ * predate those systems still compile; they carry real weight once a
+ * player has actually built either up.
+ */
+export function computePersonalAppeal(
+  attributes: PoliticianAttributes,
+  partyStanding: number,
+  civicRecord = 0,
+  campaignMomentum = 0
+): number {
   const attributeAppeal = (attributes.charisma + attributes.mediaSavvy + attributes.network) / 30;
   const standingAppeal = partyStanding / 100;
-  return clamp(attributeAppeal * 0.6 + standingAppeal * 0.4, 0.05, 1);
+  const civicAppeal = civicRecord / 100;
+  const momentumAppeal = campaignMomentum / 100;
+  return clamp(attributeAppeal * 0.45 + standingAppeal * 0.3 + civicAppeal * 0.1 + momentumAppeal * 0.15, 0.05, 1);
 }
 
 /**
@@ -336,7 +487,7 @@ export function attemptLocalRace(
   };
 
   const playerAlignment = 1 - ideologicalDistance(state.ideology, localElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
-  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding);
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord, state.campaignMomentum);
   const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
   const rivalScores = rivalNames.map(() => Math.max(0.02, 0.3 + rng.next() * 0.4));
 
@@ -360,6 +511,176 @@ export function attemptLocalRace(
 }
 
 /**
+ * REGIONAL RACE — the next rung up the ladder. A state/regional
+ * legislature seat, deliberately gated on having won a local seat first:
+ * the career has to climb the ladder in order, not skip straight to a
+ * bigger office. Tougher, better-funded rivals than the local race.
+ */
+
+const REGIONAL_RACE_CAMPAIGN_COST = 150;
+
+export function canAttemptRegionalRace(state: CareerState): boolean {
+  return state.localSeatWon && state.money >= REGIONAL_RACE_CAMPAIGN_COST;
+}
+
+export function attemptRegionalRace(
+  state: CareerState,
+  rivalNames: string[],
+  rng: SeededRng
+): { state: CareerState; outcome: LocalRaceOutcome | null } {
+  if (!canAttemptRegionalRace(state)) {
+    return { state, outcome: null };
+  }
+
+  const regionalElectorateIdeology: IdeologyPosition = {
+    economic: (rng.next() - 0.5) * 160,
+    social: (rng.next() - 0.5) * 160,
+  };
+
+  const playerAlignment = 1 - ideologicalDistance(state.ideology, regionalElectorateIdeology) / MAX_IDEOLOGICAL_DISTANCE;
+  const playerAppeal = computePersonalAppeal(state.attributes, state.partyStanding, state.civicRecord, state.campaignMomentum);
+  const playerScore = Math.max(0.02, playerAlignment * 0.5 + playerAppeal * 0.5 + (rng.next() - 0.5) * 0.15);
+  // Tougher field than a local race — better-funded, more experienced rivals.
+  const rivalScores = rivalNames.map(() => Math.max(0.02, 0.4 + rng.next() * 0.45));
+
+  const total = playerScore + rivalScores.reduce((a, b) => a + b, 0);
+  const playerShare = playerScore / total;
+  const opponentShares = rivalScores.map((s) => s / total);
+  const won = rivalScores.every((s) => s < playerScore);
+
+  const record: CareerLocalRaceRecord = { turn: state.turn, won, playerShare, opponentNames: rivalNames };
+
+  return {
+    state: withStage({
+      ...state,
+      money: state.money - REGIONAL_RACE_CAMPAIGN_COST,
+      regionalSeatWon: state.regionalSeatWon || won,
+      regionalRaceHistory: [...state.regionalRaceHistory, record],
+      rngState: rng.getState(),
+    }),
+    outcome: { won, playerShare, opponentNames: rivalNames, opponentShares },
+  };
+}
+
+/**
+ * LOCAL GOVERNANCE — what actually holding office is for. Available only
+ * once a seat (local or regional) is won, this is the governing
+ * counterpart to doPartyWork: constituency service, committee work, and
+ * legislating build a public record (civicRecord) rather than party
+ * standing. Governing skill draws on integrity/intellect/network, distinct
+ * from the charisma-led organizing skill that powers party work.
+ */
+
+export type GovernanceOutcomeTier = 'strong' | 'solid' | 'setback';
+
+export interface GovernanceOutcome {
+  outcome: GovernanceOutcomeTier;
+  civicRecordDelta: number;
+}
+
+function computeGoverningSkill(attributes: PoliticianAttributes): number {
+  return clamp((attributes.integrity + attributes.intellect + attributes.network) / 30, 0, 1);
+}
+
+const GOVERNANCE_STRONG_DELTA = 8;
+const GOVERNANCE_SOLID_DELTA = 3;
+const GOVERNANCE_SETBACK_DELTA = -2;
+
+export function canGovernLocally(state: CareerState): boolean {
+  return state.localSeatWon || state.regionalSeatWon;
+}
+
+export function doLocalGovernance(state: CareerState, rng: SeededRng): { state: CareerState; outcome: GovernanceOutcome | null } {
+  if (!canGovernLocally(state)) {
+    return { state, outcome: null };
+  }
+
+  const skill = computeGoverningSkill(state.attributes);
+  const pStrong = 0.15 + skill * 0.35;
+  const pSetback = 0.25 - skill * 0.2;
+  const roll = rng.next();
+
+  let outcome: GovernanceOutcomeTier;
+  let civicRecordDelta: number;
+  if (roll < pStrong) {
+    outcome = 'strong';
+    civicRecordDelta = GOVERNANCE_STRONG_DELTA;
+  } else if (roll < 1 - pSetback) {
+    outcome = 'solid';
+    civicRecordDelta = GOVERNANCE_SOLID_DELTA;
+  } else {
+    outcome = 'setback';
+    civicRecordDelta = GOVERNANCE_SETBACK_DELTA;
+  }
+
+  const civicRecord = clamp(state.civicRecord + civicRecordDelta, 0, 100);
+  return {
+    state: withStage({ ...state, civicRecord, rngState: rng.getState() }),
+    outcome: { outcome, civicRecordDelta },
+  };
+}
+
+/**
+ * CITIZEN PETITIONS — lawmaking without a seat or even a party. A local
+ * ballot initiative filed straight to the public, resolved immediately
+ * against a randomly-seeded local electorate, the same shape as
+ * attemptLocalRace. No stage requirement: this is deliberately available
+ * from turn zero, before joining a party or winning anything.
+ */
+
+export interface CitizenInitiativeOutcome {
+  passed: boolean;
+  supportShare: number;
+}
+
+export const CITIZEN_INITIATIVE_COST = 20;
+
+export function canProposeCitizenInitiative(state: CareerState): boolean {
+  return state.money >= CITIZEN_INITIATIVE_COST;
+}
+
+const CITIZEN_INITIATIVE_PASS_STANDING = 10;
+const CITIZEN_INITIATIVE_FAIL_STANDING = -3;
+
+export function attemptCitizenInitiative(
+  state: CareerState,
+  title: string,
+  stance: IdeologyPosition,
+  rng: SeededRng
+): { state: CareerState; outcome: CitizenInitiativeOutcome | null } {
+  if (!canProposeCitizenInitiative(state)) {
+    return { state, outcome: null };
+  }
+
+  const localOpinion: IdeologyPosition = {
+    economic: (rng.next() - 0.5) * 160,
+    social: (rng.next() - 0.5) * 160,
+  };
+  const alignment = 1 - ideologicalDistance(stance, localOpinion) / MAX_IDEOLOGICAL_DISTANCE;
+  const organizingSkill = clamp((state.attributes.mediaSavvy + state.attributes.network + state.attributes.charisma) / 30, 0, 1);
+  const supportShare = clamp(alignment * 0.65 + organizingSkill * 0.25 + (rng.next() - 0.5) * 0.2, 0.02, 0.98);
+  const passed = supportShare >= 0.5;
+
+  const record: CareerCitizenInitiativeRecord = { turn: state.turn, title, passed, supportShare };
+  const civicRecord = clamp(
+    state.civicRecord + (passed ? CITIZEN_INITIATIVE_PASS_STANDING : CITIZEN_INITIATIVE_FAIL_STANDING),
+    0,
+    100
+  );
+
+  return {
+    state: withStage({
+      ...state,
+      money: state.money - CITIZEN_INITIATIVE_COST,
+      civicRecord,
+      citizenInitiatives: [...state.citizenInitiatives, record],
+      rngState: rng.getState(),
+    }),
+    outcome: { passed, supportShare },
+  };
+}
+
+/**
  * NATIONAL NOMINATION
  */
 
@@ -375,15 +696,20 @@ function sigmoid(x: number): number {
 /**
  * A probabilistic gate rather than a simulated vote — this represents the
  * party leadership's own closed-door decision, not a poll of anyone the
- * player interacts with. Party standing dominates; having actually won a
- * local seat is a real, separate boost; personal attributes matter but
- * least of the three.
+ * player interacts with. Party standing dominates; having actually held
+ * office is a real, separate boost that grows with how high up the ladder
+ * that office was; a party leadership post and fresh campaign momentum
+ * both matter too, but personal attributes matter least of all.
  */
 export function computeNominationProbability(state: CareerState): number {
   const standingTerm = (state.partyStanding - 50) / 50;
-  const seatBonus = state.localSeatWon ? 1 : 0;
+  const seatBonus = (state.localSeatWon ? 0.4 : 0) + (state.regionalSeatWon ? 0.8 : 0);
   const attributeTerm = (state.attributes.charisma + state.attributes.integrity + state.attributes.intellect - 15) / 15;
-  const score = 1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm;
+  const civicTerm = (state.civicRecord - 50) / 50;
+  const officerBonus = state.partyOfficer ? 1 : 0;
+  const momentumTerm = (state.campaignMomentum - 50) / 50;
+  const score =
+    1.4 * standingTerm + 1.2 * seatBonus + 0.8 * attributeTerm + 0.4 * civicTerm + 0.7 * officerBonus + 0.3 * momentumTerm;
   return clamp(sigmoid(score), 0.02, 0.95);
 }
 
@@ -410,11 +736,97 @@ export function isGraduated(state: CareerState): boolean {
 }
 
 /**
+ * PERSONAL LIFE — the life-sim layer underneath the political one. Health
+ * drains under a heavy workload (job + education + party + office all at
+ * once) and recovers when the load is lighter; low health scales down how
+ * much attribute gain work and study actually produce (burnout), so
+ * grinding every track at once has a real cost. Life events are seeded,
+ * weighted, and content-supplied (career.ts stays content-free), the same
+ * shape as the main game's crisis events.
+ */
+
+const BURNOUT_HEALTH_THRESHOLD = 30;
+const BURNOUT_GAIN_MULTIPLIER = 0.5;
+const REST_RECOVERY_AMOUNT = 15;
+
+export function computeCareerWorkload(state: CareerState): number {
+  return (
+    (state.jobId ? 1 : 0) +
+    (state.educationTrack ? 1 : 0) +
+    (state.partyId ? 0.5 : 0) +
+    (state.localSeatWon || state.regionalSeatWon ? 1 : 0)
+  );
+}
+
+/** A deliberate season spent on rest instead of grinding any track — no rng needed, just a flat, honest trade-off. */
+export function restAndRecover(state: CareerState): CareerState {
+  return withStage({ ...state, health: clamp(state.health + REST_RECOVERY_AMOUNT, 0, 100) });
+}
+
+export interface CareerLifeEventEffect {
+  healthDelta?: number;
+  moneyDelta?: number;
+  attributeDelta?: Partial<PoliticianAttributes>;
+  civicRecordDelta?: number;
+  partyStandingDelta?: number;
+  setRelationshipStatus?: CareerRelationshipStatus;
+  setHasChildren?: boolean;
+}
+
+export interface CareerLifeEventDef {
+  id: string;
+  title: string;
+  description: string;
+  weight: number;
+  /** Optional gate — the event is only eligible when this returns true for the current state. */
+  condition?: (state: CareerState) => boolean;
+  effect: CareerLifeEventEffect;
+}
+
+const LIFE_EVENT_CHANCE = 0.35;
+
+/** Null when no event fires this season, defs is empty, or nothing currently qualifies. */
+export function rollForLifeEvent(defs: CareerLifeEventDef[], state: CareerState, rng: SeededRng): CareerLifeEventDef | null {
+  if (defs.length === 0 || rng.next() >= LIFE_EVENT_CHANCE) return null;
+  const eligible = defs.filter((d) => !d.condition || d.condition(state));
+  if (eligible.length === 0) return null;
+  return rng.pickWeighted(eligible.map((d) => ({ item: d, weight: d.weight })));
+}
+
+export function applyLifeEventEffect(state: CareerState, def: CareerLifeEventDef): CareerState {
+  const effect = def.effect;
+  return withStage({
+    ...state,
+    attributes: effect.attributeDelta ? addAttributes(state.attributes, effect.attributeDelta) : state.attributes,
+    health: clamp(state.health + (effect.healthDelta ?? 0), 0, 100),
+    money: Math.max(0, state.money + (effect.moneyDelta ?? 0)),
+    civicRecord: clamp(state.civicRecord + (effect.civicRecordDelta ?? 0), 0, 100),
+    partyStanding: clamp(state.partyStanding + (effect.partyStandingDelta ?? 0), 0, 100),
+    relationshipStatus: effect.setRelationshipStatus ?? state.relationshipStatus,
+    hasChildren: effect.setHasChildren ?? state.hasChildren,
+    eventLog: [...state.eventLog, { turn: state.turn, title: def.title, description: def.description }],
+  });
+}
+
+/**
  * TURN ADVANCEMENT
  */
 
 const PARTY_STANDING_DECAY_RATE = 0.04;
+const CAMPAIGN_MOMENTUM_DECAY_RATE = 0.2;
 const IDEOLOGY_DRIFT_RATE = 0.08;
+const LOCAL_OFFICE_STIPEND = 20;
+const REGIONAL_OFFICE_STIPEND = 50;
+const HEALTH_FATIGUE_RATE = 6;
+const HEALTH_RECOVERY_RATE = 4;
+
+function scaleAttributeGain(gain: Partial<PoliticianAttributes>, factor: number): Partial<PoliticianAttributes> {
+  const scaled: Partial<PoliticianAttributes> = {};
+  for (const key of ATTRIBUTE_KEYS) {
+    if (gain[key] !== undefined) scaled[key] = gain[key]! * factor;
+  }
+  return scaled;
+}
 
 /**
  * Advances one career season: education and employment both apply their
@@ -423,9 +835,20 @@ const IDEOLOGY_DRIFT_RATE = 0.08;
  * decays a little without reinforcement (the same "needs upkeep" shape as
  * interest-group disposition), and ideology drifts gradually toward the
  * joined party's own position — who you organize alongside shapes what
- * you come to believe, not an instant conversion.
+ * you come to believe, not an instant conversion. Health drains under a
+ * heavy workload and recovers under a light one, and low health scales
+ * down work/study gains (burnout) — grinding every track at once has a
+ * real cost, not just a time cost. rng and lifeEventDefs are both
+ * optional so existing callers that don't care about the life-sim layer
+ * still compile; passing both rolls a seeded personal life event for the
+ * season, content-supplied so career.ts stays content-free.
  */
-export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerState {
+export function advanceCareerTurn(
+  state: CareerState,
+  parties: Party[],
+  rng?: SeededRng,
+  lifeEventDefs: CareerLifeEventDef[] = []
+): CareerState {
   let attributes = state.attributes;
   let money = state.money;
   let educationTrack = state.educationTrack;
@@ -433,9 +856,11 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   let completedEducationTracks = state.completedEducationTracks;
   const eventLog = [...state.eventLog];
 
+  const burnoutFactor = state.health < BURNOUT_HEALTH_THRESHOLD ? BURNOUT_GAIN_MULTIPLIER : 1;
+
   if (educationTrack) {
     const config = EDUCATION_TRACKS[educationTrack];
-    attributes = addAttributes(attributes, config.attributeGainPerTurn);
+    attributes = addAttributes(attributes, scaleAttributeGain(config.attributeGainPerTurn, burnoutFactor));
     money = Math.max(0, money - config.costPerTurn);
     educationTurnsRemaining -= 1;
     if (educationTurnsRemaining <= 0) {
@@ -454,12 +879,27 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
   if (state.jobId) {
     const job = JOB_LISTINGS.find((j) => j.id === state.jobId);
     if (job) {
-      attributes = addAttributes(attributes, job.attributeGainPerTurn);
+      attributes = addAttributes(attributes, scaleAttributeGain(job.attributeGainPerTurn, burnoutFactor));
       money += job.incomePerTurn;
     }
   }
 
-  const partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
+  // An officeholder's stipend — regional supersedes local rather than stacking, since winning a regional seat means moving up, not moonlighting both.
+  if (state.regionalSeatWon) {
+    money += REGIONAL_OFFICE_STIPEND;
+  } else if (state.localSeatWon) {
+    money += LOCAL_OFFICE_STIPEND;
+  }
+
+  let partyStanding = state.partyId ? state.partyStanding * (1 - PARTY_STANDING_DECAY_RATE) : state.partyStanding;
+  if (state.partyOfficer) {
+    partyStanding = Math.max(partyStanding, PARTY_OFFICER_STANDING_FLOOR);
+  }
+  const civicRecord = state.civicRecord * (1 - PARTY_STANDING_DECAY_RATE);
+  const campaignMomentum = state.campaignMomentum * (1 - CAMPAIGN_MOMENTUM_DECAY_RATE);
+
+  const workload = computeCareerWorkload(state);
+  const health = clamp(state.health + (workload >= 2 ? -HEALTH_FATIGUE_RATE : HEALTH_RECOVERY_RATE), 0, 100);
 
   let ideology = state.ideology;
   const party = state.foundedParty ?? (state.partyId ? parties.find((p) => p.id === state.partyId) : undefined);
@@ -470,7 +910,7 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     };
   }
 
-  return withStage({
+  let next = withStage({
     ...state,
     turn: state.turn + 1,
     attributes,
@@ -479,9 +919,19 @@ export function advanceCareerTurn(state: CareerState, parties: Party[]): CareerS
     educationTurnsRemaining,
     completedEducationTracks,
     partyStanding,
+    civicRecord,
+    campaignMomentum,
+    health,
     ideology,
     eventLog,
   });
+
+  if (rng) {
+    const lifeEvent = rollForLifeEvent(lifeEventDefs, next, rng);
+    next = { ...(lifeEvent ? applyLifeEventEffect(next, lifeEvent) : next), rngState: rng.getState() };
+  }
+
+  return next;
 }
 
 /**

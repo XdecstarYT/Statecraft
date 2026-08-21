@@ -1,5 +1,5 @@
 import { SeededRng } from '../../engine/rng';
-import type { BillProvision } from '../../engine/models/types';
+import type { BillCategory, BillProvision } from '../../engine/models/types';
 
 /**
  * Pre-authored bill templates the player (or an NPC sponsor) can draft
@@ -7,12 +7,14 @@ import type { BillProvision } from '../../engine/models/types';
  */
 export interface BillTemplate {
   title: string;
+  category: BillCategory;
   provisions: BillProvision[];
 }
 
 export const CURATED_TEMPLATES: BillTemplate[] = [
   {
     title: 'Public Infrastructure Investment Act',
+    category: 'infrastructure',
     provisions: [
       { id: 'p1', description: 'Fund regional rail expansion', budgetImpact: -4200 },
       { id: 'p2', description: 'Grants for municipal road repair', budgetImpact: -1800 },
@@ -20,6 +22,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Small Business Tax Relief Act',
+    category: 'economic',
     provisions: [
       { id: 'p1', description: 'Cut small-business tax rate by 3 points', budgetImpact: -2600 },
       { id: 'p2', description: 'Simplify quarterly filing requirements', budgetImpact: -200 },
@@ -27,6 +30,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'National Healthcare Access Act',
+    category: 'healthcare',
     provisions: [
       { id: 'p1', description: 'Expand subsidized clinic coverage', budgetImpact: -5100 },
       { id: 'p2', description: 'Cap out-of-pocket prescription costs', budgetImpact: -900 },
@@ -34,6 +38,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Fiscal Responsibility Act',
+    category: 'economic',
     provisions: [
       { id: 'p1', description: 'Freeze discretionary spending growth', budgetImpact: 1500 },
       { id: 'p2', description: 'Close a corporate tax loophole', budgetImpact: 800 },
@@ -41,6 +46,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Border Security Modernization Act',
+    category: 'justice_safety',
     provisions: [
       { id: 'p1', description: 'Fund new port-of-entry scanning equipment', budgetImpact: -1300 },
       { id: 'p2', description: 'Hire additional customs officers', budgetImpact: -700 },
@@ -48,6 +54,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Renewable Energy Transition Act',
+    category: 'environment',
     provisions: [
       { id: 'p1', description: 'Subsidize utility-scale solar and wind', budgetImpact: -3300 },
       { id: 'p2', description: 'Phase out coal plant tax credits', budgetImpact: 600 },
@@ -55,6 +62,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Affordable Housing Expansion Act',
+    category: 'welfare',
     provisions: [
       { id: 'p1', description: 'Fund new public housing construction', budgetImpact: -3800 },
       { id: 'p2', description: 'Cap annual rent increases in high-demand areas', budgetImpact: -100 },
@@ -62,6 +70,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Higher Education Investment Act',
+    category: 'education',
     provisions: [
       { id: 'p1', description: 'Expand need-based university grants', budgetImpact: -2900 },
       { id: 'p2', description: 'Forgive a portion of vocational-training loans', budgetImpact: -1100 },
@@ -69,6 +78,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Pension Solvency Reform Act',
+    category: 'welfare',
     provisions: [
       { id: 'p1', description: 'Gradually raise the retirement age', budgetImpact: 2200 },
       { id: 'p2', description: 'Index pension contributions to wage growth', budgetImpact: 400 },
@@ -76,6 +86,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Digital Privacy Protection Act',
+    category: 'justice_safety',
     provisions: [
       { id: 'p1', description: 'Mandate data-breach disclosure within 72 hours', budgetImpact: -150 },
       { id: 'p2', description: 'Fund a new data-protection regulator', budgetImpact: -600 },
@@ -83,6 +94,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Agricultural Resilience Act',
+    category: 'economic',
     provisions: [
       { id: 'p1', description: 'Subsidize drought-resistant crop research', budgetImpact: -1400 },
       { id: 'p2', description: 'Extend low-interest loans to small farms', budgetImpact: -900 },
@@ -90,6 +102,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Judicial Efficiency Act',
+    category: 'justice_safety',
     provisions: [
       { id: 'p1', description: 'Fund additional trial-court judgeships', budgetImpact: -1200 },
       { id: 'p2', description: 'Digitize court filing statewide', budgetImpact: -500 },
@@ -97,6 +110,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Minimum Wage Adjustment Act',
+    category: 'welfare',
     provisions: [
       { id: 'p1', description: 'Raise the national minimum wage', budgetImpact: -300 },
       { id: 'p2', description: 'Phase in the increase over three years', budgetImpact: 0 },
@@ -104,6 +118,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'National Defense Readiness Act',
+    category: 'defense',
     provisions: [
       { id: 'p1', description: 'Modernize aging military equipment', budgetImpact: -4700 },
       { id: 'p2', description: 'Increase reservist training funding', budgetImpact: -800 },
@@ -111,6 +126,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Consumer Protection Reform Act',
+    category: 'justice_safety',
     provisions: [
       { id: 'p1', description: 'Ban hidden fees in consumer contracts', budgetImpact: -150 },
       { id: 'p2', description: 'Fund a new consumer complaints bureau', budgetImpact: -500 },
@@ -118,6 +134,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Immigration Modernization Act',
+    category: 'economic',
     provisions: [
       { id: 'p1', description: 'Clear the visa-processing backlog', budgetImpact: -1600 },
       { id: 'p2', description: 'Expand skilled-worker visa quotas', budgetImpact: 200 },
@@ -125,6 +142,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Technology Sector Growth Act',
+    category: 'research_technology',
     provisions: [
       { id: 'p1', description: 'Offer tax credits for startup R&D', budgetImpact: -2100 },
       { id: 'p2', description: 'Fund public broadband expansion', budgetImpact: -1900 },
@@ -132,6 +150,7 @@ export const CURATED_TEMPLATES: BillTemplate[] = [
   },
   {
     title: 'Clean Water Infrastructure Act',
+    category: 'infrastructure',
     provisions: [
       { id: 'p1', description: 'Replace aging lead pipe networks', budgetImpact: -3600 },
       { id: 'p2', description: 'Tighten industrial discharge standards', budgetImpact: -200 },
@@ -173,6 +192,43 @@ const DOMAINS = [
   'Banking & Finance',
   'Space & Aerospace',
 ];
+
+/**
+ * Which real system each generated domain's bills actually nudge when
+ * passed — see engine/index.ts's applyBillCategoryEffect. Domains with no
+ * obviously-matching system (Agriculture, Trade, Banking & Finance, Arts &
+ * Culture, Immigration — see the comment on computeMigrationRate for why
+ * immigration isn't hooked to a sticky stat) fall back to 'economic', so
+ * they still move the budget/growth like every bill does, just nothing
+ * more specific.
+ */
+const DOMAIN_CATEGORY: Record<string, BillCategory> = {
+  Infrastructure: 'infrastructure',
+  Healthcare: 'healthcare',
+  Education: 'education',
+  Defense: 'defense',
+  Agriculture: 'economic',
+  Technology: 'research_technology',
+  Housing: 'welfare',
+  Environment: 'environment',
+  Justice: 'justice_safety',
+  Immigration: 'economic',
+  Labor: 'welfare',
+  Trade: 'economic',
+  Energy: 'environment',
+  'Public Safety': 'justice_safety',
+  Transportation: 'infrastructure',
+  'Arts & Culture': 'economic',
+  'Veterans Affairs': 'defense',
+  'Consumer Protection': 'justice_safety',
+  Telecommunications: 'infrastructure',
+  'Water Resources': 'infrastructure',
+  'Urban Development': 'infrastructure',
+  'Rural Development': 'welfare',
+  'Social Security': 'welfare',
+  'Banking & Finance': 'economic',
+  'Space & Aerospace': 'research_technology',
+};
 
 const TITLE_SUFFIXES = [
   'Modernization Act',
@@ -217,6 +273,7 @@ function generateDomainTemplates(): BillTemplate[] {
   const templates: BillTemplate[] = [];
   DOMAINS.forEach((domain, domainIndex) => {
     const domainLower = domain.toLowerCase();
+    const category = DOMAIN_CATEGORY[domain] ?? 'economic';
     TITLE_SUFFIXES.forEach((suffix, suffixIndex) => {
       const spendPhrase = SPEND_PROVISIONS[(domainIndex + suffixIndex) % SPEND_PROVISIONS.length];
       const savePhrase = SAVE_PROVISIONS[(domainIndex + suffixIndex * 2) % SAVE_PROVISIONS.length];
@@ -224,6 +281,7 @@ function generateDomainTemplates(): BillTemplate[] {
       const saveImpact = 100 + ((suffixIndex * 97 + domainIndex * 31) % 900);
       templates.push({
         title: `${domain} ${suffix}`,
+        category,
         provisions: [
           {
             id: `gen-${domainIndex}-${suffixIndex}-p1`,

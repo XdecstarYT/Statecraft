@@ -12,6 +12,8 @@ import { ITALY_COUNTRY, ITALY_PARTIES } from './italy';
 import { BRAZIL_COUNTRY, BRAZIL_PARTIES } from './brazil';
 import { CANADA_COUNTRY, CANADA_PARTIES } from './canada';
 import { AUSTRALIA_COUNTRY, AUSTRALIA_PARTIES } from './australia';
+import { SOUTH_AFRICA_COUNTRY, SOUTH_AFRICA_PARTIES } from './southAfrica';
+import { SOUTH_KOREA_COUNTRY, SOUTH_KOREA_PARTIES } from './southKorea';
 
 export interface StarterCountryOption {
   id: string;
@@ -34,4 +36,6 @@ export const STARTER_COUNTRY_OPTIONS: StarterCountryOption[] = [
   { id: 'brazil', label: 'Brazil (Presidential, PR)', country: BRAZIL_COUNTRY, parties: BRAZIL_PARTIES },
   { id: 'canada', label: 'Canada (Parliamentary, FPTP)', country: CANADA_COUNTRY, parties: CANADA_PARTIES },
   { id: 'australia', label: 'Australia (Parliamentary, FPTP)', country: AUSTRALIA_COUNTRY, parties: AUSTRALIA_PARTIES },
+  { id: 'south-africa', label: 'South Africa (Parliamentary, PR)', country: SOUTH_AFRICA_COUNTRY, parties: SOUTH_AFRICA_PARTIES },
+  { id: 'south-korea', label: 'South Korea (Presidential, FPTP)', country: SOUTH_KOREA_COUNTRY, parties: SOUTH_KOREA_PARTIES },
 ];

@@ -26,6 +26,9 @@ import {
   mergePartiesAction as engineMergeParties,
   rebrandPartyAction as engineRebrandParty,
   castSummitVoteAction as engineCastSummitVote,
+  resolveDilemmaChoice,
+  resolveCoalitionOfferAction as engineResolveCoalitionOffer,
+  makePromise,
   buildMineAction as engineBuildMine,
   upgradeMineAction as engineUpgradeMine,
   buildFactoryAction as engineBuildFactory,
@@ -33,6 +36,45 @@ import {
   sellRawResourceAction as engineSellRawResource,
   sellProcessedGoodAction as engineSellProcessedGood,
   investInLogistics,
+  courtDonorAction as engineCourtDonor,
+  solicitDonationAction as engineSolicitDonation,
+  acceptDarkMoneyOfferAction as engineAcceptDarkMoneyOffer,
+  runAdBlitzAction as engineRunAdBlitz,
+  courtJournalistAction as engineCourtJournalist,
+  investigateRivalAction as engineInvestigateRival,
+  launchDisinformationCampaignAction as engineLaunchDisinformationCampaign,
+  courtThinkTankAction as engineCourtThinkTank,
+  commissionReportAction as engineCommissionReport,
+  enforceWhipDisciplineAction as engineEnforceWhipDiscipline,
+  fileTribunalCaseAction as engineFileTribunalCase,
+  imposeMultilateralSanctionsAction as engineImposeMultilateralSanctions,
+  liftSanctionsAction as engineLiftSanctions,
+  foundDynastyAction as engineFoundDynasty,
+  declareStateOfEmergencyAction as engineDeclareStateOfEmergency,
+  declareMartialLawAction as engineDeclareMartialLaw,
+  liftEmergencyPowersAction as engineLiftEmergencyPowers,
+  signBillAction as engineSignBill,
+  vetoBillAction as engineVetoBill,
+  attemptVetoOverrideAction as engineAttemptVetoOverride,
+  issueExecutiveOrderAction as engineIssueExecutiveOrder,
+  requiresExecutiveSignature,
+  sendToExecutiveReview,
+  proposeAmendmentAction as engineProposeAmendment,
+  voteOnAmendmentAction as engineVoteOnAmendment,
+  mediateInterstateDisputeAction as engineMediateInterstateDispute,
+  foundMediaOutletAction as engineFoundMediaOutlet,
+  investInOutletAction as engineInvestInOutlet,
+  foundCulturalInstitutionAction as engineFoundCulturalInstitution,
+  applyAiBillAnalysisAction as engineApplyAiBillAnalysis,
+  type SignatureActionOutcome,
+  type VetoOverrideActionOutcome,
+  type AmendmentActionOutcome,
+  type AmendmentChange,
+  type MediateDisputeOutcome,
+  type InterstateDisputeMediationChoice,
+  type MediaEmpireActionOutcome,
+  type EconomyDelta,
+  type TribunalChargeType,
   nominateJusticeAction as engineNominateJustice,
   confirmJusticeAction as engineConfirmJustice,
   investInResearch,
@@ -52,12 +94,18 @@ import {
   postTweetAction as enginePostTweet,
   applyCovertMilitaryDelta,
   applyForJob as applyForCareerJob,
+  attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
+  attemptPartyLeadershipBid,
+  attemptRegionalRace,
   buildCustomNation,
   buildGraduationPayload,
   createCareer,
+  doLocalGovernance,
   doPartyWork,
+  restAndRecover,
+  runCampaignActivity,
   validateCustomNation,
   foundNewPartyAction as engineFoundNewParty,
   foundOwnParty as foundCareerParty,
@@ -66,6 +114,10 @@ import {
   joinParty as joinCareerParty,
   startEducation as startCareerEducation,
   appointToCabinet,
+  attemptMinisterNoConfidenceAction as engineAttemptMinisterNoConfidence,
+  reshuffleCabinet,
+  resolveCollectiveResponsibility,
+  computeFactionTerms,
   applyBillOutcomeToApproval,
   applyFloorVoteResult,
   applyImmediateEffect,
@@ -105,6 +157,7 @@ import {
   proposeTradeDeal,
   proposeTreaty,
   pushApprovalEvent,
+  processFloorVoteRebellions,
   rallyPartySupportAction as engineRallyPartySupport,
   relationshipKey,
   removeFromCabinet,
@@ -123,6 +176,8 @@ import {
   signTreaty,
   type BallotResult,
   type CabinetPortfolio,
+  type CabinetRank,
+  type MinisterNoConfidenceOutcome,
   type CampaignActionOutcome,
   type CareerState,
   type ClotureResult,
@@ -137,6 +192,8 @@ import {
   type CommodityType,
   type CorruptionAttemptOutcome,
   type CorruptionTier,
+  type BillCategory,
+  type PromiseMetric,
   type CourtGroupOutcome,
   type CoverageEvent,
   type CovertOperationOutcome,
@@ -156,7 +213,11 @@ import {
   type IntelligenceInvestmentTier,
   type JudiciaryActionOutcome,
   type ConfirmationVoteResult,
+  type CampaignActivityOutcome,
+  type CampaignActivityType,
+  type GovernanceOutcome,
   type LocalRaceOutcome,
+  type PartyLeadershipOutcome,
   type LogisticsInvestmentTier,
   type MilitaryInvestmentTier,
   type ProcessedGoodType,
@@ -173,6 +234,7 @@ import {
   type InfrastructureCategory,
   type InfrastructureInvestmentTier,
   type TweetActionOutcome,
+  type CitizenInitiativeOutcome,
   type MmpResult,
   type NationBuilderError,
   type NominationOutcome,
@@ -188,14 +250,17 @@ import { pickBillTemplate } from '../content/flavor/billTemplates';
 import { SCENARIO_PRESETS } from '../content/scenarios/presets';
 import { TREATY_TEMPLATES } from '../content/diplomacy/treatyTemplates';
 import { STARTER_COUNTRY_OPTIONS } from '../content/countries/registry';
+import { CAREER_LIFE_EVENTS } from '../content/career/lifeEvents';
 import { generateName } from '../content/names/pool';
 import {
   clearSavedCareer,
+  loadAiSettings,
   loadCareer as persistLoadCareer,
   loadGame as persistLoad,
   saveCareer as persistSaveCareer,
   saveGame as persistSave,
 } from './persistence';
+import { requestAiBillAnalysis } from './ai/policyAdvisor';
 
 export interface EconomySnapshot {
   turn: number;
@@ -228,26 +293,38 @@ const STV_BALLOTS = 3000;
 
 interface StatecraftStore {
   game: GameState | null;
+  /** Turns the player flagged from the TurnMenu as "remind me" — client-side only, not part of GameState/save data. */
+  flaggedTurns: number[];
+  toggleTurnFlag: (turn: number) => void;
   career: CareerState | null;
   lastCareerPartyWorkOutcome: PartyWorkOutcome | null;
   lastCareerLocalRaceOutcome: LocalRaceOutcome | null;
   lastCareerNominationOutcome: NominationOutcome | null;
+  lastCareerCitizenInitiativeOutcome: CitizenInitiativeOutcome | null;
+  lastCareerRegionalRaceOutcome: LocalRaceOutcome | null;
+  lastCareerGovernanceOutcome: GovernanceOutcome | null;
+  lastCareerCampaignActivityOutcome: CampaignActivityOutcome | null;
+  lastCareerPartyLeadershipOutcome: PartyLeadershipOutcome | null;
   lastFoundPartyResult: FoundPartyResult | null;
   lastReferendumOutcome: (ReferendumOutcome & { provinceId: string }) | null;
   lastSuppressionOutcome: (SuppressionOutcome & { provinceId: string }) | null;
   economyHistory: EconomySnapshot[];
   lastElection: ElectionOutcome | null;
+  /** Each party's seat count immediately before lastElection was run, so the UI can show seat deltas. */
+  lastElectionPreviousSeats: Record<string, number> | null;
   lastFloorResult: (FloorVoteResult & { billTitle: string }) | null;
   lastCoverage: CoverageEvent[];
   labResult: LabResult | null;
   lastCorruptionOutcome: CorruptionAttemptOutcome | null;
   lastCampaignOutcome: (CampaignActionOutcome & { action: 'interview' | 'rally' | 'press_conference' }) | null;
   lastLobbyingOutcome: (CourtGroupOutcome & { groupId: string }) | null;
+  lastPoliticalOutcome: { label: string; detail: string; tone: 'pass' | 'fail' | 'neutral' } | null;
   lastLeadershipActionOutcome: (PartyActionOutcome & { action: 'rally' | 'denounce' }) | null;
   lastCovertOperationOutcome: (CovertOperationOutcome & { counterpartId: string; type: CovertOperationType }) | null;
   lastClotureResult: (ClotureResult & { billId: string }) | null;
   lastBallotResult: (BallotResult & { initiativeId: string }) | null;
   lastImpeachmentOutcome: ImpeachmentOutcome | null;
+  lastMinisterNoConfidenceOutcome: MinisterNoConfidenceOutcome | null;
   lastDispersalOutcome: (DispersalOutcome & { protestId: string }) | null;
   lastDebateResult: DebateResult | null;
   lastEndorsementOutcome: (EndorsementAttemptResult & { endorserId: string }) | null;
@@ -261,6 +338,16 @@ interface StatecraftStore {
   lastTweetOutcome: TweetActionOutcome | null;
   lastEnterpriseOutcome: EnterpriseActionOutcome | null;
   lastIpoProceeds: number | null;
+  lastSignatureOutcome:
+    | (SignatureActionOutcome & { action: 'sign' | 'veto' | 'executive_order' })
+    | (VetoOverrideActionOutcome & { action: 'override' })
+    | null;
+  lastAmendmentOutcome: (AmendmentActionOutcome & { action: 'propose' | 'vote' }) | null;
+  lastDisputeOutcome: MediateDisputeOutcome | null;
+  lastMediaEmpireOutcome: (MediaEmpireActionOutcome & { action: 'found_outlet' | 'invest_outlet' | 'found_institution' }) | null;
+  /** Optional AI bill-analysis enrichment (see ui/ai/policyAdvisor.ts) — network state only, never part of GameState/saves. */
+  aiAnalysisPendingBillId: string | null;
+  aiAnalysisError: string | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -280,19 +367,35 @@ interface StatecraftStore {
   startCareer: (name: string, countryOptionId: string, seed?: number) => void;
   abandonCareer: () => void;
   careerAdvanceTurnAction: () => void;
+  careerRestAndRecoverAction: () => void;
   careerStartEducationAction: (track: EducationTrack) => void;
   careerApplyForJobAction: (jobId: string) => void;
   careerJoinPartyAction: (partyId: string) => void;
   careerFoundOwnPartyAction: (partyId: string, name: string) => void;
   careerDoPartyWorkAction: () => void;
   careerAttemptLocalRaceAction: () => void;
+  careerAttemptRegionalRaceAction: () => void;
+  careerDoLocalGovernanceAction: () => void;
   careerAttemptNominationAction: (seed?: number, difficulty?: Difficulty) => void;
+  careerAttemptCitizenInitiativeAction: (title: string, stance: IdeologyPosition) => void;
+  careerRunCampaignActivityAction: (activityType: CampaignActivityType) => void;
+  careerAttemptPartyLeadershipBidAction: () => void;
   proposeNewBill: () => void;
-  proposeCustomBill: (title: string, provisions: { description: string; budgetImpact: number }[]) => void;
+  proposeCustomBill: (
+    title: string,
+    category: BillCategory,
+    provisions: { description: string; budgetImpact: number }[]
+  ) => void;
   sendToCommittee: (billId: string) => void;
   sendToFloor: (billId: string) => void;
   setStance: (billId: string, politicianId: string, stance: WhipStance) => void;
   holdFloorVote: (billId: string) => void;
+  signBillAction: (billId: string) => void;
+  vetoBillAction: (billId: string) => void;
+  attemptVetoOverrideAction: (billId: string) => void;
+  /** Optional AI enrichment for an already-enacted law — see ui/ai/policyAdvisor.ts. No-ops silently if the AI toggle is off or the request fails; the deterministic bill effect already applied regardless. */
+  requestAiAnalysisForBill: (billId: string) => void;
+  issueExecutiveOrderAction: (title: string, description: string, economyEffect?: EconomyDelta, playerApprovalEffect?: number) => void;
   addProvisionAction: (billId: string, description: string, budgetImpact: number) => void;
   removeProvisionAction: (billId: string, provisionId: string) => void;
   amendProvisionAction: (billId: string, provisionId: string, description: string, budgetImpact: number) => void;
@@ -316,6 +419,8 @@ interface StatecraftStore {
   mergePartiesAction: (absorbedPartyId: string, survivingPartyId: string) => void;
   rebrandPartyAction: (partyId: string, newName: string, newIdeology?: { economic: number; social: number }) => void;
   castSummitVoteAction: (vote: 'yes' | 'no') => void;
+  resolveDilemmaAction: (choiceId: string) => void;
+  makePromiseAction: (metric: PromiseMetric) => void;
   nudgeRelationship: (politicianId: string, delta: number) => void;
   addFavor: (politicianId: string) => void;
   giveSpeech: () => void;
@@ -341,12 +446,15 @@ interface StatecraftStore {
   reportNextProvinceAction: () => void;
   concludeElectionNightAction: () => void;
   dismissElectionNightAction: () => void;
-  appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string) => void;
-  removeFromCabinetAction: (portfolio: CabinetPortfolio) => void;
+  appointToCabinetAction: (portfolio: CabinetPortfolio, politicianId: string, rank?: CabinetRank) => void;
+  removeFromCabinetAction: (portfolio: CabinetPortfolio, rank?: CabinetRank) => void;
+  reshuffleCabinetAction: (portfolio: CabinetPortfolio, rank: CabinetRank, politicianId: string) => void;
+  attemptMinisterNoConfidenceAction: (targetId: string) => void;
   courtInterestGroupAction: (groupId: string) => void;
   rallyPartySupportAction: () => void;
   denounceChallengerAction: () => void;
   dismissLeadershipChallengeAction: () => void;
+  resolveCoalitionOfferAction: (offerId: 'join' | 'opposition') => void;
   attemptCovertOperationAction: (counterpartId: string, type: CovertOperationType) => void;
   investInIntelligenceAction: (tier: IntelligenceInvestmentTier) => void;
   foundNewPartyAction: (partyId: string, name: string, ideology: IdeologyPosition) => void;
@@ -382,30 +490,67 @@ interface StatecraftStore {
   sellRawResourceAction: (resource: RawResourceType, units: number, sellAs: FacilityOwnership) => void;
   sellProcessedGoodAction: (good: ProcessedGoodType, units: number, ownership: FacilityOwnership) => void;
   investInLogisticsAction: (tier: LogisticsInvestmentTier) => void;
+  courtDonorAction: (donorId: string) => void;
+  solicitDonationAction: (donorId: string) => void;
+  acceptDarkMoneyOfferAction: (donorId: string) => void;
+  runAdBlitzAction: (amount: number) => void;
+  courtJournalistAction: (journalistId: string) => void;
+  investigateRivalAction: (journalistId: string, targetId: string) => void;
+  launchDisinformationCampaignAction: (targetId: string) => void;
+  courtThinkTankAction: (thinkTankId: string) => void;
+  commissionReportAction: (thinkTankId: string) => void;
+  enforceWhipDisciplineAction: (partyId: string, rebelId: string) => void;
+  fileTribunalCaseAction: (targetId: string, chargeType: TribunalChargeType) => void;
+  imposeMultilateralSanctionsAction: (targetId: string, severity: number) => void;
+  liftSanctionsAction: (regimeId: string) => void;
+  foundDynastyAction: (politicianId: string, familyName: string) => void;
+  declareStateOfEmergencyAction: () => void;
+  declareMartialLawAction: () => void;
+  liftEmergencyPowersAction: () => void;
+  proposeAmendmentAction: (title: string, description: string, change: AmendmentChange) => void;
+  voteOnAmendmentAction: (amendmentId: string) => void;
+  mediateInterstateDisputeAction: (disputeId: string, choice: InterstateDisputeMediationChoice) => void;
+  foundMediaOutletAction: (name: string, bias: IdeologyPosition) => void;
+  investInOutletAction: (outletId: string) => void;
+  foundCulturalInstitutionAction: (name: string) => void;
 }
 
 export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   game: null,
+  flaggedTurns: [],
+  toggleTurnFlag: (turn) => {
+    const { flaggedTurns } = get();
+    set({
+      flaggedTurns: flaggedTurns.includes(turn) ? flaggedTurns.filter((t) => t !== turn) : [...flaggedTurns, turn],
+    });
+  },
   career: null,
   lastCareerPartyWorkOutcome: null,
   lastCareerLocalRaceOutcome: null,
   lastCareerNominationOutcome: null,
+  lastCareerCitizenInitiativeOutcome: null,
+  lastCareerRegionalRaceOutcome: null,
+  lastCareerGovernanceOutcome: null,
+  lastCareerCampaignActivityOutcome: null,
+  lastCareerPartyLeadershipOutcome: null,
   lastFoundPartyResult: null,
   lastReferendumOutcome: null,
   lastSuppressionOutcome: null,
   economyHistory: [],
   lastElection: null,
+  lastElectionPreviousSeats: null,
   lastFloorResult: null,
   lastCoverage: [],
   labResult: null,
   lastCorruptionOutcome: null,
   lastCampaignOutcome: null,
-  lastLobbyingOutcome: null,
+  lastLobbyingOutcome: null, lastPoliticalOutcome: null,
   lastLeadershipActionOutcome: null,
   lastCovertOperationOutcome: null,
   lastClotureResult: null,
   lastBallotResult: null,
   lastImpeachmentOutcome: null,
+  lastMinisterNoConfidenceOutcome: null,
   lastDispersalOutcome: null,
   lastDebateResult: null,
   lastEndorsementOutcome: null,
@@ -419,6 +564,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastTweetOutcome: null,
   lastEnterpriseOutcome: null,
   lastIpoProceeds: null,
+  lastSignatureOutcome: null,
+  lastAmendmentOutcome: null,
+  lastDisputeOutcome: null,
+  lastMediaEmpireOutcome: null,
+  aiAnalysisPendingBillId: null,
+  aiAnalysisError: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -430,12 +581,13 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
-      lastLobbyingOutcome: null,
+      lastLobbyingOutcome: null, lastPoliticalOutcome: null,
       lastLeadershipActionOutcome: null,
       lastCovertOperationOutcome: null,
     });
@@ -457,12 +609,13 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
-      lastLobbyingOutcome: null,
+      lastLobbyingOutcome: null, lastPoliticalOutcome: null,
       lastLeadershipActionOutcome: null,
       lastCovertOperationOutcome: null,
     });
@@ -481,12 +634,13 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       career: null,
       economyHistory: [snapshotEconomy(game)],
       lastElection: null,
+      lastElectionPreviousSeats: null,
       lastFloorResult: null,
       lastCoverage: [],
       labResult: null,
       lastCorruptionOutcome: null,
       lastCampaignOutcome: null,
-      lastLobbyingOutcome: null,
+      lastLobbyingOutcome: null, lastPoliticalOutcome: null,
       lastLeadershipActionOutcome: null,
       lastCovertOperationOutcome: null,
     });
@@ -510,12 +664,13 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         career: null,
         economyHistory: save.economyHistory,
         lastElection: null,
+        lastElectionPreviousSeats: null,
         lastFloorResult: null,
         lastCoverage: [],
         labResult: null,
         lastCorruptionOutcome: null,
         lastCampaignOutcome: null,
-        lastLobbyingOutcome: null,
+        lastLobbyingOutcome: null, lastPoliticalOutcome: null,
         lastLeadershipActionOutcome: null,
         lastCovertOperationOutcome: null,
       });
@@ -529,6 +684,11 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
         lastCareerPartyWorkOutcome: null,
         lastCareerLocalRaceOutcome: null,
         lastCareerNominationOutcome: null,
+        lastCareerCitizenInitiativeOutcome: null,
+        lastCareerRegionalRaceOutcome: null,
+        lastCareerGovernanceOutcome: null,
+        lastCareerCampaignActivityOutcome: null,
+        lastCareerPartyLeadershipOutcome: null,
       });
       return true;
     }
@@ -544,6 +704,11 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastCareerPartyWorkOutcome: null,
       lastCareerLocalRaceOutcome: null,
       lastCareerNominationOutcome: null,
+      lastCareerCitizenInitiativeOutcome: null,
+      lastCareerRegionalRaceOutcome: null,
+      lastCareerGovernanceOutcome: null,
+      lastCareerCampaignActivityOutcome: null,
+      lastCareerPartyLeadershipOutcome: null,
     });
   },
 
@@ -556,7 +721,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const career = get().career;
     if (!career) return;
     const option = STARTER_COUNTRY_OPTIONS.find((o) => o.id === career.countryOptionId) ?? STARTER_COUNTRY_OPTIONS[0];
-    set({ career: advanceCareerTurn(career, option.parties) });
+    const rng = SeededRng.fromState(career.rngState);
+    set({ career: advanceCareerTurn(career, option.parties, rng, CAREER_LIFE_EVENTS) });
+  },
+
+  careerRestAndRecoverAction: () => {
+    const career = get().career;
+    if (!career) return;
+    set({ career: restAndRecover(career) });
   },
 
   careerStartEducationAction: (track) => {
@@ -601,6 +773,40 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ career: state, lastCareerLocalRaceOutcome: outcome });
   },
 
+  careerAttemptRegionalRaceAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const rivalCount = rng.nextInt(2, 3);
+    const rivalNames = Array.from({ length: rivalCount }, () => generateName(rng));
+    const { state, outcome } = attemptRegionalRace(career, rivalNames, rng);
+    if (outcome) set({ career: state, lastCareerRegionalRaceOutcome: outcome });
+  },
+
+  careerDoLocalGovernanceAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = doLocalGovernance(career, rng);
+    if (outcome) set({ career: state, lastCareerGovernanceOutcome: outcome });
+  },
+
+  careerRunCampaignActivityAction: (activityType) => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = runCampaignActivity(career, activityType, rng);
+    if (outcome) set({ career: state, lastCareerCampaignActivityOutcome: outcome });
+  },
+
+  careerAttemptPartyLeadershipBidAction: () => {
+    const career = get().career;
+    if (!career) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = attemptPartyLeadershipBid(career, rng);
+    if (outcome) set({ career: state, lastCareerPartyLeadershipOutcome: outcome });
+  },
+
   careerAttemptNominationAction: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard') => {
     const career = get().career;
     if (!career) return;
@@ -624,12 +830,22 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
           labResult: null,
           lastCorruptionOutcome: null,
           lastCampaignOutcome: null,
-          lastLobbyingOutcome: null,
+          lastLobbyingOutcome: null, lastPoliticalOutcome: null,
           lastLeadershipActionOutcome: null,
           lastCovertOperationOutcome: null,
         });
       }
     }
+  },
+
+  careerAttemptCitizenInitiativeAction: (title, stance) => {
+    const career = get().career;
+    if (!career) return;
+    const trimmed = title.trim();
+    if (!trimmed) return;
+    const rng = SeededRng.fromState(career.rngState);
+    const { state, outcome } = attemptCitizenInitiative(career, trimmed, stance, rng);
+    if (outcome) set({ career: state, lastCareerCitizenInitiativeOutcome: outcome });
   },
 
   proposeNewBill: () => {
@@ -643,6 +859,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const bill = proposeBill({
       id: `bill-${game.turn}-${game.bills.length + 1}`,
       title: template.title,
+      category: template.category,
       provisions: template.provisions,
       sponsorId: sponsor.id,
     });
@@ -650,7 +867,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ game: { ...game, bills: [...game.bills, bill], rngState: rng.getState() } });
   },
 
-  proposeCustomBill: (title, provisions) => {
+  proposeCustomBill: (title, category, provisions) => {
     const game = get().game;
     if (!game) return;
     const trimmedTitle = title.trim();
@@ -664,6 +881,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const bill = proposeBill({
       id: `bill-${game.turn}-${game.bills.length + 1}`,
       title: trimmedTitle,
+      category,
       provisions: cleanedProvisions.map((p, i) => ({
         id: `custom-${game.turn}-${game.bills.length + 1}-${i}`,
         description: p.description,
@@ -685,7 +903,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   sendToFloor: (billId) => {
     const game = get().game;
     if (!game) return;
-    set({ game: engineAdvanceBillToFloor(game, billId) });
+    const rng = SeededRng.fromState(game.rngState);
+    set({ game: engineAdvanceBillToFloor(game, billId, rng) });
   },
 
   setStance: (billId, politicianId, stance) => {
@@ -707,6 +926,14 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
 
     const rng = SeededRng.fromState(game.rngState);
     const lobbyingPressure = computeLobbyingPressure(game.interestGroups, bill, sponsor);
+    const factionTerms = computeFactionTerms(
+      game.politicians,
+      sponsor,
+      game.parties,
+      game.relationships,
+      game.favorBank,
+      game.factionLeaderId
+    );
     const result = resolveFloorVote(
       bill,
       game.politicians,
@@ -714,15 +941,46 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       game.favorBank,
       rng,
       undefined,
-      lobbyingPressure
+      lobbyingPressure,
+      factionTerms
     );
     const updatedBill = applyFloorVoteResult(bill, result);
     const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
     const interestGroups = applyBillOutcomeToGroups(game.interestGroups, updatedBill, sponsor, result.passed);
+    const cabinet = result.passed
+      ? game.cabinet
+      : resolveCollectiveResponsibility(game.cabinet, game.politicians, updatedBill, rng).cabinet;
+    const rebellionResult = processFloorVoteRebellions(
+      bill,
+      result.finalWhipCount,
+      game.politicians,
+      game.parties,
+      game.partyWhips,
+      game.relationships,
+      game.turn
+    );
 
-    let nextState: GameState = { ...game, bills, interestGroups, rngState: rng.getState() };
+    let nextState: GameState = {
+      ...game,
+      bills,
+      interestGroups,
+      cabinet,
+      rngState: rng.getState(),
+      partyWhips: rebellionResult.partyWhips,
+      relationships: rebellionResult.relationships,
+      rebellions:
+        rebellionResult.rebellions.length > 0 ? [...game.rebellions, ...rebellionResult.rebellions] : game.rebellions,
+    };
     nextState = applyBillOutcomeToApproval(nextState, sponsor.id, result.passed);
-    nextState = enactPassedBill(nextState, updatedBill);
+    if (result.passed && requiresExecutiveSignature(game.country)) {
+      // Presidential/semi-presidential regimes: clearing the floor vote
+      // isn't enactment — the bill awaits the executive's own sign/veto
+      // decision (see signBillAction/vetoBillAction below).
+      const reviewBill = sendToExecutiveReview(updatedBill);
+      nextState = { ...nextState, bills: nextState.bills.map((b) => (b.id === billId ? reviewBill : b)) };
+    } else {
+      nextState = enactPassedBill(nextState, updatedBill);
+    }
     const { state: coveredState, coverage } = generateEventCoverage(
       nextState,
       result.passed ? 'bill_passed' : 'bill_failed',
@@ -735,6 +993,120 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastFloorResult: { ...result, billTitle: bill.title },
       lastCoverage: coverage,
     });
+    if (result.passed && !requiresExecutiveSignature(game.country)) {
+      get().requestAiAnalysisForBill(billId);
+    }
+  },
+
+  signBillAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineSignBill(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'sign' } });
+    if (outcome.success) get().requestAiAnalysisForBill(billId);
+  },
+
+  vetoBillAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineVetoBill(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'veto' } });
+  },
+
+  attemptVetoOverrideAction: (billId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineAttemptVetoOverride(game, billId);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'override' } });
+    if (outcome.success && outcome.overridden) get().requestAiAnalysisForBill(billId);
+  },
+
+  requestAiAnalysisForBill: (billId) => {
+    const settings = loadAiSettings();
+    if (!settings.enabled) return;
+    const game = get().game;
+    if (!game) return;
+    const bill = game.bills.find((b) => b.id === billId);
+    if (!bill || bill.status !== 'passed') return;
+
+    set({ aiAnalysisPendingBillId: billId, aiAnalysisError: null });
+
+    requestAiBillAnalysis({
+      billTitle: bill.title,
+      provisions: bill.provisions.map((p) => p.description),
+      countryName: game.country.name,
+    }).then((result) => {
+      // The pending id may have moved on to a different bill (or been cleared)
+      // while this request was in flight — don't clobber newer state with a
+      // stale response.
+      if (get().aiAnalysisPendingBillId !== billId) return;
+      if (!result.ok || !result.data) {
+        set({ aiAnalysisPendingBillId: null, aiAnalysisError: result.error ?? 'AI analysis failed' });
+        return;
+      }
+      const latestGame = get().game;
+      if (!latestGame) {
+        set({ aiAnalysisPendingBillId: null });
+        return;
+      }
+      const { state } = engineApplyAiBillAnalysis(
+        latestGame,
+        billId,
+        result.data.narrative,
+        result.data.economyEffect,
+        result.data.playerApprovalEffect
+      );
+      set({ game: state, aiAnalysisPendingBillId: null, aiAnalysisError: null });
+    });
+  },
+
+  issueExecutiveOrderAction: (title, description, economyEffect, playerApprovalEffect) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineIssueExecutiveOrder(game, title, description, economyEffect, playerApprovalEffect);
+    set({ game: state, lastSignatureOutcome: { ...outcome, action: 'executive_order' } });
+  },
+
+  proposeAmendmentAction: (title, description, change) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineProposeAmendment(game, title, description, change);
+    set({ game: state, lastAmendmentOutcome: { ...outcome, action: 'propose' } });
+  },
+
+  voteOnAmendmentAction: (amendmentId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineVoteOnAmendment(game, amendmentId);
+    set({ game: state, lastAmendmentOutcome: { ...outcome, action: 'vote' } });
+  },
+
+  mediateInterstateDisputeAction: (disputeId, choice) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineMediateInterstateDispute(game, disputeId, choice);
+    set({ game: state, lastDisputeOutcome: outcome });
+  },
+
+  foundMediaOutletAction: (name, bias) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundMediaOutlet(game, name, bias);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'found_outlet' } });
+  },
+
+  investInOutletAction: (outletId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineInvestInOutlet(game, outletId);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'invest_outlet' } });
+  },
+
+  foundCulturalInstitutionAction: (name) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundCulturalInstitution(game, name);
+    set({ game: state, lastMediaEmpireOutcome: { ...outcome, action: 'found_institution' } });
   },
 
   addProvisionAction: (billId, description, budgetImpact) => {
@@ -780,8 +1152,22 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const bill = game.bills.find((b) => b.id === billId);
     if (!bill) return;
+    const sponsor = game.politicians.find((p) => p.id === bill.sponsorId);
     const rng = SeededRng.fromState(game.rngState);
-    const { bill: updatedBill, result } = attemptCloture(bill, game.politicians, game.relationships, game.favorBank, rng);
+    const factionTerms = sponsor
+      ? computeFactionTerms(game.politicians, sponsor, game.parties, game.relationships, game.favorBank, game.factionLeaderId)
+      : {};
+    const { bill: updatedBill, result } = attemptCloture(
+      bill,
+      game.politicians,
+      game.relationships,
+      game.favorBank,
+      rng,
+      undefined,
+      0,
+      undefined,
+      factionTerms
+    );
     const bills = game.bills.map((b) => (b.id === billId ? updatedBill : b));
     set({ game: { ...game, bills, rngState: rng.getState() }, lastClotureResult: { ...result, billId } });
   },
@@ -932,6 +1318,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ game: state, lastSummitOutcome: outcome });
   },
 
+  resolveDilemmaAction: (choiceId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: resolveDilemmaChoice(game, choiceId) });
+  },
+
+  makePromiseAction: (metric) => {
+    const game = get().game;
+    if (!game) return;
+    if (game.playerPromises.some((p) => p.metric === metric)) return;
+    const promise = makePromise(game, metric);
+    set({ game: { ...game, playerPromises: [...game.playerPromises, promise] } });
+  },
+
   nextTurn: () => {
     const game = get().game;
     if (!game) return;
@@ -942,10 +1342,11 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   runElection: () => {
     const game = get().game;
     if (!game) return;
+    const previousSeats = Object.fromEntries(game.parties.map((p) => [p.id, p.seats]));
     const { state, outcome } = runLegislativeElection(game);
     const player = state.politicians.find((p) => p.isPlayer);
     if (!player) {
-      set({ game: state, lastElection: outcome });
+      set({ game: state, lastElection: outcome, lastElectionPreviousSeats: previousSeats });
       return;
     }
     const { state: coveredState, coverage } = generateEventCoverage(
@@ -954,7 +1355,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       player.name,
       player.ideology
     );
-    set({ game: coveredState, lastElection: outcome, lastCoverage: coverage });
+    set({
+      game: coveredState,
+      lastElection: outcome,
+      lastElectionPreviousSeats: previousSeats,
+      lastCoverage: coverage,
+    });
   },
 
   runElectoralLab: (system) => {
@@ -975,20 +1381,20 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       const { districts } = game.country.legislature;
       const perDistrictTurnout = Math.round(LAB_TURNOUT / districts.length);
       const districtResults = districts.map((d) =>
-        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng)
+        generateDistrictVotes(d, game.parties, perDistrictTurnout, rng, {}, game.voterBlocs, game.districtLeanDrift)
       );
-      const listVotes = generateNationalVotes(game.parties, LAB_TURNOUT, rng);
+      const listVotes = generateNationalVotes(game.parties, LAB_TURNOUT, rng, {}, game.voterBlocs);
       const result = resolveMMP(districtResults, listVotes, districts.length);
       labResult = { system: 'MMP', result };
     } else if (system === 'RUNOFF') {
-      const firstRound = generateNationalVotes(game.parties, LAB_TURNOUT, rng);
+      const firstRound = generateNationalVotes(game.parties, LAB_TURNOUT, rng, {}, game.voterBlocs);
       const wonOutright = getMajorityWinner(firstRound);
       if (wonOutright) {
         labResult = { system: 'RUNOFF', firstRound, wonOutright, winner: wonOutright };
       } else {
         const pair = getRunoffPair(firstRound)!;
         const runoffParties = game.parties.filter((p) => pair.includes(p.id));
-        const secondRound = generateNationalVotes(runoffParties, LAB_TURNOUT, rng);
+        const secondRound = generateNationalVotes(runoffParties, LAB_TURNOUT, rng, {}, game.voterBlocs);
         const winner = resolveRunoffRound(secondRound);
         labResult = { system: 'RUNOFF', firstRound, wonOutright: null, secondRound, winner };
       }
@@ -1158,16 +1564,38 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     set({ game: dismissElectionNight(game) });
   },
 
-  appointToCabinetAction: (portfolio, politicianId) => {
+  appointToCabinetAction: (portfolio, politicianId, rank = 'senior') => {
     const game = get().game;
     if (!game) return;
-    set({ game: { ...game, cabinet: appointToCabinet(game.cabinet, portfolio, politicianId) } });
+    set({ game: { ...game, cabinet: appointToCabinet(game.cabinet, portfolio, politicianId, rank) } });
   },
 
-  removeFromCabinetAction: (portfolio) => {
+  removeFromCabinetAction: (portfolio, rank = 'senior') => {
     const game = get().game;
     if (!game) return;
-    set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio) } });
+    set({ game: { ...game, cabinet: removeFromCabinet(game.cabinet, portfolio, rank) } });
+  },
+
+  reshuffleCabinetAction: (portfolio, rank, politicianId) => {
+    const game = get().game;
+    if (!game) return;
+    const { cabinet, removedPoliticianId } = reshuffleCabinet(game.cabinet, portfolio, rank, politicianId);
+    let relationships = game.relationships;
+    if (removedPoliticianId) {
+      const player = game.politicians.find((p) => p.isPlayer);
+      if (player) {
+        const key = relationshipKey(player.id, removedPoliticianId);
+        relationships = { ...relationships, [key]: (relationships[key] ?? 0) - 15 };
+      }
+    }
+    set({ game: { ...game, cabinet, relationships } });
+  },
+
+  attemptMinisterNoConfidenceAction: (targetId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineAttemptMinisterNoConfidence(game, targetId);
+    set({ game: state, lastMinisterNoConfidenceOutcome: outcome });
   },
 
   courtInterestGroupAction: (groupId) => {
@@ -1195,6 +1623,12 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     const game = get().game;
     if (!game) return;
     set({ game: engineDismissLeadershipChallenge(game), lastLeadershipActionOutcome: null });
+  },
+
+  resolveCoalitionOfferAction: (offerId) => {
+    const game = get().game;
+    if (!game) return;
+    set({ game: engineResolveCoalitionOffer(game, offerId) });
   },
 
   attemptCovertOperationAction: (counterpartId, type) => {
@@ -1444,5 +1878,229 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = enginePostTweet(game, optionId);
     set({ game: state, lastTweetOutcome: outcome });
+  },
+
+  courtDonorAction: (donorId) => {
+    const game = get().game;
+    if (!game) return;
+    const donor = game.donors.find((d) => d.id === donorId);
+    const { state, outcome } = engineCourtDonor(game, donorId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: donor?.name ?? 'Donor',
+        detail: outcome.success
+          ? `Warmed up (+${outcome.dispositionDelta.toFixed(0)}).`
+          : `No traction (${outcome.dispositionDelta.toFixed(0)}).`,
+        tone: outcome.success ? 'pass' : 'fail',
+      },
+    });
+  },
+
+  solicitDonationAction: (donorId) => {
+    const game = get().game;
+    if (!game) return;
+    const donor = game.donors.find((d) => d.id === donorId);
+    const { state, outcome } = engineSolicitDonation(game, donorId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: donor?.name ?? 'Donor',
+        detail: outcome.amount > 0 ? `Donated $${outcome.amount.toLocaleString()}.` : 'Not warm enough to give yet.',
+        tone: outcome.amount > 0 ? 'pass' : 'neutral',
+      },
+    });
+  },
+
+  acceptDarkMoneyOfferAction: (donorId) => {
+    const game = get().game;
+    if (!game) return;
+    const donor = game.donors.find((d) => d.id === donorId);
+    const { state, outcome } = engineAcceptDarkMoneyOffer(game, donorId);
+    set({
+      game: state,
+      lastPoliticalOutcome: outcome
+        ? {
+            label: donor?.name ?? 'Donor',
+            detail: outcome.detected
+              ? `Took $${outcome.amount.toLocaleString()} off the books — detected, a scandal broke.`
+              : `Took $${outcome.amount.toLocaleString()} off the books, undetected.`,
+            tone: outcome.detected ? 'fail' : 'pass',
+          }
+        : { label: donor?.name ?? 'Donor', detail: 'Not trusting enough for an off-books offer yet.', tone: 'neutral' },
+    });
+  },
+
+  runAdBlitzAction: (amount) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineRunAdBlitz(game, amount);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: 'Ad Blitz',
+        detail: `Spent $${outcome.fundsSpent.toLocaleString()} for +${outcome.approvalImpact.toFixed(1)} approval.`,
+        tone: 'pass',
+      },
+    });
+  },
+
+  courtJournalistAction: (journalistId) => {
+    const game = get().game;
+    if (!game) return;
+    const journalist = game.journalists.find((j) => j.id === journalistId);
+    const { state, outcome } = engineCourtJournalist(game, journalistId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: journalist?.name ?? 'Journalist',
+        detail: outcome.success
+          ? `Warmed up (+${outcome.dispositionDelta.toFixed(0)}).`
+          : `No traction (${outcome.dispositionDelta.toFixed(0)}).`,
+        tone: outcome.success ? 'pass' : 'fail',
+      },
+    });
+  },
+
+  investigateRivalAction: (journalistId, targetId) => {
+    const game = get().game;
+    if (!game) return;
+    const target = game.politicians.find((p) => p.id === targetId);
+    const { state, outcome } = engineInvestigateRival(game, journalistId, targetId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: target?.name ?? 'Investigation',
+        detail: outcome.found ? 'Turned up a fresh scandal.' : 'Found nothing this time.',
+        tone: outcome.found ? 'pass' : 'neutral',
+      },
+    });
+  },
+
+  launchDisinformationCampaignAction: (targetId) => {
+    const game = get().game;
+    if (!game) return;
+    const target = game.politicians.find((p) => p.id === targetId);
+    const { state, outcome } = engineLaunchDisinformationCampaign(game, targetId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: target?.name ?? 'Disinformation',
+        detail:
+          outcome.outcome === 'landed'
+            ? 'Landed — the target took an approval hit.'
+            : outcome.outcome === 'backfired'
+              ? 'Backfired — traced back to you.'
+              : 'Fact-checked and fizzled.',
+        tone: outcome.outcome === 'landed' ? 'pass' : outcome.outcome === 'backfired' ? 'fail' : 'neutral',
+      },
+    });
+  },
+
+  courtThinkTankAction: (thinkTankId) => {
+    const game = get().game;
+    if (!game) return;
+    const thinkTank = game.thinkTanks.find((t) => t.id === thinkTankId);
+    const { state, outcome } = engineCourtThinkTank(game, thinkTankId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: thinkTank?.name ?? 'Think Tank',
+        detail: outcome.success
+          ? `Warmed up (+${outcome.dispositionDelta.toFixed(0)}).`
+          : `No traction (${outcome.dispositionDelta.toFixed(0)}).`,
+        tone: outcome.success ? 'pass' : 'fail',
+      },
+    });
+  },
+
+  commissionReportAction: (thinkTankId) => {
+    const game = get().game;
+    if (!game) return;
+    const thinkTank = game.thinkTanks.find((t) => t.id === thinkTankId);
+    const { state, outcome } = engineCommissionReport(game, thinkTankId);
+    set({
+      game: state,
+      lastPoliticalOutcome: {
+        label: thinkTank?.name ?? 'Think Tank',
+        detail: outcome.published ? 'Report published — the Overton window shifted.' : 'Declined to publish.',
+        tone: outcome.published ? 'pass' : 'neutral',
+      },
+    });
+  },
+
+  enforceWhipDisciplineAction: (partyId, rebelId) => {
+    const game = get().game;
+    if (!game) return;
+    const rebel = game.politicians.find((p) => p.id === rebelId);
+    const { state, outcome } = engineEnforceWhipDiscipline(game, partyId, rebelId);
+    set({
+      game: state,
+      lastPoliticalOutcome: outcome
+        ? {
+            label: rebel?.name ?? 'Rebel',
+            detail: outcome.success ? 'Brought back in line.' : 'Held their ground.',
+            tone: outcome.success ? 'pass' : 'fail',
+          }
+        : { label: 'Whip Discipline', detail: 'No whip or rebel found.', tone: 'neutral' },
+    });
+  },
+
+  fileTribunalCaseAction: (targetId, chargeType) => {
+    const game = get().game;
+    if (!game) return;
+    const { state } = engineFileTribunalCase(game, targetId, chargeType);
+    set({
+      game: state,
+      lastPoliticalOutcome: { label: 'Tribunal Case', detail: `Case filed: ${chargeType.replace(/_/g, ' ')}.`, tone: 'neutral' },
+    });
+  },
+
+  imposeMultilateralSanctionsAction: (targetId, severity) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineImposeMultilateralSanctions(game, targetId, severity);
+    set({
+      game: state,
+      lastPoliticalOutcome: { label: 'Sanctions', detail: `Multilateral sanctions imposed (severity ${outcome.severity}).`, tone: 'pass' },
+    });
+  },
+
+  liftSanctionsAction: (regimeId) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineLiftSanctions(game, regimeId);
+    set({ game: state, lastPoliticalOutcome: outcome ? { label: 'Sanctions', detail: 'Sanctions regime lifted.', tone: 'neutral' } : null });
+  },
+
+  foundDynastyAction: (politicianId, familyName) => {
+    const game = get().game;
+    if (!game) return;
+    const { state, outcome } = engineFoundDynasty(game, politicianId, familyName);
+    set({
+      game: state,
+      lastPoliticalOutcome: outcome ? { label: familyName, detail: 'A new political dynasty is founded.', tone: 'pass' } : null,
+    });
+  },
+
+  declareStateOfEmergencyAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state } = engineDeclareStateOfEmergency(game);
+    set({ game: state, lastPoliticalOutcome: { label: 'State of Emergency', detail: 'Declared — a real approval cost.', tone: 'fail' } });
+  },
+
+  declareMartialLawAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state } = engineDeclareMartialLaw(game);
+    set({ game: state, lastPoliticalOutcome: { label: 'Martial Law', detail: 'Declared — a heavy approval cost.', tone: 'fail' } });
+  },
+
+  liftEmergencyPowersAction: () => {
+    const game = get().game;
+    if (!game) return;
+    const { state } = engineLiftEmergencyPowers(game);
+    set({ game: state, lastPoliticalOutcome: { label: 'Emergency Powers', detail: 'Lifted.', tone: 'neutral' } });
   },
 }));

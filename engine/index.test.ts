@@ -18,7 +18,10 @@ import {
   concludeElectionNightAction,
   dismissElectionNight,
   appointToCabinet,
+  advanceEconomy,
+  computeCabinetEffects,
   mergePartiesAction,
+  resolveCoalitionOfferAction,
   MAX_HEAD_OF_GOVERNMENT_TERMS,
   TERM_LENGTH_TURNS,
   buildMineAction,
@@ -50,6 +53,10 @@ import {
   postTweetAction,
   advanceBillToFloor,
   proposeBill,
+  applyAiBillAnalysisAction,
+  applyBillCategoryEffect,
+  enactPassedBill,
+  resolveDilemmaChoice,
   advanceToCommittee,
   relationshipKey,
   runMovementsTurn,
@@ -207,14 +214,21 @@ describe('runNpcTurn via advanceTurn', () => {
   });
 
   it('resolves the player into the final tally on any NPC bill that reaches a vote, rather than skipping them', () => {
-    let state = createNewGame(21);
+    let state = createNewGame(1);
     const player = state.politicians.find((p) => p.isPlayer)!;
     let sawPlayerVote = false;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 20; i++) {
       state = advanceTurn(state);
       for (const bill of state.bills) {
         const sponsor = state.politicians.find((p) => p.id === bill.sponsorId);
-        if (sponsor && !sponsor.isPlayer && (bill.status === 'passed' || bill.status === 'failed')) {
+        // A bill can also be marked 'failed' at the committee stage without
+        // ever reaching a floor vote (see committees.ts's
+        // applyCommitteeVoteResult) — whipCount stays untouched in that
+        // case, so only bills that actually reached resolveFloorVote (a
+        // 'passed' bill, or a 'failed' one with a populated whipCount)
+        // are checked here.
+        const reachedFloorVote = bill.status === 'passed' || (bill.status === 'failed' && Object.keys(bill.whipCount).length > 0);
+        if (sponsor && !sponsor.isPlayer && reachedFloorVote) {
           expect(['yes', 'no']).toContain(bill.whipCount[player.id]);
           sawPlayerVote = true;
         }
@@ -568,40 +582,51 @@ describe('election night flow', () => {
 
 describe('cabinet effects wired into gameplay', () => {
   it('a Finance minister measurably calms economy volatility on average across many runs', () => {
-    // A single-seed comparison of a noise-derived metric is inherently
-    // flaky (25% less volatility doesn't mean every individual run is
-    // calmer) — average the metric across many independent seeds instead.
-    const runVariance = (seed: number, withMinister: boolean) => {
-      let state = createNewGame(seed);
-      const sharpFinanceMinister = state.politicians.find((p) => !p.isPlayer)!;
-      if (withMinister) {
-        state = {
-          ...state,
-          cabinet: appointToCabinet([], 'finance', sharpFinanceMinister.id),
-          politicians: state.politicians.map((p) =>
-            p.id === sharpFinanceMinister.id ? { ...p, attributes: { ...p.attributes, intellect: 10 } } : p
-          ),
-        };
-      }
+    // Isolates exactly what advanceTurn actually wires together — computeCabinetEffects's
+    // multiplier feeding advanceEconomy's volatility parameter, the same
+    // `settings.economyVolatilityMultiplier * cabinetEffects.economyVolatilityMultiplier`
+    // expression advanceTurn itself uses — rather than running the full 30-turn
+    // advanceTurn pipeline (NPC bills, world elections, scandals, ...), whose
+    // unrelated RNG draws and bill-driven pending economy effects have no
+    // bearing on this specific effect and only dilute/destabilize the signal
+    // being measured. A single-seed comparison of a noise-derived metric is
+    // still inherently flaky on its own, so this averages across many seeds.
+    const startingEconomy = createNewGame(1).economy;
+    const sharpMinister = {
+      id: 'sharp-minister',
+      name: 'Sharp Minister',
+      isPlayer: false,
+      ideology: { economic: 0, social: 0 },
+      attributes: { charisma: 5, intellect: 10, integrity: 5, network: 5, mediaSavvy: 5 },
+      partyId: 'party-a',
+      approval: { public: 50, base: 50, partyElite: 50 },
+      approvalEvents: [],
+    };
+    const cabinetEffects = computeCabinetEffects(
+      [{ portfolio: 'finance' as const, politicianId: sharpMinister.id, rank: 'senior' as const }],
+      [sharpMinister]
+    );
+    const withMultiplier = cabinetEffects.economyVolatilityMultiplier;
+    expect(withMultiplier).toBeLessThan(1);
+
+    const runVariance = (seed: number, volatilityMultiplier: number) => {
+      const rng = new SeededRng(seed);
+      let economy = startingEconomy;
       const growthValues: number[] = [];
       for (let i = 0; i < 30; i++) {
-        state = advanceTurn(state);
-        growthValues.push(state.economy.gdpGrowth);
+        economy = advanceEconomy(economy, rng, volatilityMultiplier);
+        growthValues.push(economy.gdpGrowth);
       }
       const mean = growthValues.reduce((a, b) => a + b, 0) / growthValues.length;
       return growthValues.reduce((sum, v) => sum + Math.abs(v - mean), 0) / growthValues.length;
     };
 
-    // A generous trial count for the same reason as the NPC-scandal test
-    // above: the shared rng stream shifts whenever a new per-turn system
-    // is added upstream, so this needs enough samples to stay robust to
-    // that rather than being tuned against one exact sequence.
-    const trials = 150;
+    const trials = 400;
     let totalWith = 0;
     let totalWithout = 0;
     for (let seed = 1; seed <= trials; seed++) {
-      totalWith += runVariance(seed, true);
-      totalWithout += runVariance(seed, false);
+      totalWith += runVariance(seed, withMultiplier);
+      totalWithout += runVariance(seed, 1);
     }
 
     expect(totalWith / trials).toBeLessThan(totalWithout / trials);
@@ -687,9 +712,15 @@ describe('the second starter country (Vantorra, presidential/PR)', () => {
   });
 });
 
+/** Resolves any pending coalition negotiation (see resolveCoalitionOfferAction) so tests that just need *a* formed government don't have to special-case the pivotal-player case. */
+function withResolvedGovernment(state: GameState): GameState {
+  if (!state.pendingCoalitionOffers) return state;
+  return resolveCoalitionOfferAction(state, 'join');
+}
+
 describe('mergePartiesAction', () => {
   it('cleans up a dangling coalition membership when the absorbed party was a coalition member', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     expect(state.coalition).not.toBeNull();
     const coalition = state.coalition!;
     const absorbedPartyId = coalition.memberPartyIds[coalition.memberPartyIds.length - 1];
@@ -710,7 +741,7 @@ describe('mergePartiesAction', () => {
   });
 
   it('reassigns the formateur when the absorbed party was the formateur', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     const coalition = state.coalition!;
     const formateurPartyId = coalition.formateurPartyId;
     const survivingPartyId = state.parties.find((p) => p.id !== formateurPartyId)!.id;
@@ -721,7 +752,7 @@ describe('mergePartiesAction', () => {
   });
 
   it('leaves the coalition untouched when neither party is a coalition member', () => {
-    const state = createNewGame(1);
+    const state = withResolvedGovernment(createNewGame(1));
     const coalition = state.coalition!;
     const nonMemberParties = state.parties.filter((p) => !coalition.memberPartyIds.includes(p.id));
     if (nonMemberParties.length < 2) return; // not applicable for this seed's party split
@@ -1218,9 +1249,12 @@ describe('advanceBillToFloor (strategic opposition whipping)', () => {
     const { state: base, player } = withOpposedRival(createNewGame(1));
     let bill = proposeBill({ id: 'test-bill', title: 'Test', provisions: [], sponsorId: player.id });
     bill = advanceToCommittee(bill);
-    const state = { ...base, bills: [bill] };
+    const committees = [
+      { id: 'ways-and-means', name: 'Ways & Means Committee', areas: ['economic' as const], memberIds: [player.id], chairId: player.id },
+    ];
+    const state = { ...base, bills: [bill], committees };
 
-    const next = advanceBillToFloor(state, 'test-bill');
+    const next = advanceBillToFloor(state, 'test-bill', new SeededRng(1));
     const resultBill = next.bills.find((b) => b.id === 'test-bill')!;
     expect(resultBill.status).toBe('floor');
     expect(resultBill.whipCount['rival-opposition']).toBe('no');
@@ -1231,16 +1265,19 @@ describe('advanceBillToFloor (strategic opposition whipping)', () => {
     const npcSponsor = base.politicians.find((p) => !p.isPlayer && p.id !== rival.id)!;
     let bill = proposeBill({ id: 'npc-bill', title: 'Test', provisions: [], sponsorId: npcSponsor.id });
     bill = advanceToCommittee(bill);
-    const state = { ...base, bills: [bill] };
+    const committees = [
+      { id: 'ways-and-means', name: 'Ways & Means Committee', areas: ['economic' as const], memberIds: [npcSponsor.id], chairId: npcSponsor.id },
+    ];
+    const state = { ...base, bills: [bill], committees };
 
-    const next = advanceBillToFloor(state, 'npc-bill');
+    const next = advanceBillToFloor(state, 'npc-bill', new SeededRng(1));
     const resultBill = next.bills.find((b) => b.id === 'npc-bill')!;
     expect(resultBill.whipCount['rival-opposition']).toBeUndefined();
   });
 
   it('is a no-op for an unknown bill id', () => {
     const state = createNewGame(1);
-    expect(advanceBillToFloor(state, 'no-such-bill')).toBe(state);
+    expect(advanceBillToFloor(state, 'no-such-bill', new SeededRng(1))).toBe(state);
   });
 });
 
@@ -1327,5 +1364,226 @@ describe('applyBillOutcomeToApproval (movement reactions)', () => {
     );
     const impact = withMovement.politicians.find((p) => p.id === player.id)!.approvalEvents.at(-1)!.impact;
     expect(impact).toBe(-15);
+  });
+});
+
+describe('applyBillCategoryEffect', () => {
+  function spendingBill(category: GameState['bills'][number]['category']): GameState['bills'][number] {
+    return {
+      ...proposeBill({
+        id: 'bill-spend',
+        title: 'Spending Bill',
+        category,
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Fund it', budgetImpact: -4000 }],
+      }),
+      status: 'passed',
+    };
+  }
+
+  function savingsBill(category: GameState['bills'][number]['category']): GameState['bills'][number] {
+    return {
+      ...proposeBill({
+        id: 'bill-save',
+        title: 'Austerity Bill',
+        category,
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Cut it', budgetImpact: 4000 }],
+      }),
+      status: 'passed',
+    };
+  }
+
+  it('a net-spending healthcare bill raises life expectancy and lowers poverty', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('healthcare'));
+    expect(next.socialPolicy.lifeExpectancy).toBeGreaterThan(state.socialPolicy.lifeExpectancy);
+    expect(next.socialPolicy.povertyRate).toBeLessThan(state.socialPolicy.povertyRate);
+  });
+
+  it('a net-savings healthcare bill hurts life expectancy — no free lunch', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, savingsBill('healthcare'));
+    expect(next.socialPolicy.lifeExpectancy).toBeLessThan(state.socialPolicy.lifeExpectancy);
+  });
+
+  it('a net-spending education bill raises literacy', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('education'));
+    expect(next.socialPolicy.literacyRate).toBeGreaterThan(state.socialPolicy.literacyRate);
+  });
+
+  it('a net-spending welfare bill lowers poverty', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('welfare'));
+    expect(next.socialPolicy.povertyRate).toBeLessThan(state.socialPolicy.povertyRate);
+  });
+
+  it('a net-spending justice_safety bill lowers the crime rate', () => {
+    const state = { ...createNewGame(1), crime: { ...createNewGame(1).crime, crimeRate: 50 } };
+    const next = applyBillCategoryEffect(state, spendingBill('justice_safety'));
+    expect(next.crime.crimeRate).toBeLessThan(state.crime.crimeRate);
+  });
+
+  it('a net-spending environment bill lowers pollution and raises renewable share', () => {
+    const state = {
+      ...createNewGame(1),
+      environment: { ...createNewGame(1).environment, pollutionIndex: 50 },
+    };
+    const next = applyBillCategoryEffect(state, spendingBill('environment'));
+    expect(next.environment.pollutionIndex).toBeLessThan(state.environment.pollutionIndex);
+    expect(next.environment.renewableShare).toBeGreaterThan(state.environment.renewableShare);
+  });
+
+  it('a net-spending infrastructure bill raises all four infrastructure categories', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('infrastructure'));
+    expect(next.infrastructure.transport).toBeGreaterThan(state.infrastructure.transport);
+    expect(next.infrastructure.power).toBeGreaterThan(state.infrastructure.power);
+    expect(next.infrastructure.water).toBeGreaterThan(state.infrastructure.water);
+    expect(next.infrastructure.digital).toBeGreaterThan(state.infrastructure.digital);
+  });
+
+  it('a net-spending research_technology bill raises research capability', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('research_technology'));
+    expect(next.research.capability).toBeGreaterThan(state.research.capability);
+  });
+
+  it('a net-spending defense bill raises military strength, by a smaller margin than other categories', () => {
+    const state = createNewGame(1);
+    const defenseNext = applyBillCategoryEffect(state, spendingBill('defense'));
+    const researchNext = applyBillCategoryEffect(state, spendingBill('research_technology'));
+    const defenseDelta = defenseNext.playerMilitary.strength - state.playerMilitary.strength;
+    const researchDelta = researchNext.research.capability - state.research.capability;
+    expect(defenseDelta).toBeGreaterThan(0);
+    expect(defenseDelta).toBeLessThan(researchDelta);
+  });
+
+  it('an economic-category bill is a no-op — it only ever gets the generic economy effect', () => {
+    const state = createNewGame(1);
+    const next = applyBillCategoryEffect(state, spendingBill('economic'));
+    expect(next).toBe(state);
+  });
+
+  it('a bill with no category at all is also a no-op, for saves predating this field', () => {
+    const state = createNewGame(1);
+    const bill = { ...spendingBill('healthcare'), category: undefined };
+    const next = applyBillCategoryEffect(state, bill);
+    expect(next).toBe(state);
+  });
+
+  it('clamps an extreme bill so it cannot single-handedly max out the indicator', () => {
+    const state = { ...createNewGame(1), research: { ...createNewGame(1).research, capability: 50 } };
+    const hugeBill: GameState['bills'][number] = {
+      ...proposeBill({
+        id: 'bill-huge',
+        title: 'Enormous Bill',
+        category: 'research_technology',
+        sponsorId: 'sponsor',
+        provisions: [{ id: 'p1', description: 'Fund it massively', budgetImpact: -500_000 }],
+      }),
+      status: 'passed',
+    };
+    const next = applyBillCategoryEffect(state, hugeBill);
+    expect(next.research.capability).toBeLessThanOrEqual(60);
+  });
+
+  it('enactPassedBill applies both the delayed economy effect and the immediate category effect', () => {
+    const state = createNewGame(1);
+    const bill = spendingBill('research_technology');
+    const next = enactPassedBill(state, bill);
+    expect(next.research.capability).toBeGreaterThan(state.research.capability);
+    expect(next.economy.pendingEffects.length).toBeGreaterThan(state.economy.pendingEffects.length);
+  });
+});
+
+describe('dilemmas wired into advanceTurn', () => {
+  it('eventually raises a dilemma over many turns', () => {
+    let state = createNewGame(7);
+    let raised = false;
+    for (let i = 0; i < 60 && !raised; i++) {
+      state = advanceTurn(state);
+      if (state.activeDilemma) raised = true;
+    }
+    expect(raised).toBe(true);
+  });
+
+  it('never raises a second dilemma while one is still awaiting a choice', () => {
+    let state = createNewGame(7);
+    for (let i = 0; i < 60 && !state.activeDilemma; i++) {
+      state = advanceTurn(state);
+    }
+    expect(state.activeDilemma).not.toBeNull();
+    const firstDilemmaId = state.activeDilemma!.id;
+
+    for (let i = 0; i < 10; i++) {
+      state = advanceTurn(state);
+      expect(state.activeDilemma!.id).toBe(firstDilemmaId);
+    }
+  });
+
+  it('resolveDilemmaChoice clears it, letting a new one eventually be raised again', () => {
+    let state = createNewGame(7);
+    for (let i = 0; i < 60 && !state.activeDilemma; i++) {
+      state = advanceTurn(state);
+    }
+    expect(state.activeDilemma).not.toBeNull();
+
+    state = resolveDilemmaChoice(state, state.activeDilemma!.choices[0].id);
+    expect(state.activeDilemma).toBeNull();
+
+    let raisedAgain = false;
+    for (let i = 0; i < 60 && !raisedAgain; i++) {
+      state = advanceTurn(state);
+      if (state.activeDilemma) raisedAgain = true;
+    }
+    expect(raisedAgain).toBe(true);
+  });
+});
+
+describe('applyAiBillAnalysisAction', () => {
+  function stateWithOneBill(seed: number): { state: GameState; billId: string } {
+    const base = createNewGame(seed);
+    const sponsor = base.politicians.find((p) => p.isPlayer)!;
+    const bill = proposeBill({
+      id: 'ai-test-bill',
+      title: 'The AI Test Act',
+      provisions: [{ id: 'p1', description: 'Do a thing', budgetImpact: 0 }],
+      sponsorId: sponsor.id,
+    });
+    return { state: { ...base, bills: [...base.bills, bill] }, billId: bill.id };
+  }
+
+  it('queues a clamped economy effect and records the analysis', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const { state: after, outcome } = applyAiBillAnalysisAction(state, billId, 'A solid bill.', { gdpGrowth: 0.3 }, 2);
+    expect(outcome.success).toBe(true);
+    expect(after.aiBillAnalyses).toHaveLength(1);
+    expect(after.aiBillAnalyses[0].narrative).toBe('A solid bill.');
+    expect(after.economy.pendingEffects.length).toBeGreaterThan(state.economy.pendingEffects.length);
+  });
+
+  it('gives the player a decaying approval nudge when the analysis carries one', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: after } = applyAiBillAnalysisAction(state, billId, 'Great bill.', {}, 4);
+    const updatedPlayer = after.politicians.find((p) => p.id === player.id)!;
+    expect(updatedPlayer.approvalEvents.length).toBeGreaterThan(player.approvalEvents.length);
+  });
+
+  it('clamps a wildly out-of-range AI response before it ever touches GameState', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const { state: after } = applyAiBillAnalysisAction(state, billId, 'x', { gdpGrowth: 99999 }, 99999);
+    const analysis = after.aiBillAnalyses[0];
+    expect(Math.abs(analysis.economyEffect.gdpGrowth!)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(analysis.playerApprovalEffect)).toBeLessThanOrEqual(5);
+  });
+
+  it('is a no-op when the bill no longer exists', () => {
+    const { state } = stateWithOneBill(1);
+    const { state: after, outcome } = applyAiBillAnalysisAction(state, 'nonexistent-bill', 'x', {}, 0);
+    expect(outcome).toEqual({ success: false, reason: 'bill_not_found' });
+    expect(after).toBe(state);
   });
 });

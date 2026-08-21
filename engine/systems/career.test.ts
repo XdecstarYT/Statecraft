@@ -2,26 +2,45 @@ import { describe, expect, it } from 'vitest';
 import { SeededRng } from '../rng';
 import type { CareerState, Party } from '../models/types';
 import {
+  CAMPAIGN_ACTIVITIES,
   CAREER_STARTING_AGE,
+  CITIZEN_INITIATIVE_COST,
   EDUCATION_TRACKS,
   JOB_LISTINGS,
+  PARTY_OFFICER_STANDING_REQUIREMENT,
   advanceCareerTurn,
   applyForJob,
+  applyLifeEventEffect,
+  attemptCitizenInitiative,
   attemptLocalRace,
   attemptNationalNomination,
+  attemptPartyLeadershipBid,
+  attemptRegionalRace,
   buildGraduationPayload,
   canApplyForJob,
+  canAttemptRegionalRace,
+  canGovernLocally,
+  canProposeCitizenInitiative,
+  canRunCampaignActivity,
+  canSeekPartyLeadership,
   canStartEducation,
   computeCareerAge,
   computeCareerStage,
+  computeCareerWorkload,
   computeNominationProbability,
+  computePartyLeadershipProbability,
   computePersonalAppeal,
   createCareer,
+  doLocalGovernance,
   doPartyWork,
   foundOwnParty,
   isGraduated,
   joinParty,
+  restAndRecover,
+  rollForLifeEvent,
+  runCampaignActivity,
   startEducation,
+  type CareerLifeEventDef,
 } from './career';
 
 const PARTY_A: Party = { id: 'party-a', name: 'Party A', ideology: { economic: 60, social: 60 }, seats: 10, factions: [] };
@@ -216,6 +235,212 @@ describe('computePersonalAppeal', () => {
     expect(computePersonalAppeal({ charisma: 1, intellect: 1, integrity: 1, network: 1, mediaSavvy: 1 }, 0)).toBeGreaterThanOrEqual(0.05);
     expect(computePersonalAppeal({ charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 }, 100)).toBeLessThanOrEqual(1);
   });
+
+  it('rises further with a strong civic record', () => {
+    const attrs = { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 };
+    const noRecord = computePersonalAppeal(attrs, 50, 0);
+    const strongRecord = computePersonalAppeal(attrs, 50, 100);
+    expect(strongRecord).toBeGreaterThan(noRecord);
+  });
+
+  it('rises further with fresh campaign momentum', () => {
+    const attrs = { charisma: 5, intellect: 5, integrity: 5, network: 5, mediaSavvy: 5 };
+    const noMomentum = computePersonalAppeal(attrs, 50, 0, 0);
+    const highMomentum = computePersonalAppeal(attrs, 50, 0, 100);
+    expect(highMomentum).toBeGreaterThan(noMomentum);
+  });
+});
+
+describe('party leadership bid', () => {
+  it('computePartyLeadershipProbability rises with party standing', () => {
+    const low = joinParty(makeCareer({ partyStanding: 60 }), 'party-a');
+    const high = joinParty(makeCareer({ partyStanding: 100 }), 'party-a');
+    expect(computePartyLeadershipProbability(high)).toBeGreaterThan(computePartyLeadershipProbability(low));
+  });
+
+  it('refuses without a party', () => {
+    const state = makeCareer({ partyId: null, partyStanding: 100 });
+    expect(canSeekPartyLeadership(state)).toBe(false);
+    const { outcome } = attemptPartyLeadershipBid(state, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('refuses below the standing requirement', () => {
+    const state = joinParty(makeCareer({ partyStanding: PARTY_OFFICER_STANDING_REQUIREMENT - 1 }), 'party-a');
+    expect(canSeekPartyLeadership(state)).toBe(false);
+    const { outcome } = attemptPartyLeadershipBid(state, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('refuses once already a party officer', () => {
+    const state = joinParty(makeCareer({ partyStanding: 100, partyOfficer: true }), 'party-a');
+    expect(canSeekPartyLeadership(state)).toBe(false);
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = joinParty(makeCareer({ partyStanding: 80 }), 'party-a');
+    const a = attemptPartyLeadershipBid(state, new SeededRng(3));
+    const b = attemptPartyLeadershipBid(state, new SeededRng(3));
+    expect(a).toEqual(b);
+  });
+
+  it('a high-standing candidate wins far more often than a borderline one over many trials', () => {
+    const strong = joinParty(makeCareer({ partyStanding: 100, attributes: { charisma: 10, intellect: 5, integrity: 5, network: 10, mediaSavvy: 5 } }), 'party-a');
+    const borderline = joinParty(makeCareer({ partyStanding: PARTY_OFFICER_STANDING_REQUIREMENT, attributes: { charisma: 1, intellect: 5, integrity: 5, network: 1, mediaSavvy: 5 } }), 'party-a');
+
+    const rngStrong = new SeededRng(8);
+    const rngBorderline = new SeededRng(8);
+    let strongWins = 0;
+    let borderlineWins = 0;
+    for (let i = 0; i < 100; i++) {
+      if (attemptPartyLeadershipBid(strong, rngStrong).outcome!.won) strongWins++;
+      if (attemptPartyLeadershipBid(borderline, rngBorderline).outcome!.won) borderlineWins++;
+    }
+    expect(strongWins).toBeGreaterThan(borderlineWins);
+  });
+
+  it('sets partyOfficer on a win and lowers standing on a loss', () => {
+    const state = joinParty(makeCareer({ partyStanding: 100, attributes: { charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 } }), 'party-a');
+    const rng = new SeededRng(5);
+    let won = false;
+    let after = state;
+    for (let i = 0; i < 30 && !won; i++) {
+      const result = attemptPartyLeadershipBid(after, rng);
+      after = result.state;
+      won = result.outcome!.won;
+    }
+    expect(won).toBe(true);
+    expect(after.partyOfficer).toBe(true);
+  });
+});
+
+describe('campaign activities', () => {
+  it('refuses without enough money', () => {
+    const state = makeCareer({ money: 0 });
+    expect(canRunCampaignActivity(state, 'canvass')).toBe(false);
+    const { outcome } = runCampaignActivity(state, 'canvass', new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('deducts the activity cost regardless of outcome', () => {
+    const state = makeCareer({ money: 500 });
+    const { state: after } = runCampaignActivity(state, 'media_blitz', new SeededRng(4));
+    expect(after.money).toBe(500 - CAMPAIGN_ACTIVITIES.media_blitz.cost);
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ money: 500 });
+    const a = runCampaignActivity(state, 'canvass', new SeededRng(9));
+    const b = runCampaignActivity(state, 'canvass', new SeededRng(9));
+    expect(a).toEqual(b);
+  });
+
+  it('moves campaign momentum and stays within [0, 100]', () => {
+    const state = makeCareer({ money: 500, campaignMomentum: 50 });
+    const { state: after, outcome } = runCampaignActivity(state, 'canvass', new SeededRng(2));
+    expect(after.campaignMomentum).toBe(state.campaignMomentum + outcome!.momentumDelta);
+    expect(after.campaignMomentum).toBeGreaterThanOrEqual(0);
+    expect(after.campaignMomentum).toBeLessThanOrEqual(100);
+  });
+
+  it('a well-suited candidate gets strong outcomes far more often than a poorly-suited one over many trials', () => {
+    const skilled = makeCareer({ money: 100_000, attributes: { charisma: 10, intellect: 5, integrity: 5, network: 10, mediaSavvy: 5 } });
+    const unskilled = makeCareer({ money: 100_000, attributes: { charisma: 1, intellect: 5, integrity: 5, network: 1, mediaSavvy: 5 } });
+
+    const rngSkilled = new SeededRng(15);
+    const rngUnskilled = new SeededRng(15);
+    let skilledStrong = 0;
+    let unskilledStrong = 0;
+    for (let i = 0; i < 100; i++) {
+      if (runCampaignActivity(skilled, 'canvass', rngSkilled).outcome!.outcome === 'strong') skilledStrong++;
+      if (runCampaignActivity(unskilled, 'canvass', rngUnskilled).outcome!.outcome === 'strong') unskilledStrong++;
+    }
+    expect(skilledStrong).toBeGreaterThan(unskilledStrong);
+  });
+});
+
+describe('citizen initiatives', () => {
+  it('are available immediately — no party or seat required', () => {
+    const state = makeCareer({ money: 100, partyId: null, localSeatWon: false });
+    expect(canProposeCitizenInitiative(state)).toBe(true);
+  });
+
+  it('refuses without enough money', () => {
+    const state = makeCareer({ money: CITIZEN_INITIATIVE_COST - 1 });
+    expect(canProposeCitizenInitiative(state)).toBe(false);
+    const { outcome } = attemptCitizenInitiative(state, 'Too Poor to Petition', { economic: 0, social: 0 }, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('deducts the filing cost regardless of outcome', () => {
+    const state = makeCareer({ money: 500 });
+    const { state: after } = attemptCitizenInitiative(state, 'Test Petition', { economic: 0, social: 0 }, new SeededRng(3));
+    expect(after.money).toBe(500 - CITIZEN_INITIATIVE_COST);
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ money: 500 });
+    const a = attemptCitizenInitiative(state, 'Test Petition', { economic: 20, social: -10 }, new SeededRng(7));
+    const b = attemptCitizenInitiative(state, 'Test Petition', { economic: 20, social: -10 }, new SeededRng(7));
+    expect(a).toEqual(b);
+  });
+
+  it('records the petition and raises civic record on a pass', () => {
+    const state = makeCareer({
+      money: 10_000,
+      attributes: { charisma: 10, intellect: 8, integrity: 8, network: 10, mediaSavvy: 10 },
+      civicRecord: 20,
+    });
+    const rng = new SeededRng(2);
+    let before = state;
+    let after = state;
+    let passed = false;
+    for (let i = 0; i < 30 && !passed; i++) {
+      before = after;
+      const result = attemptCitizenInitiative(after, `Petition ${i}`, { economic: 0, social: 0 }, rng);
+      after = result.state;
+      passed = result.outcome!.passed;
+    }
+    expect(passed).toBe(true);
+    expect(after.civicRecord).toBeGreaterThan(before.civicRecord);
+    expect(after.citizenInitiatives.some((r) => r.passed)).toBe(true);
+  });
+
+  it('records the petition and lowers civic record on a fail', () => {
+    const state = makeCareer({
+      money: 10_000,
+      attributes: { charisma: 1, intellect: 3, integrity: 3, network: 1, mediaSavvy: 1 },
+      civicRecord: 20,
+    });
+    const rng = new SeededRng(6);
+    let before = state;
+    let after = state;
+    let failed = false;
+    for (let i = 0; i < 30 && !failed; i++) {
+      before = after;
+      const result = attemptCitizenInitiative(after, `Petition ${i}`, { economic: 100, social: 100 }, rng);
+      after = result.state;
+      failed = !result.outcome!.passed;
+    }
+    expect(failed).toBe(true);
+    expect(after.civicRecord).toBeLessThan(before.civicRecord);
+    expect(after.citizenInitiatives.some((r) => !r.passed)).toBe(true);
+  });
+
+  it('a well-organized candidate passes petitions far more often than a disorganized one over many trials', () => {
+    const strong = makeCareer({ money: 10_000, attributes: { charisma: 10, intellect: 8, integrity: 8, network: 10, mediaSavvy: 10 } });
+    const weak = makeCareer({ money: 10_000, attributes: { charisma: 1, intellect: 3, integrity: 3, network: 1, mediaSavvy: 1 } });
+
+    const rngStrong = new SeededRng(9);
+    const rngWeak = new SeededRng(9);
+    let strongPasses = 0;
+    let weakPasses = 0;
+    for (let i = 0; i < 100; i++) {
+      if (attemptCitizenInitiative(strong, `P${i}`, { economic: 0, social: 0 }, rngStrong).outcome!.passed) strongPasses++;
+      if (attemptCitizenInitiative(weak, `P${i}`, { economic: 0, social: 0 }, rngWeak).outcome!.passed) weakPasses++;
+    }
+    expect(strongPasses).toBeGreaterThan(weakPasses);
+  });
 });
 
 describe('attemptLocalRace', () => {
@@ -278,6 +503,116 @@ describe('attemptLocalRace', () => {
   });
 });
 
+describe('attemptRegionalRace', () => {
+  it('refuses without a local seat first, even with plenty of money', () => {
+    const state = makeCareer({ money: 10_000, localSeatWon: false });
+    expect(canAttemptRegionalRace(state)).toBe(false);
+    const { outcome } = attemptRegionalRace(state, ['Rival'], new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('refuses without enough campaign money, even with a local seat', () => {
+    const state = makeCareer({ money: 10, localSeatWon: true });
+    expect(canAttemptRegionalRace(state)).toBe(false);
+    const { outcome } = attemptRegionalRace(state, ['Rival'], new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ money: 500, localSeatWon: true });
+    const a = attemptRegionalRace(state, ['Rival A', 'Rival B'], new SeededRng(5));
+    const b = attemptRegionalRace(state, ['Rival A', 'Rival B'], new SeededRng(5));
+    expect(a).toEqual(b);
+  });
+
+  it('records the race and marks regionalSeatWon on a win, advancing the stage', () => {
+    const state = makeCareer({
+      money: 100_000,
+      localSeatWon: true,
+      attributes: { charisma: 10, intellect: 10, integrity: 10, network: 10, mediaSavvy: 10 },
+      partyStanding: 100,
+    });
+    const rng = new SeededRng(2);
+    let won = false;
+    let after = state;
+    for (let i = 0; i < 100 && !won; i++) {
+      const result = attemptRegionalRace(after, ['R1', 'R2'], rng);
+      after = result.state;
+      won = result.outcome!.won;
+    }
+    expect(won).toBe(true);
+    expect(after.regionalSeatWon).toBe(true);
+    expect(after.regionalRaceHistory.length).toBeGreaterThan(0);
+    expect(computeCareerStage(after)).toBe('regional_officeholder');
+  });
+});
+
+describe('doLocalGovernance', () => {
+  it('refuses without holding any elected seat', () => {
+    const state = makeCareer({ localSeatWon: false, regionalSeatWon: false });
+    expect(canGovernLocally(state)).toBe(false);
+    const { outcome } = doLocalGovernance(state, new SeededRng(1));
+    expect(outcome).toBeNull();
+  });
+
+  it('is available once a local seat is held', () => {
+    const state = makeCareer({ localSeatWon: true });
+    expect(canGovernLocally(state)).toBe(true);
+    const { outcome } = doLocalGovernance(state, new SeededRng(1));
+    expect(outcome).not.toBeNull();
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer({ localSeatWon: true });
+    const a = doLocalGovernance(state, new SeededRng(9));
+    const b = doLocalGovernance(state, new SeededRng(9));
+    expect(a).toEqual(b);
+  });
+
+  it('moves civic record and stays within [0, 100]', () => {
+    const state = makeCareer({ localSeatWon: true, civicRecord: 50 });
+    const { state: after, outcome } = doLocalGovernance(state, new SeededRng(3));
+    expect(after.civicRecord).toBe(state.civicRecord + outcome!.civicRecordDelta);
+    expect(after.civicRecord).toBeGreaterThanOrEqual(0);
+    expect(after.civicRecord).toBeLessThanOrEqual(100);
+  });
+
+  it('a more capable governor gets strong outcomes far more often than a weak one over many trials', () => {
+    const capable = makeCareer({ localSeatWon: true, attributes: { charisma: 5, intellect: 10, integrity: 10, network: 10, mediaSavvy: 5 } });
+    const inept = makeCareer({ localSeatWon: true, attributes: { charisma: 5, intellect: 1, integrity: 1, network: 1, mediaSavvy: 5 } });
+
+    const rngCapable = new SeededRng(13);
+    const rngInept = new SeededRng(13);
+    let capableStrong = 0;
+    let ineptStrong = 0;
+    for (let i = 0; i < 100; i++) {
+      if (doLocalGovernance(capable, rngCapable).outcome!.outcome === 'strong') capableStrong++;
+      if (doLocalGovernance(inept, rngInept).outcome!.outcome === 'strong') ineptStrong++;
+    }
+    expect(capableStrong).toBeGreaterThan(ineptStrong);
+  });
+});
+
+describe('officeholder stipend in advanceCareerTurn', () => {
+  it('pays no stipend without a seat', () => {
+    const state = makeCareer({ money: 100, localSeatWon: false, regionalSeatWon: false, jobId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.money).toBe(100);
+  });
+
+  it('pays a local stipend while holding only a local seat', () => {
+    const state = makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: false, jobId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.money).toBeGreaterThan(100);
+  });
+
+  it('pays a larger stipend once holding a regional seat instead of stacking both', () => {
+    const localOnly = advanceCareerTurn(makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: false, jobId: null }), PARTIES);
+    const regional = advanceCareerTurn(makeCareer({ money: 100, localSeatWon: true, regionalSeatWon: true, jobId: null }), PARTIES);
+    expect(regional.money).toBeGreaterThan(localOnly.money);
+  });
+});
+
 describe('computeNominationProbability / attemptNationalNomination', () => {
   it('rises with party standing, a won local seat, and strong attributes', () => {
     const weak = makeCareer({ partyStanding: 0, localSeatWon: false, attributes: { charisma: 1, intellect: 1, integrity: 1, network: 1, mediaSavvy: 1 } });
@@ -296,6 +631,24 @@ describe('computeNominationProbability / attemptNationalNomination', () => {
     const { outcome } = attemptNationalNomination(makeCareer(), new SeededRng(1));
     expect(outcome.selected).toBe(false);
     expect(outcome.probability).toBe(0);
+  });
+
+  it('rises with a stronger civic record, all else equal', () => {
+    const noRecord = makeCareer({ civicRecord: 0 });
+    const strongRecord = makeCareer({ civicRecord: 100 });
+    expect(computeNominationProbability(strongRecord)).toBeGreaterThan(computeNominationProbability(noRecord));
+  });
+
+  it('rises for a party officer, all else equal', () => {
+    const notOfficer = makeCareer({ partyOfficer: false });
+    const officer = makeCareer({ partyOfficer: true });
+    expect(computeNominationProbability(officer)).toBeGreaterThan(computeNominationProbability(notOfficer));
+  });
+
+  it('rises with fresh campaign momentum, all else equal', () => {
+    const noMomentum = makeCareer({ campaignMomentum: 0 });
+    const highMomentum = makeCareer({ campaignMomentum: 100 });
+    expect(computeNominationProbability(highMomentum)).toBeGreaterThan(computeNominationProbability(noMomentum));
   });
 
   it('a very strong candidate gets selected within a handful of attempts', () => {
@@ -335,9 +688,165 @@ describe('advanceCareerTurn', () => {
     expect(state.partyStanding).toBeGreaterThan(40);
   });
 
+  it('decays civic record a little each turn without reinforcement, even with no party', () => {
+    let state = makeCareer({ partyId: null, civicRecord: 50 });
+    state = advanceCareerTurn(state, PARTIES);
+    expect(state.civicRecord).toBeLessThan(50);
+    expect(state.civicRecord).toBeGreaterThan(40);
+  });
+
+  it('decays campaign momentum fast, faster than party standing', () => {
+    let state = joinParty(makeCareer({ partyStanding: 50, campaignMomentum: 50 }), 'party-a');
+    state = advanceCareerTurn(state, PARTIES);
+    expect(state.campaignMomentum).toBeLessThan(50);
+    expect(state.campaignMomentum).toBeLessThan(state.partyStanding);
+  });
+
+  it('floors party standing for a party officer instead of letting it decay below the floor', () => {
+    let state = joinParty(makeCareer({ partyStanding: 41, partyOfficer: true }), 'party-a');
+    state = advanceCareerTurn(state, PARTIES);
+    expect(state.partyStanding).toBeGreaterThanOrEqual(40);
+  });
+
+  it('still decays a non-officer below what the floor would be', () => {
+    let state = joinParty(makeCareer({ partyStanding: 41, partyOfficer: false }), 'party-a');
+    for (let i = 0; i < 5; i++) state = advanceCareerTurn(state, PARTIES);
+    expect(state.partyStanding).toBeLessThan(40);
+  });
+
   it('increments the turn counter', () => {
     const state = advanceCareerTurn(makeCareer(), PARTIES);
     expect(state.turn).toBe(1);
+  });
+
+  it('drains health under a heavy workload', () => {
+    const state = joinParty(makeCareer({ health: 80, jobId: 'retail_clerk', educationTrack: 'state_university', educationTurnsRemaining: 8 }), 'party-a');
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.health).toBeLessThan(80);
+  });
+
+  it('recovers health under a light workload', () => {
+    const state = makeCareer({ health: 50, jobId: null, educationTrack: null, partyId: null });
+    const after = advanceCareerTurn(state, PARTIES);
+    expect(after.health).toBeGreaterThan(50);
+  });
+
+  it('clamps health to [0, 100]', () => {
+    const overworked = joinParty(makeCareer({ health: 2, jobId: 'retail_clerk', educationTrack: 'state_university', educationTurnsRemaining: 8 }), 'party-a');
+    const after = advanceCareerTurn(overworked, PARTIES);
+    expect(after.health).toBeGreaterThanOrEqual(0);
+
+    const rested = makeCareer({ health: 99, jobId: null, educationTrack: null, partyId: null });
+    const afterRest = advanceCareerTurn(rested, PARTIES);
+    expect(afterRest.health).toBeLessThanOrEqual(100);
+  });
+
+  it('scales down job/education attribute gains under burnout (low health)', () => {
+    const healthy = makeCareer({ health: 80, jobId: 'retail_clerk' });
+    const burnedOut = makeCareer({ health: 10, jobId: 'retail_clerk' });
+    const healthyAfter = advanceCareerTurn(healthy, PARTIES);
+    const burnedOutAfter = advanceCareerTurn(burnedOut, PARTIES);
+    const healthyGain = healthyAfter.attributes.charisma - healthy.attributes.charisma;
+    const burnedOutGain = burnedOutAfter.attributes.charisma - burnedOut.attributes.charisma;
+    expect(burnedOutGain).toBeLessThan(healthyGain);
+  });
+
+  it('rolls and applies a life event when rng and defs are provided, and updates rngState', () => {
+    const alwaysFires: CareerLifeEventDef[] = [
+      { id: 'test-event', title: 'Test Event', description: 'desc', weight: 1, effect: { moneyDelta: 25 } },
+    ];
+    const state = makeCareer({ money: 100 });
+    const rng = new SeededRng(1);
+    let after = state;
+    let fired = false;
+    for (let i = 0; i < 20 && !fired; i++) {
+      after = advanceCareerTurn(after, PARTIES, rng, alwaysFires);
+      if (after.eventLog.some((e) => e.title === 'Test Event')) fired = true;
+    }
+    expect(fired).toBe(true);
+    expect(after.rngState).not.toBe(state.rngState);
+  });
+
+  it('never fires a life event when rng is omitted, even with defs available', () => {
+    const alwaysFires: CareerLifeEventDef[] = [
+      { id: 'test-event', title: 'Test Event', description: 'desc', weight: 1, effect: { moneyDelta: 25 } },
+    ];
+    let state = makeCareer();
+    for (let i = 0; i < 20; i++) {
+      state = advanceCareerTurn(state, PARTIES, undefined, alwaysFires);
+    }
+    expect(state.eventLog.some((e) => e.title === 'Test Event')).toBe(false);
+  });
+});
+
+describe('computeCareerWorkload', () => {
+  it('rises with job, education, party, and office all stacked', () => {
+    const idle = makeCareer({ jobId: null, educationTrack: null, partyId: null, localSeatWon: false });
+    const loaded = joinParty(makeCareer({ jobId: 'retail_clerk', educationTrack: 'state_university', localSeatWon: true }), 'party-a');
+    expect(computeCareerWorkload(loaded)).toBeGreaterThan(computeCareerWorkload(idle));
+  });
+});
+
+describe('restAndRecover', () => {
+  it('raises health without touching money or attributes', () => {
+    const state = makeCareer({ health: 50, money: 100 });
+    const after = restAndRecover(state);
+    expect(after.health).toBeGreaterThan(50);
+    expect(after.money).toBe(100);
+    expect(after.attributes).toEqual(state.attributes);
+  });
+
+  it('clamps health to 100', () => {
+    const state = makeCareer({ health: 95 });
+    const after = restAndRecover(state);
+    expect(after.health).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('rollForLifeEvent / applyLifeEventEffect', () => {
+  const defs: CareerLifeEventDef[] = [
+    { id: 'a', title: 'A', description: 'a', weight: 1, effect: { moneyDelta: 10 } },
+    { id: 'b', title: 'B', description: 'b', weight: 1, effect: { healthDelta: -5 }, condition: (s) => s.health > 50 },
+  ];
+
+  it('returns null when defs is empty', () => {
+    expect(rollForLifeEvent([], makeCareer(), new SeededRng(1))).toBeNull();
+  });
+
+  it('only returns events whose condition currently holds', () => {
+    const lowHealth = makeCareer({ health: 10 });
+    for (let seed = 0; seed < 50; seed++) {
+      const result = rollForLifeEvent(defs, lowHealth, new SeededRng(seed));
+      if (result) expect(result.id).not.toBe('b');
+    }
+  });
+
+  it('is deterministic for a given rng state', () => {
+    const state = makeCareer();
+    const a = rollForLifeEvent(defs, state, new SeededRng(7));
+    const b = rollForLifeEvent(defs, state, new SeededRng(7));
+    expect(a).toEqual(b);
+  });
+
+  it('applyLifeEventEffect applies money/health deltas and logs the event', () => {
+    const state = makeCareer({ money: 50, health: 50, turn: 3 });
+    const after = applyLifeEventEffect(state, defs[0]);
+    expect(after.money).toBe(60);
+    expect(after.eventLog.at(-1)).toEqual({ turn: 3, title: 'A', description: 'a' });
+  });
+
+  it('applyLifeEventEffect can change relationship status and hasChildren', () => {
+    const state = makeCareer({ relationshipStatus: 'dating', hasChildren: false });
+    const marry: CareerLifeEventDef = {
+      id: 'wedding',
+      title: 'Wedding',
+      description: 'desc',
+      weight: 1,
+      effect: { setRelationshipStatus: 'married' },
+    };
+    const after = applyLifeEventEffect(state, marry);
+    expect(after.relationshipStatus).toBe('married');
+    expect(after.hasChildren).toBe(false);
   });
 });
 

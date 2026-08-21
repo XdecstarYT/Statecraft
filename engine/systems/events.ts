@@ -49,8 +49,11 @@ export function getPlayerApproval(state: GameState): number {
  * economy raises economic-shock odds, an unresolved scandal raises
  * follow-up-investigation odds, low approval raises unrest odds, and real
  * accumulated pollution (see environment.ts) raises natural-disaster odds.
+ * Takes just the shape it needs (category + baseWeight) rather than the
+ * full CrisisEventDef, so dilemmas.ts's DilemmaDef — a different table
+ * with the same category/baseWeight axis — can reuse this unchanged.
  */
-export function computeEventWeight(def: CrisisEventDef, state: GameState): number {
+export function computeEventWeight(def: { category: CrisisCategory; baseWeight: number }, state: GameState): number {
   let weight = def.baseWeight;
   if (def.category === 'economic_shock' && isEconomyFragile(state.economy)) weight *= 2.5;
   if (def.category === 'scandal' && hasActiveScandal(state)) weight *= 2;
