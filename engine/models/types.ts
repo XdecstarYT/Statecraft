@@ -1051,6 +1051,26 @@ export interface SocialPolicyState {
 }
 
 /**
+ * AI POLICY ANALYSIS — an optional, additive enrichment layer for a passed
+ * bill: a real network call (client-side, proxied through a Netlify
+ * function so no API key ever reaches the browser) asks an LLM for a
+ * short plain-language analysis plus a small suggested economic/approval
+ * adjustment, which is clamped to a safe bounded range and applied on top
+ * of the bill's already-computed deterministic effect — never in place of
+ * it. This is the one deliberate, flagged exception to this project's
+ * no-runtime-LLM rule (see CLAUDE.md); the core seeded simulation and its
+ * replay guarantee are entirely unaffected when the AI call is disabled,
+ * unavailable, or simply never invoked. See engine/systems/aiPolicyAnalysis.ts.
+ */
+export interface AiBillAnalysis {
+  billId: string;
+  narrative: string;
+  economyEffect: EconomyDelta;
+  playerApprovalEffect: number;
+  turnRequested: number;
+}
+
+/**
  * STOCK MARKET & PRIVATE ENTERPRISE — the player can found a private
  * company, grow it, and take it public; once public its shares trade on a
  * real (if abstracted) market, drifting with both the company's own
@@ -1332,6 +1352,8 @@ export interface GameState {
   softPower: number;
   /** The player's own legislature's term length in turns — defaults to TERM_LENGTH_TURNS (engine/index.ts), real-changeable via a 'term_length' constitutional amendment. */
   legislativeTermLengthTurns: number;
+  /** Bounded recent-history log of AI-enriched bill analyses, newest last. See engine/systems/aiPolicyAnalysis.ts. */
+  aiBillAnalyses: AiBillAnalysis[];
 }
 
 /**

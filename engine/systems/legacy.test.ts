@@ -143,6 +143,7 @@ function makeState(overrides: Partial<GameState> = {}): GameState {
     culturalInstitutions: [],
     softPower: 0,
     legislativeTermLengthTurns: 192,
+    aiBillAnalyses: [],
     foreignDistricts: {},
     foreignParties: {},
     foreignDistrictResults: {},

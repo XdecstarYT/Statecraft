@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   computeFactionTerms,
   computeLobbyingPressure,
@@ -9,6 +9,7 @@ import {
   type BillCategory,
 } from '../../engine';
 import { useStatecraftStore } from '../store';
+import { loadAiSettings, saveAiSettings, type AiSettings } from '../persistence';
 
 const CATEGORY_LABELS: Record<BillCategory, string> = {
   economic: 'Economic',
@@ -27,6 +28,76 @@ function CategoryBadge({ category }: { category?: BillCategory }) {
   return <span className={`bill-category-badge bill-category-${category}`}>{CATEGORY_LABELS[category]}</span>;
 }
 
+/**
+ * Toggle for the optional AI bill-analysis feature (see ui/ai/policyAdvisor.ts
+ * and engine/systems/aiPolicyAnalysis.ts). Off by default, per-browser only —
+ * not part of GameState/saves. When on, a passed bill gets an extra network
+ * call to a Netlify function that proxies Groq for a short narrative and a
+ * small, clamped adjustment layered on top of the bill's real deterministic
+ * effect; the game works identically with this off.
+ */
+function AiAdvisorToggle() {
+  const [settings, setSettings] = useState<AiSettings>(() => loadAiSettings());
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    saveAiSettings(settings);
+  }, [settings]);
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button className="ghost-button" onClick={() => setOpen((v) => !v)}>
+        AI Advisor {settings.enabled ? '(On)' : '(Off)'}
+      </button>
+      {open && (
+        <div className="panel" style={{ position: 'absolute', right: 0, top: '2.2rem', zIndex: 20, width: '280px' }}>
+          <div className="settings-form">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={settings.enabled}
+                onChange={(e) => setSettings((s) => ({ ...s, enabled: e.target.checked }))}
+              />
+              Enable AI policy analysis
+            </label>
+            <p className="muted" style={{ fontSize: '0.85em' }}>
+              When on, each newly enacted law gets a short AI-written analysis and a small, bounded nudge to the
+              economy/approval — layered on top of the game's real, deterministic bill effects, never in place of
+              them. Requires network access; the game plays identically with this off.
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AiAnalysisNote({ billId }: { billId: string }) {
+  const game = useStatecraftStore((s) => s.game);
+  const pendingBillId = useStatecraftStore((s) => s.aiAnalysisPendingBillId);
+  const error = useStatecraftStore((s) => s.aiAnalysisError);
+  if (!game) return null;
+
+  const analysis = game.aiBillAnalyses.find((a) => a.billId === billId);
+  if (analysis) {
+    return (
+      <p className="muted ai-analysis-note">
+        <span className="law-badge" style={{ opacity: 0.8 }}>AI</span> {analysis.narrative}
+      </p>
+    );
+  }
+  if (pendingBillId === billId) {
+    return <p className="muted ai-analysis-note">Requesting AI analysis…</p>;
+  }
+  if (error && pendingBillId === null) {
+    // Only the most recently attempted bill's error is tracked; showing it
+    // here for every law without a note would misattribute stale failures,
+    // so this stays silent unless we can't tell which bill it belongs to.
+    return null;
+  }
+  return null;
+}
+
 export function BillPanel() {
   const game = useStatecraftStore((s) => s.game);
   const proposeNewBill = useStatecraftStore((s) => s.proposeNewBill);
@@ -43,7 +114,10 @@ export function BillPanel() {
     <section className="panel">
       <div className="panel-header">
         <h2>Legislation</h2>
-        <button onClick={proposeNewBill}>Draft From Template</button>
+        <div className="row-actions">
+          <AiAdvisorToggle />
+          <button onClick={proposeNewBill}>Draft From Template</button>
+        </div>
       </div>
 
       {lastFloorResult && (
@@ -94,6 +168,7 @@ export function BillPanel() {
                     </li>
                   ))}
                 </ul>
+                <AiAnalysisNote billId={law.id} />
               </li>
             );
           })}

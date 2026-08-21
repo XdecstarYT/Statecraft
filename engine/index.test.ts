@@ -53,6 +53,7 @@ import {
   postTweetAction,
   advanceBillToFloor,
   proposeBill,
+  applyAiBillAnalysisAction,
   applyBillCategoryEffect,
   enactPassedBill,
   resolveDilemmaChoice,
@@ -1538,5 +1539,51 @@ describe('dilemmas wired into advanceTurn', () => {
       if (state.activeDilemma) raisedAgain = true;
     }
     expect(raisedAgain).toBe(true);
+  });
+});
+
+describe('applyAiBillAnalysisAction', () => {
+  function stateWithOneBill(seed: number): { state: GameState; billId: string } {
+    const base = createNewGame(seed);
+    const sponsor = base.politicians.find((p) => p.isPlayer)!;
+    const bill = proposeBill({
+      id: 'ai-test-bill',
+      title: 'The AI Test Act',
+      provisions: [{ id: 'p1', description: 'Do a thing', budgetImpact: 0 }],
+      sponsorId: sponsor.id,
+    });
+    return { state: { ...base, bills: [...base.bills, bill] }, billId: bill.id };
+  }
+
+  it('queues a clamped economy effect and records the analysis', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const { state: after, outcome } = applyAiBillAnalysisAction(state, billId, 'A solid bill.', { gdpGrowth: 0.3 }, 2);
+    expect(outcome.success).toBe(true);
+    expect(after.aiBillAnalyses).toHaveLength(1);
+    expect(after.aiBillAnalyses[0].narrative).toBe('A solid bill.');
+    expect(after.economy.pendingEffects.length).toBeGreaterThan(state.economy.pendingEffects.length);
+  });
+
+  it('gives the player a decaying approval nudge when the analysis carries one', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const player = state.politicians.find((p) => p.isPlayer)!;
+    const { state: after } = applyAiBillAnalysisAction(state, billId, 'Great bill.', {}, 4);
+    const updatedPlayer = after.politicians.find((p) => p.id === player.id)!;
+    expect(updatedPlayer.approvalEvents.length).toBeGreaterThan(player.approvalEvents.length);
+  });
+
+  it('clamps a wildly out-of-range AI response before it ever touches GameState', () => {
+    const { state, billId } = stateWithOneBill(1);
+    const { state: after } = applyAiBillAnalysisAction(state, billId, 'x', { gdpGrowth: 99999 }, 99999);
+    const analysis = after.aiBillAnalyses[0];
+    expect(Math.abs(analysis.economyEffect.gdpGrowth!)).toBeLessThanOrEqual(1.5);
+    expect(Math.abs(analysis.playerApprovalEffect)).toBeLessThanOrEqual(5);
+  });
+
+  it('is a no-op when the bill no longer exists', () => {
+    const { state } = stateWithOneBill(1);
+    const { state: after, outcome } = applyAiBillAnalysisAction(state, 'nonexistent-bill', 'x', {}, 0);
+    expect(outcome).toEqual({ success: false, reason: 'bill_not_found' });
+    expect(after).toBe(state);
   });
 });

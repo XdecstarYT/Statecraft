@@ -193,6 +193,7 @@ import {
   foundMediaOutlet,
   investInOutlet,
 } from './systems/mediaEmpire';
+import { AI_ANALYSIS_ECONOMY_DELAY_TURNS, buildAiBillAnalysis } from './systems/aiPolicyAnalysis';
 import {
   MAX_MINE_TIER,
   MINE_BUILD_COST,
@@ -448,6 +449,7 @@ export * from './systems/federalism';
 export * from './systems/constitution';
 export * from './systems/executive';
 export * from './systems/mediaEmpire';
+export * from './systems/aiPolicyAnalysis';
 export * from './systems/byElections';
 export * from './systems/campaignFinance';
 export * from './systems/mediaEcosystem';
@@ -714,6 +716,7 @@ export function createNewGame(seed: number, options: NewGameOptions = {}): GameS
     culturalInstitutions: [],
     softPower: 0,
     legislativeTermLengthTurns: TERM_LENGTH_TURNS,
+    aiBillAnalyses: [],
   };
 
   return resolveGovernment(baseState, rng);
@@ -3799,6 +3802,49 @@ export function foundCulturalInstitutionAction(
       personalWealth,
       rngState: rng.getState(),
     },
+    outcome: { success: true },
+  };
+}
+
+/**
+ * Applies an already-fetched AI policy analysis to a bill (see
+ * aiPolicyAnalysis.ts). The network call itself happens in the UI layer;
+ * by the time this runs, `narrative`/`rawEconomyEffect`/
+ * `rawPlayerApprovalEffect` are just untrusted numbers/text that get
+ * clamped to a safe bounded range here before ever touching GameState.
+ * Purely additive: it never overwrites the bill's own already-applied
+ * deterministic effect, just queues a further small, delayed nudge on top
+ * (same lag-queue mechanism every other policy effect uses) plus a
+ * decaying approval event. A no-op if the bill no longer exists.
+ */
+export interface AiAnalysisActionOutcome {
+  success: boolean;
+  reason?: 'bill_not_found';
+}
+
+export function applyAiBillAnalysisAction(
+  state: GameState,
+  billId: string,
+  narrative: string,
+  rawEconomyEffect: EconomyDelta,
+  rawPlayerApprovalEffect: number
+): { state: GameState; outcome: AiAnalysisActionOutcome } {
+  const bill = state.bills.find((b) => b.id === billId);
+  if (!bill) return { state, outcome: { success: false, reason: 'bill_not_found' } };
+
+  const analysis = buildAiBillAnalysis(billId, narrative, rawEconomyEffect, rawPlayerApprovalEffect, state.turn);
+  const economy = queuePolicyEffect(state.economy, analysis.economyEffect, AI_ANALYSIS_ECONOMY_DELAY_TURNS);
+
+  let politicians = state.politicians;
+  const player = politicians.find((p) => p.isPlayer);
+  if (player && analysis.playerApprovalEffect !== 0) {
+    politicians = politicians.map((p) =>
+      p.id === player.id ? pushApprovalEvent(p, 'public', analysis.playerApprovalEffect, 6) : p
+    );
+  }
+
+  return {
+    state: { ...state, economy, politicians, aiBillAnalyses: [...state.aiBillAnalyses, analysis] },
     outcome: { success: true },
   };
 }

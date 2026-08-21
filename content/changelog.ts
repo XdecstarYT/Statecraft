@@ -11,6 +11,14 @@ export interface ChangelogEntry {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: '0.16',
+    title: 'Optional AI Policy Advisor',
+    highlights: [
+      'Added an opt-in AI Policy Advisor (off by default, toggle in the Legislation panel): when enabled, each newly enacted law gets a short AI-written analysis and a small, tightly bounded nudge to the economy and your approval — layered on top of the game\'s real, deterministic bill effects, never in place of them.',
+      'Runs through a secure server-side proxy so no API key is ever exposed to the browser; the game plays identically, seed-for-seed, whether this is on or off.',
+    ],
+  },
+  {
     version: '0.15',
     title: 'Federalism, the Constitution & the Executive',
     highlights: [

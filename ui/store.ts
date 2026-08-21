@@ -65,6 +65,7 @@ import {
   foundMediaOutletAction as engineFoundMediaOutlet,
   investInOutletAction as engineInvestInOutlet,
   foundCulturalInstitutionAction as engineFoundCulturalInstitution,
+  applyAiBillAnalysisAction as engineApplyAiBillAnalysis,
   type SignatureActionOutcome,
   type VetoOverrideActionOutcome,
   type AmendmentActionOutcome,
@@ -253,11 +254,13 @@ import { CAREER_LIFE_EVENTS } from '../content/career/lifeEvents';
 import { generateName } from '../content/names/pool';
 import {
   clearSavedCareer,
+  loadAiSettings,
   loadCareer as persistLoadCareer,
   loadGame as persistLoad,
   saveCareer as persistSaveCareer,
   saveGame as persistSave,
 } from './persistence';
+import { requestAiBillAnalysis } from './ai/policyAdvisor';
 
 export interface EconomySnapshot {
   turn: number;
@@ -342,6 +345,9 @@ interface StatecraftStore {
   lastAmendmentOutcome: (AmendmentActionOutcome & { action: 'propose' | 'vote' }) | null;
   lastDisputeOutcome: MediateDisputeOutcome | null;
   lastMediaEmpireOutcome: (MediaEmpireActionOutcome & { action: 'found_outlet' | 'invest_outlet' | 'found_institution' }) | null;
+  /** Optional AI bill-analysis enrichment (see ui/ai/policyAdvisor.ts) — network state only, never part of GameState/saves. */
+  aiAnalysisPendingBillId: string | null;
+  aiAnalysisError: string | null;
 
   newGame: (seed?: number, difficulty?: Difficulty, countryOptionId?: string, houseRules?: Partial<HouseRules>) => void;
   newGameFromScenario: (
@@ -387,6 +393,8 @@ interface StatecraftStore {
   signBillAction: (billId: string) => void;
   vetoBillAction: (billId: string) => void;
   attemptVetoOverrideAction: (billId: string) => void;
+  /** Optional AI enrichment for an already-enacted law — see ui/ai/policyAdvisor.ts. No-ops silently if the AI toggle is off or the request fails; the deterministic bill effect already applied regardless. */
+  requestAiAnalysisForBill: (billId: string) => void;
   issueExecutiveOrderAction: (title: string, description: string, economyEffect?: EconomyDelta, playerApprovalEffect?: number) => void;
   addProvisionAction: (billId: string, description: string, budgetImpact: number) => void;
   removeProvisionAction: (billId: string, provisionId: string) => void;
@@ -560,6 +568,8 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
   lastAmendmentOutcome: null,
   lastDisputeOutcome: null,
   lastMediaEmpireOutcome: null,
+  aiAnalysisPendingBillId: null,
+  aiAnalysisError: null,
 
   newGame: (seed = Math.floor(Math.random() * 1_000_000_000), difficulty = 'standard', countryOptionId = 'kastoria', houseRules) => {
     const option =
@@ -983,6 +993,9 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
       lastFloorResult: { ...result, billTitle: bill.title },
       lastCoverage: coverage,
     });
+    if (result.passed && !requiresExecutiveSignature(game.country)) {
+      get().requestAiAnalysisForBill(billId);
+    }
   },
 
   signBillAction: (billId) => {
@@ -990,6 +1003,7 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = engineSignBill(game, billId);
     set({ game: state, lastSignatureOutcome: { ...outcome, action: 'sign' } });
+    if (outcome.success) get().requestAiAnalysisForBill(billId);
   },
 
   vetoBillAction: (billId) => {
@@ -1004,6 +1018,46 @@ export const useStatecraftStore = create<StatecraftStore>((set, get) => ({
     if (!game) return;
     const { state, outcome } = engineAttemptVetoOverride(game, billId);
     set({ game: state, lastSignatureOutcome: { ...outcome, action: 'override' } });
+    if (outcome.success && outcome.overridden) get().requestAiAnalysisForBill(billId);
+  },
+
+  requestAiAnalysisForBill: (billId) => {
+    const settings = loadAiSettings();
+    if (!settings.enabled) return;
+    const game = get().game;
+    if (!game) return;
+    const bill = game.bills.find((b) => b.id === billId);
+    if (!bill || bill.status !== 'passed') return;
+
+    set({ aiAnalysisPendingBillId: billId, aiAnalysisError: null });
+
+    requestAiBillAnalysis({
+      billTitle: bill.title,
+      provisions: bill.provisions.map((p) => p.description),
+      countryName: game.country.name,
+    }).then((result) => {
+      // The pending id may have moved on to a different bill (or been cleared)
+      // while this request was in flight — don't clobber newer state with a
+      // stale response.
+      if (get().aiAnalysisPendingBillId !== billId) return;
+      if (!result.ok || !result.data) {
+        set({ aiAnalysisPendingBillId: null, aiAnalysisError: result.error ?? 'AI analysis failed' });
+        return;
+      }
+      const latestGame = get().game;
+      if (!latestGame) {
+        set({ aiAnalysisPendingBillId: null });
+        return;
+      }
+      const { state } = engineApplyAiBillAnalysis(
+        latestGame,
+        billId,
+        result.data.narrative,
+        result.data.economyEffect,
+        result.data.playerApprovalEffect
+      );
+      set({ game: state, aiAnalysisPendingBillId: null, aiAnalysisError: null });
+    });
   },
 
   issueExecutiveOrderAction: (title, description, economyEffect, playerApprovalEffect) => {
